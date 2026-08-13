@@ -1,5 +1,7 @@
 #!/bin/sh
 
 install_openclash() {
-    info "Installing OpenClash..."
+    info "Ready to install OpenClash"
+    info "Version : $RELEASE_TAG"
+    info "URL : $DOWNLOAD_URL"
 }
