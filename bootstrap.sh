@@ -98,7 +98,7 @@ fi
 
 printf "${GREEN}[AUTH] 验证码已发送给管理员${RESET}\n"
 
-printf "${GREEN}[AUTH] 验证码有效时间：3分钟${RESET}\n"
+#printf "${GREEN}[AUTH] 验证码有效时间：3分钟${RESET}\n"
 
 echo ""
 
