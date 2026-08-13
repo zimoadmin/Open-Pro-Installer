@@ -58,8 +58,8 @@ echo ""
 # 第四步：用户输入验证码
 # ======================================
 
-printf "请输入验证码: "
-read -r AUTH_CODE
+printf "请输入验证码: " > /dev/tty
+IFS= read -r AUTH_CODE < /dev/tty
 
 if [ -z "$AUTH_CODE" ]; then
     echo "[ERROR] 验证码不能为空"
