@@ -35,44 +35,16 @@ show_banner()
 printf "\n"
 
 
-printf "%b\n" "${BLUE}╭──────────────────────────────────────╮${RESET}"
+printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
+printf "%b\n" "${BLUE}║${GREEN}        ZIMO--toolbox            ${BLUE}║${RESET}"
+printf "%b\n" "${BLUE}║${GREEN}            v1.0.0               ${BLUE}║${RESET}"
+printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
+printf "%b\n" "${BLUE}║${CYAN} [1] Install OpenClash                ${BLUE}║${RESET}"
+printf "%b\n" "${BLUE}║${CYAN} [2] Install SSR Plus+                ${BLUE}║${RESET}"
+printf "%b\n" "${BLUE}║${CYAN} [0] Exit                             ${BLUE}║${RESET}"
+printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
-printf "%b\n" "${BLUE}│${GREEN}        Open-Pro-Installer        ${BLUE}│${RESET}"
-
-printf "%b\n" "${BLUE}│${GREEN}            Version 1.0            ${BLUE}│${RESET}"
-
-printf "%b\n" "${BLUE}╰──────────────────────────────────────╯${RESET}"
-
-
-printf "%b\n" "${BLUE}┌──────────────────────────────────────┐${RESET}"
-
-printf "%b\n" "${BLUE}│          ${CYAN}Plugin Manager${BLUE}             │${RESET}"
-
-printf "%b\n" "${BLUE}├──────────────────────────────────────┤${RESET}"
-
-
-printf "%b\n" "${BLUE}│                                      │${RESET}"
-
-printf "%b\n" "${BLUE}│  ${CYAN}[1]${RESET} Install OpenClash              ${BLUE}│${RESET}"
-
-printf "%b\n" "${BLUE}│                                      │${RESET}"
-
-printf "%b\n" "${BLUE}│  ${CYAN}[2]${RESET} Install SSR Plus+              ${BLUE}│${RESET}"
-
-printf "%b\n" "${BLUE}│                                      │${RESET}"
-
-printf "%b\n" "${BLUE}│  ${CYAN}[0]${RESET} Exit                          ${BLUE}│${RESET}"
-
-printf "%b\n" "${BLUE}│                                      │${RESET}"
-
-
-printf "%b\n" "${BLUE}└──────────────────────────────────────┘${RESET}"
-
-
-printf "\n"
-
-
-printf "%b" "${YELLOW} Select option > ${RESET}"
+printf "%b" "${YELLOW} 选择序列 > ${RESET}"
 
 
 }
