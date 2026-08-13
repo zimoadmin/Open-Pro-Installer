@@ -15,7 +15,7 @@ echo "1. Install OpenClash"
 echo "0. Exit"
 
 printf "Choose: "
-read CHOOSE
+read CHOOSE </dev/tty
 
 case "$CHOOSE" in
 1)
