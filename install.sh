@@ -6,7 +6,7 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 . "$SCRIPT_DIR/lib/logger.sh"
 . "$SCRIPT_DIR/lib/github.sh"
-
+. "$SCRIPT_DIR/modules/depend.sh"
 
 clear
 
