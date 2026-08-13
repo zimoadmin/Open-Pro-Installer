@@ -1,9 +1,12 @@
 #!/bin/sh
 
+
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
 
 . "$SCRIPT_DIR/lib/logger.sh"
 . "$SCRIPT_DIR/lib/github.sh"
+
 
 clear
 
@@ -12,50 +15,89 @@ clear
 # Color
 # ==============================
 
-GREEN="\033[32m"
-PURPLE="\033[35m"
-BLUE="\033[34m"
-RED="\033[31m"
-RESET="\033[0m"
+GREEN="$(printf '\033[32m')"
+CYAN="$(printf '\033[36m')"
+BLUE="$(printf '\033[34m')"
+RED="$(printf '\033[31m')"
+YELLOW="$(printf '\033[33m')"
+RESET="$(printf '\033[0m')"
 
-
-LINE="${BLUE}======================================${RESET}"
 
 
 # ==============================
-# Main UI
+# UI Function
 # ==============================
 
-echo ""
 
-echo "$LINE"
+show_banner()
+{
 
-echo -e "${GREEN}"
-echo "        Open-Pro-Installer"
-echo -e "${RESET}"
+printf "\n"
 
-echo "$LINE"
 
-echo ""
+printf "%b\n" "${BLUE}╭──────────────────────────────────────╮${RESET}"
 
-echo -e "${PURPLE}1. Install OpenClash${RESET}"
-echo -e "${PURPLE}2. Install SSR Plus+${RESET}"
-echo ""
+printf "%b\n" "${BLUE}│                                      │${RESET}"
 
-echo -e "${PURPLE}0. Exit${RESET}"
+printf "%b\n" "${BLUE}│        ${GREEN}Open-Pro-Installer${BLUE}           │${RESET}"
 
-echo ""
+printf "%b\n" "${BLUE}│            ${GREEN}Version 1.0${BLUE}              │${RESET}"
 
-echo "$LINE"
+printf "%b\n" "${BLUE}│                                      │${RESET}"
 
-printf "${PURPLE}Choose: ${RESET}"
+printf "%b\n" "${BLUE}╰──────────────────────────────────────╯${RESET}"
+
+
+printf "\n"
+
+
+printf "%b\n" "${BLUE}┌──────────────────────────────────────┐${RESET}"
+
+printf "%b\n" "${BLUE}│          ${CYAN}Plugin Manager${BLUE}             │${RESET}"
+
+printf "%b\n" "${BLUE}├──────────────────────────────────────┤${RESET}"
+
+
+printf "%b\n" "${BLUE}│                                      │${RESET}"
+
+printf "%b\n" "${BLUE}│  ${CYAN}[1]${RESET} Install OpenClash              ${BLUE}│${RESET}"
+
+printf "%b\n" "${BLUE}│                                      │${RESET}"
+
+printf "%b\n" "${BLUE}│  ${CYAN}[2]${RESET} Install SSR Plus+              ${BLUE}│${RESET}"
+
+printf "%b\n" "${BLUE}│                                      │${RESET}"
+
+printf "%b\n" "${BLUE}│  ${CYAN}[0]${RESET} Exit                          ${BLUE}│${RESET}"
+
+printf "%b\n" "${BLUE}│                                      │${RESET}"
+
+
+printf "%b\n" "${BLUE}└──────────────────────────────────────┘${RESET}"
+
+
+printf "\n"
+
+
+printf "%b" "${YELLOW} Select option > ${RESET}"
+
+
+}
+
+
+
+# ==============================
+# Main
+# ==============================
+
+
+show_banner
+
 
 read CHOOSE </dev/tty
 
 
-echo ""
-
-echo "$LINE"
+printf "\n"
 
 
 case "$CHOOSE" in
@@ -63,74 +105,72 @@ case "$CHOOSE" in
 
 1)
 
-    echo -e "${GREEN}"
-    echo "===== STEP 1 ====="
-    echo -e "${RESET}"
+    printf "%b\n" "${GREEN}===== STEP 1 =====${RESET}"
+
 
     get_latest_release
 
 
-    echo -e "${GREEN}"
-    echo "===== STEP 2 ====="
-    echo -e "${RESET}"
+    printf "%b\n" "${GREEN}===== STEP 2 =====${RESET}"
 
 
     . "$SCRIPT_DIR/modules/openclash.sh"
 
 
-    echo -e "${GREEN}"
-    echo "===== STEP 3 ====="
-    echo -e "${RESET}"
+    printf "%b\n" "${GREEN}===== STEP 3 =====${RESET}"
 
 
     install_openclash
 
 
-    echo -e "${GREEN}"
-    echo "===== STEP 4 ====="
-    echo -e "${RESET}"
+    printf "%b\n" "${GREEN}===== STEP 4 =====${RESET}"
+
 
     ;;
 
 
+
 2)
 
-    echo -e "${GREEN}"
-    echo "===== STEP 1 ====="
-    echo "Preparing SSR Plus+..."
-    echo -e "${RESET}"
+
+    printf "%b\n" "${GREEN}===== STEP 1 =====${RESET}"
+
+    printf "%b\n" "${YELLOW}Preparing SSR Plus+...${RESET}"
 
 
     . "$SCRIPT_DIR/modules/ssrplus.sh"
 
 
-    echo -e "${GREEN}"
-    echo "===== STEP 2 ====="
-    echo -e "${RESET}"
+
+    printf "%b\n" "${GREEN}===== STEP 2 =====${RESET}"
 
 
     install_ssrplus
 
 
-    echo -e "${GREEN}"
-    echo "===== STEP 3 ====="
-    echo -e "${RESET}"
+
+    printf "%b\n" "${GREEN}===== STEP 3 =====${RESET}"
+
 
     ;;
 
 
+
 0)
 
-    echo -e "${RED}Exit.${RESET}"
+
+    printf "%b\n" "${RED}Exit.${RESET}"
 
     exit 0
 
     ;;
 
 
+
 *)
 
-    echo -e "${RED}[ERROR] Invalid option.${RESET}"
+
+    printf "%b\n" "${RED}[ERROR] Invalid option.${RESET}"
 
     exit 1
 
@@ -140,8 +180,10 @@ case "$CHOOSE" in
 esac
 
 
-echo ""
 
-echo "$LINE"
+printf "\n"
 
-echo ""
+
+printf "%b\n" "${BLUE}══════════════════════════════════════${RESET}"
+
+printf "\n"
