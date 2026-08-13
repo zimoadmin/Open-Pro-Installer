@@ -37,14 +37,11 @@ printf "\n"
 
 printf "%b\n" "${BLUE}╭──────────────────────────────────────╮${RESET}"
 
-printf "%b\n" "${BLUE}│        ${GREEN}ZIMO-Installer${BLUE}           │${RESET}"
+printf "%b\n" "${BLUE}│${GREEN}        Open-Pro-Installer        ${BLUE}│${RESET}"
 
-printf "%b\n" "${BLUE}│            ${GREEN}Version 1.0${BLUE}              │${RESET}"
+printf "%b\n" "${BLUE}│${GREEN}            Version 1.0            ${BLUE}│${RESET}"
 
 printf "%b\n" "${BLUE}╰──────────────────────────────────────╯${RESET}"
-
-
-printf "\n"
 
 
 printf "%b\n" "${BLUE}┌──────────────────────────────────────┐${RESET}"
