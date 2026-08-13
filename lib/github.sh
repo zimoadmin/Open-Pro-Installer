@@ -6,21 +6,19 @@ get_latest_release() {
 
     info "Getting latest OpenClash release..."
 
-    JSON="$(wget -qO- "$OPENCLASH_API")"
+    wget -qO /tmp/openclash_version "$OPENCLASH_API"
 
-    if [ -z "$JSON" ]; then
-        error "GitHub API request failed."
+    if [ ! -f /tmp/openclash_version ]; then
+        error "Failed to download release information."
         return 1
     fi
 
-    RELEASE_TAG="$(echo "$JSON" | grep '"tag_name"' | head -n1 | cut -d '"' -f4)"
+    # 获取版本号
+    RELEASE_TAG="$(jsonfilter -i /tmp/openclash_version -e '@.tag_name')"
 
-    DOWNLOAD_URL="$(echo "$JSON" \
-        | grep '"browser_download_url"' \
-        | grep 'luci-app-openclash' \
-        | cut -d '"' -f4 \
-        | head -n1)"
+    # 获取 IPK 下载地址
+    DOWNLOAD_URL="$(jsonfilter -i /tmp/openclash_version -e '@.assets[*].browser_download_url' | grep '\.ipk$' | head -n1)"
 
-    info "Latest Version: $RELEASE_TAG"
-    info "Download URL: $DOWNLOAD_URL"
+    info "Latest Version : $RELEASE_TAG"
+    info "Download URL : $DOWNLOAD_URL"
 }
