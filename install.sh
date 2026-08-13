@@ -97,7 +97,7 @@ printf "%b\n" "${BLUE}║${GREEN}                 v1.0.0               ${BLUE}�
 
 printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
 
-printf "%b\n" "${BLUE}║${CYAN}  [1] 一键仿 iStoreOS 主题             ${BLUE}║${RESET}"
+printf "%b\n" "${BLUE}║${CYAN}  [1] 一键仿 iStoreOS 主题            ${BLUE}║${RESET}"
 
 printf "%b\n" "${BLUE}║${CYAN}  [2] 安装 iStore 商店                ${BLUE}║${RESET}"
 
