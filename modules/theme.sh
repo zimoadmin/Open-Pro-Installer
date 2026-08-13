@@ -115,7 +115,7 @@ if command -v jsonfilter >/dev/null 2>&1
 then
 
 
-    VERSION="$(jsonfilter -i /tmp/argon.json -e '@.tag_name')"
+    VERSION="$(jsonfilter -i /tmp/argon.json -e '@.version')"
 
 
 else
