@@ -24,7 +24,9 @@ REPO="https://github.com/zimoadmin/Open-Pro-Installer/archive/refs/heads/main.zi
 WORKDIR="/tmp/Open-Pro-Installer"
 
 AUTH_SERVER="https://openpro-auth.zimo4399.workers.dev"
-
+# ======================================
+# Header
+# ======================================
 
 echo ""
 
