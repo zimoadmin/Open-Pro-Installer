@@ -57,10 +57,28 @@ jobs:
           echo "SDK files:"
           ls -la
 
+      - name: Disable broken MediaTek feed
+        working-directory: sdk
+        run: |
+          echo "===== Original feeds ====="
+          cat feeds.conf.default
+
+          cp feeds.conf.default feeds.conf.default.bak
+
+          sed -i '/mtk_openwrt_feed/d' feeds.conf.default
+
+          echo ""
+          echo "===== Feeds after fix ====="
+          cat feeds.conf.default
+
       - name: Update feeds
         working-directory: sdk
         run: |
-          ./scripts/feeds update -a
+          ./scripts/feeds update packages
+          ./scripts/feeds update luci
+          ./scripts/feeds update routing
+          ./scripts/feeds update telephony
+
           ./scripts/feeds install -a
 
       - name: Add SSR Plus+
