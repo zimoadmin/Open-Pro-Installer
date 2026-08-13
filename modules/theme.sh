@@ -15,11 +15,6 @@ RESET="\033[0m"
 
 
 
-# ======================================
-# 安装主题
-# ======================================
-
-
 install_theme()
 {
 
@@ -57,21 +52,16 @@ then
 
 else
 
-
     printf "${RED}[ERROR] 未检测到软件包管理器${RESET}\n"
 
     return 1
-
 
 fi
 
 
 
-
 printf "${GREEN}[INFO] 软件管理器:${RESET} $PKG\n"
 printf "${GREEN}[INFO] 软件包类型:${RESET} .$EXT\n"
-
-
 
 
 
@@ -96,7 +86,8 @@ then
 elif command -v curl >/dev/null 2>&1
 then
 
-    curl -fsSL "$ARGON_API" -o /tmp/argon.json
+    curl -fsSL "$ARGON_API" \
+    -o /tmp/argon.json
 
 
 else
@@ -110,50 +101,63 @@ fi
 
 
 
+if [ ! -s /tmp/argon.json ]
+then
+
+    printf "${RED}[ERROR] Worker返回为空${RESET}\n"
+
+    return 1
+
+fi
+
+
+
+
+# ======================================
+# 解析版本
+# ======================================
+
 
 if command -v jsonfilter >/dev/null 2>&1
 then
 
 
-    VERSION="$(jsonfilter -i /tmp/argon.json -e '@.version')"
-
-    VERSION="${VERSION#v}"
+    VERSION="$(jsonfilter \
+    -i /tmp/argon.json \
+    -e '@.version')"
 
 
 else
 
 
-    VERSION="$(grep '"tag_name"' /tmp/argon.json | sed 's/.*"tag_name": "\(.*\)",/\1/')"
+    VERSION="$(grep version /tmp/argon.json \
+    | sed 's/.*version":"\([^"]*\).*/\1/')"
 
 
 fi
-
-
 
 
 
 if [ -z "$VERSION" ]
 then
 
+    printf "${RED}[ERROR] 获取版本失败${RESET}\n"
 
-printf "${RED}[ERROR] 获取版本失败${RESET}\n"
+    cat /tmp/argon.json
 
-return 1
-
+    return 1
 
 fi
 
 
 
-
-# 去掉 v
+# 删除 v
 
 VERSION="${VERSION#v}"
 
 
 
-printf "${GREEN}[INFO] 最新版本:${RESET} v$VERSION\n"
-
+printf "${GREEN}[INFO] 最新版本:${RESET} v${VERSION}\n"
 
 
 
@@ -164,10 +168,8 @@ printf "${GREEN}[INFO] 最新版本:${RESET} v$VERSION\n"
 # ======================================
 
 
-
 if [ "$EXT" = "ipk" ]
 then
-
 
 
 THEME_URL="https://github.com/jerrykuku/luci-theme-argon/releases/download/v${VERSION}/luci-theme-argon_${VERSION}-1_all.ipk"
@@ -180,12 +182,10 @@ CONFIG_URL="https://github.com/jerrykuku/luci-theme-argon/releases/download/v${V
 else
 
 
-
 THEME_URL="https://github.com/jerrykuku/luci-theme-argon/releases/download/v${VERSION}/luci-theme-argon-${VERSION}-r1.apk"
 
 
 CONFIG_URL="https://github.com/jerrykuku/luci-theme-argon/releases/download/v${VERSION}/luci-app-argon-config-${VERSION}-r1.apk"
-
 
 
 fi
@@ -203,10 +203,13 @@ cd /tmp || return 1
 
 
 
+rm -f theme.$EXT config.$EXT
+
+
+
 printf "\n"
 
 printf "${GREEN}[INFO] 下载主题...${RESET}\n"
-
 
 
 wget -O "theme.$EXT" "$THEME_URL"
@@ -221,7 +224,6 @@ printf "${RED}[ERROR] 主题下载失败${RESET}\n"
 return 1
 
 fi
-
 
 
 
@@ -247,12 +249,9 @@ fi
 
 
 
-
-
 # ======================================
 # 安装
 # ======================================
-
 
 
 if [ "$PKG" = "opkg" ]
@@ -260,6 +259,7 @@ then
 
 
 printf "${GREEN}[INFO] 正在安装 IPK...${RESET}\n"
+
 
 
 opkg install \
@@ -295,7 +295,6 @@ then
 
 printf "${RED}[ERROR] 安装失败${RESET}\n"
 
-
 return 1
 
 
@@ -306,7 +305,7 @@ fi
 
 
 # ======================================
-# 设置 Argon
+# 设置主题
 # ======================================
 
 
@@ -323,6 +322,7 @@ uci set luci.main.mediaurlbase='/luci-static/argon'
 uci commit luci
 
 
+
 /etc/init.d/uhttpd restart 2>/dev/null
 
 
@@ -334,14 +334,19 @@ fi
 
 printf "\n"
 
-printf "${GREEN}[SUCCESS] iStoreOS主题安装完成${RESET}\n"
 
+printf "${GREEN}[SUCCESS] iStoreOS主题安装完成${RESET}\n"
 
 printf "${CYAN}[INFO] 请刷新 LuCI 页面${RESET}\n"
 
 
-
 echo ""
+
+
+
+# 返回上级菜单
+
+return 0
 
 
 }
