@@ -1,6 +1,22 @@
 #!/bin/sh
 
 
+# ======================================
+# Color
+# ======================================
+
+GREEN="$(printf '\033[32m')"
+BLUE="$(printf '\033[34m')"
+YELLOW="$(printf '\033[33m')"
+RED="$(printf '\033[31m')"
+RESET="$(printf '\033[0m')"
+
+
+
+# ======================================
+# Config
+# ======================================
+
 REPO="https://github.com/zimoadmin/Open-Pro-Installer/archive/refs/heads/main.zip"
 
 WORKDIR="/tmp/Open-Pro-Installer"
@@ -9,24 +25,28 @@ AUTH_SERVER="https://openpro-auth.zimo4399.workers.dev"
 
 
 
-echo "======================================"
-echo "      Open-Pro-Installer Bootstrap"
-echo "======================================"
+# ======================================
+# Header
+# ======================================
+
+printf "%b\n" "${GREEN}======================================${RESET}"
+printf "%b\n" "${GREEN}      Open-Pro-Installer Bootstrap${RESET}"
+printf "%b\n" "${GREEN}======================================${RESET}"
 
 echo ""
 
 
 
 # ======================================
-# 检查工具
+# Check tools
 # ======================================
-
 
 for cmd in curl wget unzip; do
 
-    if ! command -v "$cmd" >/dev/null 2>&1; then
+    if ! command -v "$cmd" >/dev/null 2>&1
+    then
 
-        echo "[ERROR] Missing command: $cmd"
+        printf "%b\n" "${RED}[ERROR] Missing command: $cmd${RESET}"
 
         exit 1
 
@@ -38,19 +58,19 @@ done
 
 
 # ======================================
-# 请求授权
+# Request Auth
 # ======================================
 
 
-echo "[AUTH] 正在申请授权..."
+printf "%b\n" "${GREEN}[AUTH] 正在申请授权...${RESET}"
 
 
 
 AUTH_RESPONSE="$(curl -fsS \
-    --connect-timeout 10 \
-    -X POST \
-    "$AUTH_SERVER/request" \
-    2>/dev/null)"
+--connect-timeout 10 \
+-X POST \
+"$AUTH_SERVER/request" \
+2>/dev/null)"
 
 
 
@@ -58,7 +78,7 @@ AUTH_RESPONSE="$(curl -fsS \
 if [ -z "$AUTH_RESPONSE" ]; then
 
 
-    echo "[ERROR] 授权服务器连接失败"
+    printf "%b\n" "${RED}[ERROR] 无法连接授权服务器${RESET}"
 
     exit 1
 
@@ -68,10 +88,12 @@ fi
 
 
 
-if ! printf "%s" "$AUTH_RESPONSE" | grep -q '"success"[[:space:]]*:[[:space:]]*true'
+
+if ! printf "%s" "$AUTH_RESPONSE" | grep -q \
+'"success"[[:space:]]*:[[:space:]]*true'
 then
 
-    echo "[ERROR] 获取验证码失败"
+    printf "%b\n" "${RED}[ERROR] 获取验证码失败${RESET}"
 
     echo "$AUTH_RESPONSE"
 
@@ -82,9 +104,9 @@ fi
 
 
 
-echo "[AUTH] 验证码已发送给管理员"
+printf "%b\n" "${GREEN}[AUTH] 验证码已发送给管理员${RESET}"
 
-echo "[AUTH] 验证码有效时间：3分钟"
+printf "%b\n" "${GREEN}[AUTH] 验证码有效时间：3分钟${RESET}"
 
 echo ""
 
@@ -92,22 +114,22 @@ echo ""
 
 
 # ======================================
-# 输入验证码
+# Input Code
 # ======================================
 
 
-printf "请输入验证码: "
+printf "%b" "${YELLOW}请输入验证码: ${RESET}"
+
 
 read AUTH_CODE </dev/tty
+
 
 
 
 if [ -z "$AUTH_CODE" ]; then
 
 
-    echo ""
-
-    echo "[ERROR] 验证码不能为空"
+    printf "%b\n" "${RED}[ERROR] 验证码不能为空${RESET}"
 
     exit 1
 
@@ -120,55 +142,50 @@ fi
 case "$AUTH_CODE" in
 
 
-    [0-9][0-9][0-9][0-9][0-9][0-9])
+[0-9][0-9][0-9][0-9][0-9][0-9])
 
-        ;;
+    ;;
 
 
-    *)
+*)
 
-        echo ""
+    printf "%b\n" "${RED}[ERROR] 验证码必须是6位数字${RESET}"
 
-        echo "[ERROR] 验证码必须是6位数字"
+    exit 1
 
-        exit 1
+    ;;
 
-        ;;
 
 esac
 
 
 
 
-
 echo ""
 
-echo "[AUTH] 正在验证..."
+printf "%b\n" "${GREEN}[AUTH] 正在验证...${RESET}"
 
 
 
 
 
 # ======================================
-# 验证
+# Verify
 # ======================================
 
 
-VERIFY_DATA="$(printf \
-'{"code":"%s"}' \
-"$AUTH_CODE")"
-
+VERIFY_DATA="$(printf '{"code":"%s"}' "$AUTH_CODE")"
 
 
 
 
 VERIFY_RESPONSE="$(curl -fsS \
-    --connect-timeout 10 \
-    -X POST \
-    -H "Content-Type: application/json" \
-    -d "$VERIFY_DATA" \
-    "$AUTH_SERVER/verify" \
-    2>/dev/null)"
+--connect-timeout 10 \
+-X POST \
+-H "Content-Type: application/json" \
+-d "$VERIFY_DATA" \
+"$AUTH_SERVER/verify" \
+2>/dev/null)"
 
 
 
@@ -179,7 +196,7 @@ if printf "%s" "$VERIFY_RESPONSE" | grep -q \
 then
 
 
-    echo "[AUTH] 授权成功"
+    printf "%b\n" "${GREEN}[AUTH] 授权成功${RESET}"
 
     echo ""
 
@@ -187,7 +204,7 @@ then
 else
 
 
-    echo "[ERROR] 授权失败"
+    printf "%b\n" "${RED}[ERROR] 授权失败${RESET}"
 
     echo "$VERIFY_RESPONSE"
 
@@ -201,7 +218,7 @@ fi
 
 
 # ======================================
-# 下载程序
+# Download
 # ======================================
 
 
@@ -212,7 +229,8 @@ mkdir -p "$WORKDIR"
 
 
 
-echo "[INFO] Downloading latest version..."
+printf "%b\n" "${BLUE}[INFO] Downloading latest version...${RESET}"
+
 
 
 
@@ -222,7 +240,7 @@ if ! wget \
 then
 
 
-    echo "[ERROR] Download failed"
+    printf "%b\n" "${RED}[ERROR] Download failed${RESET}"
 
     exit 1
 
@@ -232,7 +250,13 @@ fi
 
 
 
-echo "[INFO] Extracting..."
+
+# ======================================
+# Extract
+# ======================================
+
+
+printf "%b\n" "${BLUE}[INFO] Extracting...${RESET}"
 
 
 
@@ -242,7 +266,7 @@ if ! unzip -oq \
 then
 
 
-    echo "[ERROR] Extract failed"
+    printf "%b\n" "${RED}[ERROR] Extract failed${RESET}"
 
     exit 1
 
@@ -254,12 +278,11 @@ fi
 
 
 # ======================================
-# 启动
+# Start Installer
 # ======================================
 
 
 cd "$WORKDIR/Open-Pro-Installer-main" || exit 1
-
 
 
 
@@ -274,12 +297,9 @@ chmod +x modules/*.sh 2>/dev/null
 
 
 
-echo ""
-
-echo "[INFO] Starting installer..."
+printf "%b\n" "${BLUE}[INFO] Starting installer...${RESET}"
 
 echo ""
-
 
 
 
