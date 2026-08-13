@@ -39,12 +39,7 @@ echo ""
 MODEL="$(cat /tmp/sysinfo/model 2>/dev/null)"
 
 
-if [ -z "$MODEL" ]
-then
-
-MODEL="Unknown"
-
-fi
+[ -z "$MODEL" ] && MODEL="Unknown"
 
 
 
@@ -61,7 +56,7 @@ printf "${GREEN}[INFO] CPU架构:${RESET} $ARCH\n"
 
 
 # ======================================
-# 软件包管理器
+# 检测包管理器
 # ======================================
 
 
@@ -95,6 +90,7 @@ fi
 
 
 
+
 printf "${GREEN}[INFO] 软件管理器:${RESET} $PKG\n"
 
 printf "${GREEN}[INFO] 软件包类型:${RESET} .$EXT\n"
@@ -104,13 +100,12 @@ printf "${GREEN}[INFO] 软件包类型:${RESET} .$EXT\n"
 
 
 
-
 # ======================================
-# 更新软件源
+# 临时添加 Argon源
 # ======================================
 
 
-printf "${GREEN}[INFO] 更新软件源...${RESET}\n"
+ARGON_FEED="/etc/opkg/customfeeds.conf"
 
 
 
@@ -118,13 +113,29 @@ if [ "$PKG" = "opkg" ]
 then
 
 
+printf "${GREEN}[INFO] 添加Argon临时源...${RESET}\n"
+
+
+
+cp "$ARGON_FEED" \
+/tmp/customfeeds.backup 2>/dev/null
+
+
+
+sed -i '/argon_theme/d' "$ARGON_FEED" 2>/dev/null
+
+
+
+cat >> "$ARGON_FEED" <<EOF
+
+src/gz argon_theme https://cafe.cpolar.cn/wkdaily/gl/raw/branch/main/theme
+
+EOF
+
+
+
 opkg update >/dev/null 2>&1
 
-
-else
-
-
-apk update >/dev/null 2>&1
 
 
 fi
@@ -148,7 +159,14 @@ if [ "$PKG" = "opkg" ]
 then
 
 
-for DEP in luci-lib-ipkg luci-compat
+
+for DEP in \
+luci-lua-runtime \
+luci-lib-ipkg \
+luci-compat \
+libopenssl3
+
+
 do
 
 
@@ -177,137 +195,7 @@ fi
 
 
 # ======================================
-# 获取 Argon 信息
-# ======================================
-
-
-ARGON_API="https://openpro-auth.zimo4399.workers.dev/argon"
-
-
-
-printf "${GREEN}[INFO] 获取 Argon 最新版本...${RESET}\n"
-
-
-
-wget -qO /tmp/argon.json "$ARGON_API"
-
-
-
-
-if [ ! -s /tmp/argon.json ]
-then
-
-
-printf "${RED}[ERROR] Worker返回为空${RESET}\n"
-
-
-return 1
-
-
-fi
-
-
-
-
-
-
-
-VERSION="$(jsonfilter \
--i /tmp/argon.json \
--e '@.version')"
-
-
-
-if [ -z "$VERSION" ]
-then
-
-
-printf "${RED}[ERROR] 获取版本失败${RESET}\n"
-
-
-cat /tmp/argon.json
-
-
-return 1
-
-
-fi
-
-
-
-
-printf "${GREEN}[INFO] Argon版本:${RESET} $VERSION\n"
-
-
-
-
-
-
-
-# ======================================
-# 获取真实下载地址
-# ======================================
-
-
-if [ "$EXT" = "ipk" ]
-then
-
-
-THEME_URL="$(jsonfilter \
--i /tmp/argon.json \
--e '@.theme_ipk')"
-
-
-CONFIG_URL="$(jsonfilter \
--i /tmp/argon.json \
--e '@.config_ipk')"
-
-
-
-else
-
-
-THEME_URL="$(jsonfilter \
--i /tmp/argon.json \
--e '@.theme_apk')"
-
-
-
-CONFIG_URL="$(jsonfilter \
--i /tmp/argon.json \
--e '@.config_apk')"
-
-
-
-fi
-
-
-
-
-
-if [ -z "$THEME_URL" ]
-then
-
-
-printf "${RED}[ERROR] 没有主题下载地址${RESET}\n"
-
-
-cat /tmp/argon.json
-
-
-return 1
-
-
-fi
-
-
-
-
-
-
-
-# ======================================
-# 下载
+# 下载 Argon
 # ======================================
 
 
@@ -315,61 +203,41 @@ cd /tmp || return 1
 
 
 
-rm -f argon-theme.$EXT argon-config.$EXT
+printf "${GREEN}[INFO] 下载Argon主题...${RESET}\n"
 
 
 
 
-printf "${GREEN}[INFO] 下载 Argon主题...${RESET}\n"
-
-
-
-wget \
--O argon-theme.$EXT \
-"$THEME_URL"
-
-
-
-if [ $? -ne 0 ]
+if [ "$PKG" = "opkg" ]
 then
 
 
-printf "${RED}[ERROR] 主题下载失败${RESET}\n"
 
+wget -O luci-theme-argon.ipk \
+https://cafe.cpolar.cn/wkdaily/gl/raw/branch/main/theme/luci-theme-argon-master_2.2.9.4_all.ipk
+
+
+
+wget -O luci-app-argon-config.ipk \
+https://cafe.cpolar.cn/wkdaily/gl/raw/branch/main/theme/luci-app-argon-config_0.9_all.ipk
+
+
+
+wget -O luci-i18n-argon-config-zh-cn.ipk \
+https://cafe.cpolar.cn/wkdaily/gl/raw/branch/main/theme/luci-i18n-argon-config-zh-cn.ipk
+
+
+
+else
+
+
+
+printf "${RED}[ERROR] 暂不支持APK版Argon源安装${RESET}\n"
 
 return 1
 
 
 fi
-
-
-
-
-
-
-printf "${GREEN}[INFO] 下载配置插件...${RESET}\n"
-
-
-
-wget \
--O argon-config.$EXT \
-"$CONFIG_URL"
-
-
-
-
-if [ $? -ne 0 ]
-then
-
-
-printf "${RED}[ERROR] 配置下载失败${RESET}\n"
-
-
-return 1
-
-
-fi
-
 
 
 
@@ -381,37 +249,14 @@ fi
 # ======================================
 
 
-if [ "$PKG" = "opkg" ]
-then
-
-
-printf "${GREEN}[INFO] 安装IPK...${RESET}\n"
+printf "${GREEN}[INFO] 安装Argon主题...${RESET}\n"
 
 
 
 opkg install \
-argon-theme.$EXT \
-argon-config.$EXT
-
-
-
-
-else
-
-
-
-printf "${GREEN}[INFO] 安装APK...${RESET}\n"
-
-
-
-apk add \
---allow-untrusted \
-argon-theme.$EXT \
-argon-config.$EXT
-
-
-
-fi
+/tmp/luci-theme-argon.ipk \
+/tmp/luci-app-argon-config.ipk \
+/tmp/luci-i18n-argon-config-zh-cn.ipk
 
 
 
@@ -422,13 +267,49 @@ if [ $? -ne 0 ]
 then
 
 
-printf "${RED}[ERROR] 安装失败${RESET}\n"
-
+printf "${RED}[ERROR] Argon安装失败${RESET}\n"
 
 return 1
 
 
 fi
+
+
+
+
+
+
+
+
+# ======================================
+# 删除临时源
+# ======================================
+
+
+printf "${GREEN}[INFO] 清理临时源...${RESET}\n"
+
+
+
+sed -i '/argon_theme/d' \
+/etc/opkg/customfeeds.conf
+
+
+
+if [ -f /tmp/customfeeds.backup ]
+then
+
+
+cp /tmp/customfeeds.backup \
+/etc/opkg/customfeeds.conf
+
+
+
+fi
+
+
+
+
+opkg update >/dev/null 2>&1
 
 
 
@@ -441,21 +322,17 @@ fi
 # ======================================
 
 
-printf "${YELLOW}[INFO] 设置 Argon主题...${RESET}\n"
+printf "${YELLOW}[INFO] 设置Argon主题...${RESET}\n"
 
 
 
-if command -v uci >/dev/null 2>&1
-then
-
-
-
-uci set luci.main.theme='Argon'
+uci set luci.main.theme='argon'
 
 uci set luci.main.mediaurlbase='/luci-static/argon'
 
 
 uci commit luci
+
 
 
 
@@ -469,21 +346,14 @@ rm -rf /tmp/luci-*
 
 
 
-fi
-
-
-
 
 
 
 printf "\n"
 
-
 printf "${GREEN}[SUCCESS] Argon主题安装成功${RESET}\n"
 
-
-printf "${CYAN}[INFO] 请重新登录 LuCI 页面${RESET}\n"
-
+printf "${CYAN}[INFO] 请重新登录LuCI页面${RESET}\n"
 
 
 echo ""
