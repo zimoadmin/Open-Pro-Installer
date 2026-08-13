@@ -120,14 +120,35 @@ jobs:
           CONFIG_PACKAGE_dns2socks=m
           CONFIG_PACKAGE_microsocks=m
           CONFIG_PACKAGE_tcping=m
+
+          # Disable Rust packages on OpenWrt 21.02
+          # CONFIG_PACKAGE_dns2socks-rust is not set
+          # CONFIG_PACKAGE_shadowsocks-rust-sslocal is not set
+          # CONFIG_PACKAGE_shadowsocks-rust-ssserver is not set
+
           EOF
 
           make defconfig
 
-      - name: Download sources
+      - name: Download SSR Plus+ sources
         working-directory: sdk
         run: |
-          make download -j8 || make download -j1 V=s
+          make package/helloworld/luci-app-ssr-plus/download -j1 V=s || true
+
+          make package/helloworld/shadowsocksr-libev/download \
+            -j1 V=s || true
+
+          make package/helloworld/chinadns-ng/download \
+            -j1 V=s || true
+
+          make package/helloworld/dns2socks/download \
+            -j1 V=s || true
+
+          make package/helloworld/microsocks/download \
+            -j1 V=s || true
+
+          make package/helloworld/tcping/download \
+            -j1 V=s || true
 
       - name: Build dependencies
         working-directory: sdk
