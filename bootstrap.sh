@@ -58,8 +58,62 @@ echo ""
 # 第四步：用户输入验证码
 # ======================================
 
+# ======================================
+# 第四步：用户输入验证码
+# ======================================
+
 printf "请输入验证码: " > /dev/tty
 IFS= read -r AUTH_CODE < /dev/tty
+
+if [ -z "$AUTH_CODE" ]; then
+    echo "[ERROR] 验证码不能为空"
+    exit 1
+fi
+
+# 只允许 6 位数字
+case "$AUTH_CODE" in
+    [0-9][0-9][0-9][0-9][0-9][0-9])
+        ;;
+    *)
+        echo "[ERROR] 验证码必须是 6 位数字"
+        exit 1
+        ;;
+esac
+
+echo ""
+echo "[AUTH] 正在验证..."
+
+# ======================================
+# 第五步：提交验证码
+# ======================================
+
+VERIFY_DATA=$(printf '{"request_id":"%s","code":"%s"}' \
+    "$REQUEST_ID" \
+    "$AUTH_CODE")
+
+VERIFY_RESPONSE="$(curl -sS \
+    -X POST \
+    -H "Content-Type: application/json" \
+    --data "$VERIFY_DATA" \
+    "$AUTH_SERVER/verify" 2>/dev/null)"
+
+# ======================================
+# 第六步：判断验证结果
+# ======================================
+
+if printf '%s' "$VERIFY_RESPONSE" | \
+    grep -q '"success"[[:space:]]*:[[:space:]]*true'; then
+
+    echo "[AUTH] 授权成功"
+    echo ""
+
+else
+
+    echo "[ERROR] 授权失败"
+    echo "$VERIFY_RESPONSE"
+    exit 1
+
+fi
 
 if [ -z "$AUTH_CODE" ]; then
     echo "[ERROR] 验证码不能为空"
