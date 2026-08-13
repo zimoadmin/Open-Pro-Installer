@@ -28,21 +28,6 @@ AUTH_SERVER="https://openpro-auth.zimo4399.workers.dev"
 
 
 
-# ======================================
-# Header
-# ======================================
-
-
-printf "${GREEN}======================================${RESET}\n"
-printf "${GREEN}      Open-Pro-Installer Bootstrap${RESET}\n"
-printf "${GREEN}======================================${RESET}\n"
-
-
-echo ""
-
-
-
-
 
 # ======================================
 # Disclaimer
