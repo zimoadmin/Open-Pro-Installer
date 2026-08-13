@@ -27,7 +27,7 @@ RESET="$(printf '\033[0m')"
 
 
 # ==============================
-# 一级菜单
+# 主界面
 # ==============================
 
 
@@ -38,6 +38,9 @@ main_menu()
 clear
 
 
+printf "\n"
+
+
 printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
 
 printf "%b\n" "${BLUE}║${GREEN}             ZIMO--工具箱             ${BLUE}║${RESET}"
@@ -45,7 +48,6 @@ printf "%b\n" "${BLUE}║${GREEN}             ZIMO--工具箱             ${BLUE
 printf "%b\n" "${BLUE}║${GREEN}                 v1.0.0               ${BLUE}║${RESET}"
 
 printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
-
 
 printf "%b\n" "${BLUE}║${CYAN}  [1] 一键仿 iStoreOS 主题             ${BLUE}║${RESET}"
 
@@ -57,9 +59,7 @@ printf "%b\n" "${BLUE}║${CYAN}  [4] 解锁区域限制                    ${BL
 
 printf "%b\n" "${BLUE}║${CYAN}  [0] 退出                            ${BLUE}║${RESET}"
 
-
 printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
-
 
 
 printf "\n"
@@ -71,20 +71,29 @@ read CHOOSE </dev/tty
 
 
 
+
 case "$CHOOSE" in
+
 
 
 1)
 
-    printf "${GREEN}正在应用 iStoreOS 主题...${RESET}\n"
+    printf "%b\n" "${GREEN}[主题] 正在安装 iStoreOS 风格主题...${RESET}"
 
-    if [ -f "$SCRIPT_DIR/modules/istore-theme.sh" ]
+
+    if [ -f "$SCRIPT_DIR/modules/theme.sh" ]
     then
-        . "$SCRIPT_DIR/modules/istore-theme.sh"
+
+        . "$SCRIPT_DIR/modules/theme.sh"
+
         install_theme
+
     else
-        echo "主题模块不存在"
+
+        printf "%b\n" "${RED}[ERROR] 主题模块不存在${RESET}"
+
     fi
+
 
     ;;
 
@@ -92,15 +101,22 @@ case "$CHOOSE" in
 
 2)
 
-    printf "${GREEN}正在安装 iStore 商店...${RESET}\n"
+    printf "%b\n" "${GREEN}[iStore] 正在安装 iStore 商店...${RESET}"
+
 
     if [ -f "$SCRIPT_DIR/modules/istore.sh" ]
     then
+
         . "$SCRIPT_DIR/modules/istore.sh"
+
         install_istore
+
     else
-        echo "iStore模块不存在"
+
+        printf "%b\n" "${RED}[ERROR] iStore模块不存在${RESET}"
+
     fi
+
 
     ;;
 
@@ -116,15 +132,22 @@ case "$CHOOSE" in
 
 4)
 
-    printf "${GREEN}正在解锁区域...${RESET}\n"
+    printf "%b\n" "${GREEN}[区域] 正在解锁区域限制...${RESET}"
+
 
     if [ -f "$SCRIPT_DIR/modules/unlock.sh" ]
     then
+
         . "$SCRIPT_DIR/modules/unlock.sh"
+
         unlock_region
+
     else
-        echo "解锁模块不存在"
+
+        printf "%b\n" "${RED}[ERROR] 解锁模块不存在${RESET}"
+
     fi
+
 
     ;;
 
@@ -132,7 +155,7 @@ case "$CHOOSE" in
 
 0)
 
-    printf "${RED}Exit.${RESET}\n"
+    printf "%b\n" "${RED}Exit.${RESET}"
 
     exit 0
 
@@ -142,7 +165,7 @@ case "$CHOOSE" in
 
 *)
 
-    printf "${RED}[ERROR] 输入错误${RESET}\n"
+    printf "%b\n" "${RED}[ERROR] Invalid option.${RESET}"
 
     sleep 2
 
@@ -160,7 +183,7 @@ esac
 
 
 # ==============================
-# 二级代理菜单
+# 代理二级菜单
 # ==============================
 
 
@@ -171,6 +194,8 @@ proxy_menu()
 clear
 
 
+printf "\n"
+
 
 printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
 
@@ -178,22 +203,18 @@ printf "%b\n" "${BLUE}║${GREEN}              代理工具                ${BLU
 
 printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
 
-
 printf "%b\n" "${BLUE}║${CYAN}  [1] 安装 OpenClash                  ${BLUE}║${RESET}"
 
 printf "%b\n" "${BLUE}║${CYAN}  [2] 安装 SSR Plus+                  ${BLUE}║${RESET}"
 
 printf "%b\n" "${BLUE}║${CYAN}  [0] 返回                            ${BLUE}║${RESET}"
 
-
 printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
-
 
 
 printf "\n"
 
 printf "%b" "${YELLOW} 选择序列 > ${RESET}"
-
 
 
 read PROXY_CHOOSE </dev/tty
@@ -208,7 +229,7 @@ case "$PROXY_CHOOSE" in
 1)
 
 
-printf "${GREEN}正在安装 OpenClash...${RESET}\n"
+printf "%b\n" "${GREEN}===== OpenClash =====${RESET}"
 
 
 get_latest_release
@@ -227,8 +248,7 @@ install_openclash
 2)
 
 
-printf "${GREEN}正在安装 SSR Plus+...${RESET}\n"
-
+printf "%b\n" "${GREEN}===== SSR Plus+ =====${RESET}"
 
 
 . "$SCRIPT_DIR/modules/ssrplus.sh"
@@ -253,7 +273,7 @@ main_menu
 
 *)
 
-printf "${RED}[ERROR] 输入错误${RESET}\n"
+printf "%b\n" "${RED}[ERROR] 输入错误${RESET}"
 
 sleep 2
 
