@@ -36,16 +36,25 @@ printf "\n"
 
 
 printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
-printf "%b\n" "${BLUE}║${GREEN}        ZIMO--toolbox                ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${GREEN}            v1.0.0                   ${BLUE}║${RESET}"
+
+printf "%b\n" "${BLUE}║${GREEN}             ZIMO--工具箱             ${BLUE}║${RESET}"
+
+printf "%b\n" "${BLUE}║${GREEN}                 v1.0.0               ${BLUE}║${RESET}"
+
 printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
-printf "%b\n" "${BLUE}║${CYAN} [1] Install OpenClash                ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${CYAN} [2] Install SSR Plus+                ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${CYAN} [0] Exit                             ${BLUE}║${RESET}"
+
+printf "%b\n" "${BLUE}║${CYAN}  [1] 安装 OpenClash                  ${BLUE}║${RESET}"
+
+printf "%b\n" "${BLUE}║${CYAN}  [2] 安装 SSR Plus+                  ${BLUE}║${RESET}"
+
+printf "%b\n" "${BLUE}║${CYAN}  [0] 退出                            ${BLUE}║${RESET}"
+
 printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
-printf "%b" "${YELLOW} 选择序列 > ${RESET}"
 
+printf "\n"
+
+printf "%b" "${YELLOW} 选择序列 > ${RESET}"
 
 }
 
