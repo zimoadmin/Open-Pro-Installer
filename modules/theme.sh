@@ -80,7 +80,7 @@ printf "${GREEN}[INFO] 软件包类型:${RESET} .$EXT\n"
 # ======================================
 
 
-ARGON_API="https://api.github.com/repos/jerrykuku/luci-theme-argon/releases/latest"
+ARGON_API="https://openpro-auth.zimo4399.workers.dev/argon"
 
 
 printf "${GREEN}[INFO] 获取 Argon 最新版本...${RESET}\n"
