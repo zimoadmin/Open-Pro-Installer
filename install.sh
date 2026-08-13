@@ -19,10 +19,9 @@ read CHOOSE
 
 case "$CHOOSE" in
 1)
+    get_latest_release
+
     . "$SCRIPT_DIR/modules/openclash.sh"
     install_openclash
-    ;;
-*)
-    exit 0
     ;;
 esac
