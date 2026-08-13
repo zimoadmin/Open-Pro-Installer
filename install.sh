@@ -36,8 +36,8 @@ printf "\n"
 
 
 printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
-printf "%b\n" "${BLUE}║${GREEN}        ZIMO--toolbox            ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${GREEN}            v1.0.0               ${BLUE}║${RESET}"
+printf "%b\n" "${BLUE}║${GREEN}        ZIMO--toolbox                ${BLUE}║${RESET}"
+printf "%b\n" "${BLUE}║${GREEN}            v1.0.0                   ${BLUE}║${RESET}"
 printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
 printf "%b\n" "${BLUE}║${CYAN} [1] Install OpenClash                ${BLUE}║${RESET}"
 printf "%b\n" "${BLUE}║${CYAN} [2] Install SSR Plus+                ${BLUE}║${RESET}"
