@@ -26,7 +26,7 @@ WORKDIR="/tmp/Open-Pro-Installer"
 AUTH_SERVER="https://openpro-auth.zimo4399.workers.dev"
 
 
-
+echo ""
 
 
 # ======================================
