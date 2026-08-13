@@ -23,7 +23,7 @@ echo ""
 
 
 printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
-printf "%b\n" "${BLUE}║${GREEN}          iStoreOS主题安装            ${BLUE}║${RESET}"
+printf "%b\n" "${BLUE}║${GREEN}        iStoreOS主题一键安装          ${BLUE}║${RESET}"
 printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
 
@@ -32,30 +32,99 @@ echo ""
 
 
 # ======================================
-# 检测系统
+# 检测设备
+# ======================================
+
+
+MODEL="$(cat /tmp/sysinfo/model 2>/dev/null)"
+
+
+if [ -z "$MODEL" ]
+then
+
+MODEL="Unknown"
+
+fi
+
+
+
+ARCH="$(uname -m)"
+
+
+
+printf "${GREEN}[INFO] 设备型号:${RESET} $MODEL\n"
+
+printf "${GREEN}[INFO] CPU架构:${RESET} $ARCH\n"
+
+
+
+
+
+# ======================================
+# 软件包管理器
 # ======================================
 
 
 if command -v opkg >/dev/null 2>&1
 then
 
-    PKG="opkg"
-    EXT="ipk"
+
+PKG="opkg"
+EXT="ipk"
+
 
 
 elif command -v apk >/dev/null 2>&1
 then
 
-    PKG="apk"
-    EXT="apk"
+
+PKG="apk"
+EXT="apk"
+
 
 
 else
 
 
-    printf "${RED}[ERROR] 未检测到软件包管理器${RESET}\n"
+printf "${RED}[ERROR] 不支持的软件管理器${RESET}\n"
 
-    return 1
+return 1
+
+
+fi
+
+
+
+printf "${GREEN}[INFO] 软件管理器:${RESET} $PKG\n"
+
+printf "${GREEN}[INFO] 软件包类型:${RESET} .$EXT\n"
+
+
+
+
+
+
+
+# ======================================
+# 更新软件源
+# ======================================
+
+
+printf "${GREEN}[INFO] 更新软件源...${RESET}\n"
+
+
+
+if [ "$PKG" = "opkg" ]
+then
+
+
+opkg update >/dev/null 2>&1
+
+
+else
+
+
+apk update >/dev/null 2>&1
 
 
 fi
@@ -63,8 +132,45 @@ fi
 
 
 
-printf "${GREEN}[INFO] 软件管理器:${RESET} $PKG\n"
-printf "${GREEN}[INFO] 软件包类型:${RESET} .$EXT\n"
+
+
+
+# ======================================
+# 安装依赖
+# ======================================
+
+
+printf "${GREEN}[INFO] 检查依赖...${RESET}\n"
+
+
+
+if [ "$PKG" = "opkg" ]
+then
+
+
+for DEP in luci-lib-ipkg luci-compat
+do
+
+
+if ! opkg list-installed | grep -q "$DEP"
+then
+
+
+printf "${YELLOW}[INFO] 安装依赖:$DEP${RESET}\n"
+
+
+opkg install "$DEP" >/dev/null 2>&1
+
+
+fi
+
+
+done
+
+
+fi
+
+
 
 
 
@@ -78,33 +184,12 @@ printf "${GREEN}[INFO] 软件包类型:${RESET} .$EXT\n"
 ARGON_API="https://openpro-auth.zimo4399.workers.dev/argon"
 
 
+
 printf "${GREEN}[INFO] 获取 Argon 最新版本...${RESET}\n"
 
 
 
-if command -v wget >/dev/null 2>&1
-then
-
-    wget -qO /tmp/argon.json "$ARGON_API"
-
-
-elif command -v curl >/dev/null 2>&1
-then
-
-    curl -fsSL "$ARGON_API" \
-    -o /tmp/argon.json
-
-
-else
-
-
-    printf "${RED}[ERROR] 缺少 wget/curl${RESET}\n"
-
-    return 1
-
-
-fi
-
+wget -qO /tmp/argon.json "$ARGON_API"
 
 
 
@@ -113,9 +198,10 @@ if [ ! -s /tmp/argon.json ]
 then
 
 
-    printf "${RED}[ERROR] Worker返回为空${RESET}\n"
+printf "${RED}[ERROR] Worker返回为空${RESET}\n"
 
-    return 1
+
+return 1
 
 
 fi
@@ -125,15 +211,10 @@ fi
 
 
 
-# ======================================
-# 解析版本
-# ======================================
-
 
 VERSION="$(jsonfilter \
 -i /tmp/argon.json \
 -e '@.version')"
-
 
 
 
@@ -143,7 +224,9 @@ then
 
 printf "${RED}[ERROR] 获取版本失败${RESET}\n"
 
+
 cat /tmp/argon.json
+
 
 return 1
 
@@ -152,11 +235,8 @@ fi
 
 
 
-VERSION="${VERSION#v}"
 
-
-
-printf "${GREEN}[INFO] 最新版本:${RESET} v${VERSION}\n"
+printf "${GREEN}[INFO] Argon版本:${RESET} $VERSION\n"
 
 
 
@@ -187,10 +267,10 @@ CONFIG_URL="$(jsonfilter \
 else
 
 
-
 THEME_URL="$(jsonfilter \
 -i /tmp/argon.json \
 -e '@.theme_apk')"
+
 
 
 CONFIG_URL="$(jsonfilter \
@@ -205,30 +285,15 @@ fi
 
 
 
-
 if [ -z "$THEME_URL" ]
 then
 
 
-printf "${RED}[ERROR] 获取主题下载地址失败${RESET}\n"
+printf "${RED}[ERROR] 没有主题下载地址${RESET}\n"
+
 
 cat /tmp/argon.json
 
-return 1
-
-
-fi
-
-
-
-
-if [ -z "$CONFIG_URL" ]
-then
-
-
-printf "${RED}[ERROR] 获取配置下载地址失败${RESET}\n"
-
-cat /tmp/argon.json
 
 return 1
 
@@ -250,19 +315,17 @@ cd /tmp || return 1
 
 
 
-rm -f theme.$EXT config.$EXT
+rm -f argon-theme.$EXT argon-config.$EXT
 
 
 
 
+printf "${GREEN}[INFO] 下载 Argon主题...${RESET}\n"
 
-printf "\n"
-
-printf "${GREEN}[INFO] 下载主题...${RESET}\n"
 
 
 wget \
--O "theme.$EXT" \
+-O argon-theme.$EXT \
 "$THEME_URL"
 
 
@@ -272,6 +335,7 @@ then
 
 
 printf "${RED}[ERROR] 主题下载失败${RESET}\n"
+
 
 return 1
 
@@ -286,8 +350,9 @@ fi
 printf "${GREEN}[INFO] 下载配置插件...${RESET}\n"
 
 
+
 wget \
--O "config.$EXT" \
+-O argon-config.$EXT \
 "$CONFIG_URL"
 
 
@@ -297,7 +362,8 @@ if [ $? -ne 0 ]
 then
 
 
-printf "${RED}[ERROR] 配置插件下载失败${RESET}\n"
+printf "${RED}[ERROR] 配置下载失败${RESET}\n"
+
 
 return 1
 
@@ -319,13 +385,14 @@ if [ "$PKG" = "opkg" ]
 then
 
 
-printf "${GREEN}[INFO] 正在安装 IPK...${RESET}\n"
+printf "${GREEN}[INFO] 安装IPK...${RESET}\n"
 
 
 
 opkg install \
-./theme.ipk \
-./config.ipk
+argon-theme.$EXT \
+argon-config.$EXT
+
 
 
 
@@ -333,14 +400,14 @@ else
 
 
 
-printf "${GREEN}[INFO] 正在安装 APK...${RESET}\n"
+printf "${GREEN}[INFO] 安装APK...${RESET}\n"
 
 
 
 apk add \
 --allow-untrusted \
-./theme.apk \
-./config.apk
+argon-theme.$EXT \
+argon-config.$EXT
 
 
 
@@ -356,6 +423,7 @@ then
 
 
 printf "${RED}[ERROR] 安装失败${RESET}\n"
+
 
 return 1
 
@@ -382,11 +450,20 @@ then
 
 
 
+uci set luci.main.theme='Argon'
+
 uci set luci.main.mediaurlbase='/luci-static/argon'
+
 
 uci commit luci
 
 
+
+rm -rf /tmp/luci-*
+
+
+
+/etc/init.d/rpcd restart 2>/dev/null
 
 /etc/init.d/uhttpd restart 2>/dev/null
 
@@ -399,17 +476,18 @@ fi
 
 
 
-
 printf "\n"
 
 
-printf "${GREEN}[SUCCESS] iStoreOS主题安装完成${RESET}\n"
+printf "${GREEN}[SUCCESS] Argon主题安装成功${RESET}\n"
 
 
-printf "${CYAN}[INFO] 请刷新 LuCI 页面${RESET}\n"
+printf "${CYAN}[INFO] 请重新登录 LuCI 页面${RESET}\n"
+
 
 
 echo ""
+
 
 
 return 0
