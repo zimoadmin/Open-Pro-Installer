@@ -6,7 +6,12 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 . "$SCRIPT_DIR/lib/logger.sh"
 . "$SCRIPT_DIR/lib/github.sh"
-. "$SCRIPT_DIR/modules/depend.sh"
+
+
+if [ -f "$SCRIPT_DIR/modules/depend.sh" ]; then
+    . "$SCRIPT_DIR/modules/depend.sh"
+fi
+
 
 clear
 
@@ -26,8 +31,51 @@ RESET="$(printf '\033[0m')"
 
 
 
+
 # ==============================
-# 主界面
+# 返回主菜单
+# ==============================
+
+back_main()
+{
+
+printf "\n"
+
+printf "%b\n" "${GREEN}任务执行完成，返回主菜单...${RESET}"
+
+sleep 2
+
+main_menu
+
+}
+
+
+
+
+
+# ==============================
+# 返回代理菜单
+# ==============================
+
+back_proxy()
+{
+
+printf "\n"
+
+printf "%b\n" "${GREEN}任务执行完成，返回代理工具...${RESET}"
+
+sleep 2
+
+proxy_menu
+
+}
+
+
+
+
+
+# ==============================
+# 主菜单
 # ==============================
 
 
@@ -78,100 +126,113 @@ case "$CHOOSE" in
 
 1)
 
-    printf "%b\n" "${GREEN}[主题] 正在安装 iStoreOS 风格主题...${RESET}"
+
+printf "%b\n" "${GREEN}[主题] 正在安装 iStoreOS 风格主题...${RESET}"
 
 
-    if [ -f "$SCRIPT_DIR/modules/theme.sh" ]
-    then
+if [ -f "$SCRIPT_DIR/modules/theme.sh" ]
+then
 
-        . "$SCRIPT_DIR/modules/theme.sh"
+    . "$SCRIPT_DIR/modules/theme.sh"
 
-        install_theme
+    install_theme
 
-    else
+else
 
-        printf "%b\n" "${RED}[ERROR] 主题模块不存在${RESET}"
+    printf "%b\n" "${RED}[ERROR] theme.sh 不存在${RESET}"
 
-    fi
+fi
 
 
-    ;;
+back_main
+
+;;
 
 
 
 2)
 
-    printf "%b\n" "${GREEN}[iStore] 正在安装 iStore 商店...${RESET}"
+
+printf "%b\n" "${GREEN}[iStore] 正在安装 iStore 商店...${RESET}"
 
 
-    if [ -f "$SCRIPT_DIR/modules/istore.sh" ]
-    then
+if [ -f "$SCRIPT_DIR/modules/istore.sh" ]
+then
 
-        . "$SCRIPT_DIR/modules/istore.sh"
+    . "$SCRIPT_DIR/modules/istore.sh"
 
-        install_istore
+    install_istore
 
-    else
+else
 
-        printf "%b\n" "${RED}[ERROR] iStore模块不存在${RESET}"
+    printf "%b\n" "${RED}[ERROR] istore.sh 不存在${RESET}"
 
-    fi
+fi
 
 
-    ;;
+back_main
+
+;;
 
 
 
 3)
 
-    proxy_menu
 
-    ;;
+proxy_menu
+
+;;
 
 
 
 4)
 
-    printf "%b\n" "${GREEN}[区域] 正在解锁区域限制...${RESET}"
+
+printf "%b\n" "${GREEN}[区域] 正在解锁区域限制...${RESET}"
 
 
-    if [ -f "$SCRIPT_DIR/modules/unlock.sh" ]
-    then
+if [ -f "$SCRIPT_DIR/modules/unlock.sh" ]
+then
 
-        . "$SCRIPT_DIR/modules/unlock.sh"
+    . "$SCRIPT_DIR/modules/unlock.sh"
 
-        unlock_region
-
-    else
-
-        printf "%b\n" "${RED}[ERROR] 解锁模块不存在${RESET}"
-
-    fi
+    unlock_region
 
 
-    ;;
+else
+
+    printf "%b\n" "${RED}[ERROR] unlock.sh 不存在${RESET}"
+
+fi
+
+
+back_main
+
+;;
 
 
 
 0)
 
-    printf "%b\n" "${RED}Exit.${RESET}"
 
-    exit 0
+printf "%b\n" "${RED}Exit.${RESET}"
 
-    ;;
+exit 0
+
+;;
 
 
 
 *)
 
-    printf "%b\n" "${RED}[ERROR] Invalid option.${RESET}"
 
-    sleep 2
+printf "%b\n" "${RED}[ERROR] 输入错误${RESET}"
 
-    main_menu
+sleep 2
 
-    ;;
+main_menu
+
+;;
 
 
 esac
@@ -182,8 +243,12 @@ esac
 
 
 
+
+
+
+
 # ==============================
-# 代理二级菜单
+# 代理菜单
 # ==============================
 
 
@@ -192,6 +257,7 @@ proxy_menu()
 
 
 clear
+
 
 
 printf "\n"
@@ -232,13 +298,27 @@ case "$PROXY_CHOOSE" in
 printf "%b\n" "${GREEN}===== OpenClash =====${RESET}"
 
 
-get_latest_release
+
+# 获取版本
+
+if ! get_latest_release
+then
+
+printf "%b\n" "${RED}OpenClash版本获取失败${RESET}"
+
+back_proxy
+
+fi
+
 
 
 . "$SCRIPT_DIR/modules/openclash.sh"
 
 
 install_openclash
+
+
+back_proxy
 
 
 ;;
@@ -251,10 +331,28 @@ install_openclash
 printf "%b\n" "${GREEN}===== SSR Plus+ =====${RESET}"
 
 
+
+if [ -f "$SCRIPT_DIR/modules/ssrplus.sh" ]
+then
+
+
 . "$SCRIPT_DIR/modules/ssrplus.sh"
 
 
 install_ssrplus
+
+
+else
+
+
+printf "%b\n" "${RED}SSR Plus模块不存在${RESET}"
+
+
+fi
+
+
+
+back_proxy
 
 
 ;;
@@ -273,6 +371,7 @@ main_menu
 
 *)
 
+
 printf "%b\n" "${RED}[ERROR] 输入错误${RESET}"
 
 sleep 2
@@ -283,10 +382,13 @@ proxy_menu
 ;;
 
 
+
 esac
 
 
 }
+
+
 
 
 
