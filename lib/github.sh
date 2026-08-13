@@ -23,7 +23,7 @@ get_latest_release()
     # ==============================
 
 
-    if ! wget -qO /tmp/openclash_version "$OPENCLASH_API"; then
+    if ! curl -fsSL "$OPENCLASH_API" -o /tmp/openclash_version; then
 
         error "Failed to download release information."
 
