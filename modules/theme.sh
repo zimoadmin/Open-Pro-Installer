@@ -117,6 +117,8 @@ then
 
     VERSION="$(jsonfilter -i /tmp/argon.json -e '@.version')"
 
+    VERSION="${VERSION#v}"
+
 
 else
 
