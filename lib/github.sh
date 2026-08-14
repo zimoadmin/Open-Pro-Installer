@@ -19,11 +19,12 @@ get_latest_release()
 
 
     # ==============================
-    # 获取 Worker 返回数据
+    # 获取 Worker 数据
     # ==============================
 
 
-    if ! curl -fsSL "$OPENCLASH_API" -o /tmp/openclash_version; then
+    if ! curl -fsSL "$OPENCLASH_API" -o /tmp/openclash_version
+    then
 
         error "Failed to download release information."
 
@@ -33,9 +34,8 @@ get_latest_release()
 
 
 
-
     # ==============================
-    # 获取版本号
+    # 获取版本
     # ==============================
 
 
@@ -62,29 +62,23 @@ get_latest_release()
 
 
     # ==============================
-    # 获取下载地址
+    # 获取 ipk / apk
     # ==============================
 
 
-    DOWNLOAD_URL="$(
+    IPK_URL="$(
         jsonfilter \
         -i /tmp/openclash_version \
-        -e '@.url'
-    )"
+        -e '@.ipk'
+    )
 
 
 
-    if [ -z "$DOWNLOAD_URL" ]
-    then
-
-        error "Download URL empty."
-
-        cat /tmp/openclash_version
-
-        return 1
-
-    fi
-
+    APK_URL="$(
+        jsonfilter \
+        -i /tmp/openclash_version \
+        -e '@.apk'
+    )
 
 
 
@@ -98,11 +92,15 @@ get_latest_release()
 
         PACKAGE_EXT="apk"
 
+        DOWNLOAD_URL="$APK_URL"
+
 
     elif command -v opkg >/dev/null 2>&1
     then
 
         PACKAGE_EXT="ipk"
+
+        DOWNLOAD_URL="$IPK_URL"
 
 
     else
@@ -113,6 +111,19 @@ get_latest_release()
 
     fi
 
+
+
+
+    if [ -z "$DOWNLOAD_URL" ]
+    then
+
+        error "Download URL empty."
+
+        cat /tmp/openclash_version
+
+        return 1
+
+    fi
 
 
 
@@ -131,6 +142,13 @@ get_latest_release()
 
     export DOWNLOAD_URL
 
+    export IPK_URL
+
+    export APK_URL
+
+
+
+    return 0
 
 
 }
