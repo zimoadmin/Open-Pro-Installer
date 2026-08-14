@@ -13,6 +13,7 @@ if [ -f "$SCRIPT_DIR/modules/depend.sh" ]; then
 fi
 
 
+
 clear
 
 
@@ -30,47 +31,16 @@ RESET="$(printf '\033[0m')"
 
 
 
-
-
 # ==============================
-# 返回主菜单
+# 返回提示
 # ==============================
 
-back_main()
+pause()
 {
-
-printf "\n"
-
-printf "%b\n" "${GREEN}任务执行完成，返回主菜单...${RESET}"
-
-sleep 2
-
-main_menu
-
+    printf "\n"
+    printf "%b\n" "${GREEN}按回车返回...${RESET}"
+    read dummy </dev/tty
 }
-
-
-
-
-
-# ==============================
-# 返回代理菜单
-# ==============================
-
-back_proxy()
-{
-
-printf "\n"
-
-printf "%b\n" "${GREEN}任务执行完成，返回代理工具...${RESET}"
-
-sleep 2
-
-proxy_menu
-
-}
-
-
 
 
 
@@ -82,69 +52,54 @@ proxy_menu
 main_menu()
 {
 
+while true
+do
+
 
 clear
 
 
 printf "\n"
 
-
 printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
-
 printf "%b\n" "${BLUE}║${GREEN}             ZIMO--工具箱             ${BLUE}║${RESET}"
-
 printf "%b\n" "${BLUE}║${GREEN}                 v1.0.0               ${BLUE}║${RESET}"
-
 printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
-
 printf "%b\n" "${BLUE}║${CYAN}  [1] 一键仿 iStoreOS 主题            ${BLUE}║${RESET}"
-
 printf "%b\n" "${BLUE}║${CYAN}  [2] 安装 iStore 商店                ${BLUE}║${RESET}"
-
 printf "%b\n" "${BLUE}║${CYAN}  [3] 安装代理工具                    ${BLUE}║${RESET}"
-
 printf "%b\n" "${BLUE}║${CYAN}  [4] 解锁区域限制                    ${BLUE}║${RESET}"
-
 printf "%b\n" "${BLUE}║${CYAN}  [0] 退出                            ${BLUE}║${RESET}"
-
 printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
 
 printf "\n"
 
-printf "%b" "${YELLOW} 选择序列 > ${RESET}"
-
+printf "%b" "${YELLOW}选择序列 > ${RESET}"
 
 read CHOOSE </dev/tty
-
 
 
 
 case "$CHOOSE" in
 
 
-
 1)
-
-
-printf "%b\n" "${GREEN}[主题] 正在安装 iStoreOS 风格主题...${RESET}"
-
 
 if [ -f "$SCRIPT_DIR/modules/theme.sh" ]
 then
 
-    . "$SCRIPT_DIR/modules/theme.sh"
+. "$SCRIPT_DIR/modules/theme.sh"
 
-    install_theme
+install_theme
 
 else
 
-    printf "%b\n" "${RED}[ERROR] theme.sh 不存在${RESET}"
+printf "%b\n" "${RED}theme.sh 不存在${RESET}"
 
 fi
 
-
-back_main
+pause
 
 ;;
 
@@ -152,32 +107,26 @@ back_main
 
 2)
 
-
-printf "%b\n" "${GREEN}[iStore] 正在安装 iStore 商店...${RESET}"
-
-
 if [ -f "$SCRIPT_DIR/modules/istore.sh" ]
 then
 
-    . "$SCRIPT_DIR/modules/istore.sh"
+. "$SCRIPT_DIR/modules/istore.sh"
 
-    install_istore
+install_istore
 
 else
 
-    printf "%b\n" "${RED}[ERROR] istore.sh 不存在${RESET}"
+printf "%b\n" "${RED}istore.sh 不存在${RESET}"
 
 fi
 
-
-back_main
+pause
 
 ;;
 
 
 
 3)
-
 
 proxy_menu
 
@@ -190,16 +139,18 @@ proxy_menu
 if [ -f "$SCRIPT_DIR/modules/unlock.sh" ]
 then
 
-    . "$SCRIPT_DIR/modules/unlock.sh"
 
-    region_menu
+. "$SCRIPT_DIR/modules/unlock.sh"
+
+
+region_menu
 
 
 else
 
-    printf "%b\n" "${RED}[ERROR] unlock.sh 不存在${RESET}"
+printf "%b\n" "${RED}unlock.sh 不存在${RESET}"
 
-    sleep 2
+pause
 
 fi
 
@@ -208,7 +159,6 @@ fi
 
 
 0)
-
 
 printf "%b\n" "${RED}Exit.${RESET}"
 
@@ -220,12 +170,9 @@ exit 0
 
 *)
 
+printf "%b\n" "${RED}输入错误${RESET}"
 
-printf "%b\n" "${RED}[ERROR] 输入错误${RESET}"
-
-sleep 2
-
-main_menu
+sleep 1
 
 ;;
 
@@ -233,17 +180,15 @@ main_menu
 esac
 
 
+done
+
 }
 
 
 
 
-
-
-
-
 # ==============================
-# 代理菜单
+# 代理工具菜单
 # ==============================
 
 
@@ -251,35 +196,30 @@ proxy_menu()
 {
 
 
-clear
+while true
+do
 
+
+clear
 
 
 printf "\n"
 
 
 printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
-
 printf "%b\n" "${BLUE}║${GREEN}              代理工具                ${BLUE}║${RESET}"
-
 printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
-
 printf "%b\n" "${BLUE}║${CYAN}  [1] 安装 OpenClash                  ${BLUE}║${RESET}"
-
 printf "%b\n" "${BLUE}║${CYAN}  [2] 安装 SSR Plus+                  ${BLUE}║${RESET}"
-
-printf "%b\n" "${BLUE}║${CYAN}  [0] 返回                            ${BLUE}║${RESET}"
-
+printf "%b\n" "${BLUE}║${CYAN}  [0] 返回主菜单                      ${BLUE}║${RESET}"
 printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
 
 printf "\n"
 
-printf "%b" "${YELLOW} 选择序列 > ${RESET}"
-
+printf "%b" "${YELLOW}选择序列 > ${RESET}"
 
 read PROXY_CHOOSE </dev/tty
-
 
 
 
@@ -293,18 +233,8 @@ case "$PROXY_CHOOSE" in
 printf "%b\n" "${GREEN}===== OpenClash =====${RESET}"
 
 
-
-# 获取版本
-
-if ! get_latest_release
+if get_latest_release
 then
-
-printf "%b\n" "${RED}OpenClash版本获取失败${RESET}"
-
-back_proxy
-
-fi
-
 
 
 . "$SCRIPT_DIR/modules/openclash.sh"
@@ -313,7 +243,16 @@ fi
 install_openclash
 
 
-back_proxy
+else
+
+
+printf "%b\n" "${RED}OpenClash版本获取失败${RESET}"
+
+
+fi
+
+
+pause
 
 
 ;;
@@ -326,19 +265,15 @@ back_proxy
 printf "%b\n" "${GREEN}===== SSR Plus+ =====${RESET}"
 
 
-
 if [ -f "$SCRIPT_DIR/modules/ssrplus.sh" ]
 then
 
-
 . "$SCRIPT_DIR/modules/ssrplus.sh"
-
 
 install_ssrplus
 
 
 else
-
 
 printf "%b\n" "${RED}SSR Plus模块不存在${RESET}"
 
@@ -346,8 +281,7 @@ printf "%b\n" "${RED}SSR Plus模块不存在${RESET}"
 fi
 
 
-
-back_proxy
+pause
 
 
 ;;
@@ -357,8 +291,7 @@ back_proxy
 0)
 
 
-main_menu
-
+return
 
 ;;
 
@@ -366,24 +299,20 @@ main_menu
 
 *)
 
+printf "%b\n" "${RED}输入错误${RESET}"
 
-printf "%b\n" "${RED}[ERROR] 输入错误${RESET}"
-
-sleep 2
-
-proxy_menu
+sleep 1
 
 
 ;;
 
 
-
 esac
 
 
+done
+
 }
-
-
 
 
 
@@ -391,6 +320,5 @@ esac
 # ==============================
 # Start
 # ==============================
-
 
 main_menu
