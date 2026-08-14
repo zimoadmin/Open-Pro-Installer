@@ -6,7 +6,7 @@
 # ==============================
 
 
-OPENCLASH_API="https://openpro-auth.zimo4399.workers.dev/openclash"
+OPENCLASH_API="https://auth.12334123.xyz/openclash"
 
 
 CACHE_FILE="/tmp/openclash_version"
