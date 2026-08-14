@@ -1,11 +1,6 @@
 #!/bin/sh
 
 
-# ==============================
-# Open-Pro Worker
-# ==============================
-
-
 OPENCLASH_API="https://openpro-auth.zimo4399.workers.dev/openclash"
 
 
@@ -16,11 +11,6 @@ get_latest_release()
 
     info "Getting latest OpenClash release..."
 
-
-
-    # ==============================
-    # 获取 Worker 数据
-    # ==============================
 
 
     if ! curl -fsSL "$OPENCLASH_API" -o /tmp/openclash_version
@@ -34,15 +24,12 @@ get_latest_release()
 
 
 
-    # ==============================
-    # 获取版本
-    # ==============================
-
-
     RELEASE_TAG="$(
-        jsonfilter \
-        -i /tmp/openclash_version \
-        -e '@.version'
+
+    jsonfilter \
+    -i /tmp/openclash_version \
+    -e '@.version'
+
     )"
 
 
@@ -50,7 +37,7 @@ get_latest_release()
     if [ -z "$RELEASE_TAG" ]
     then
 
-        error "Failed to get version."
+        error "Version empty"
 
         cat /tmp/openclash_version
 
@@ -61,38 +48,21 @@ get_latest_release()
 
 
 
-    # ==============================
-    # 获取 ipk / apk
-    # ==============================
 
-
-    IPK_URL="$(
-        jsonfilter \
-        -i /tmp/openclash_version \
-        -e '@.ipk'
-    )
-
-
-
-    APK_URL="$(
-        jsonfilter \
-        -i /tmp/openclash_version \
-        -e '@.apk'
-    )
-
-
-
-    # ==============================
-    # 判断系统包格式
-    # ==============================
-
+    # 判断系统
 
     if command -v apk >/dev/null 2>&1
     then
 
         PACKAGE_EXT="apk"
 
-        DOWNLOAD_URL="$APK_URL"
+        DOWNLOAD_URL="$(
+
+        jsonfilter \
+        -i /tmp/openclash_version \
+        -e '@.apk'
+
+        )"
 
 
     elif command -v opkg >/dev/null 2>&1
@@ -100,16 +70,30 @@ get_latest_release()
 
         PACKAGE_EXT="ipk"
 
-        DOWNLOAD_URL="$IPK_URL"
+        DOWNLOAD_URL="$(
+
+        jsonfilter \
+        -i /tmp/openclash_version \
+        -e '@.ipk'
+
+        )"
 
 
     else
 
-        error "Unsupported package manager."
+        error "Unsupported package manager"
 
         return 1
 
     fi
+
+
+
+
+
+    # 清理
+
+    DOWNLOAD_URL="$(echo "$DOWNLOAD_URL" | tr -d '\r\n ')"
 
 
 
@@ -117,13 +101,14 @@ get_latest_release()
     if [ -z "$DOWNLOAD_URL" ]
     then
 
-        error "Download URL empty."
+        error "Download URL empty"
 
         cat /tmp/openclash_version
 
         return 1
 
     fi
+
 
 
 
@@ -137,18 +122,9 @@ get_latest_release()
 
 
     export RELEASE_TAG
-
     export PACKAGE_EXT
-
     export DOWNLOAD_URL
 
-    export IPK_URL
-
-    export APK_URL
-
-
-
-    return 0
 
 
 }
