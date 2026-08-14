@@ -41,8 +41,7 @@ do
 
 
 wget \
---timeout=10 \
---tries=1 \
+-T 10 \
 -O "$PKG_FILE" \
 "$DOWNLOAD_URL"
 
