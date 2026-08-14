@@ -1,166 +1,135 @@
 #!/bin/sh
 
 
+# ==============================
+# OpenClash Installer
+# ==============================
+
+
 install_openclash()
 {
 
 
-    info "Ready to install OpenClash"
+info "Ready to install OpenClash"
 
+info "Version : $RELEASE_TAG"
 
-    info "Version : $RELEASE_TAG"
+info "Package : $PACKAGE_EXT"
 
+info "URL : $DOWNLOAD_URL"
 
 
-    # ==============================
-    # 清理下载地址
-    # ==============================
 
+PKG_FILE="/tmp/openclash.${PACKAGE_EXT}"
 
-    DOWNLOAD_URL="$(printf '%s' "$DOWNLOAD_URL" | tr -d '\r\n')"
 
 
+# ==============================
+# 下载
+# ==============================
 
-    # 去除可能存在的空格
-    DOWNLOAD_URL="$(echo "$DOWNLOAD_URL" | sed 's/[[:space:]]//g')"
 
+info "Downloading OpenClash..."
 
 
-    if [ -z "$DOWNLOAD_URL" ]
-    then
 
-        error "Download URL is empty!"
+retry=3
 
-        return 1
 
-    fi
+while [ $retry -gt 0 ]
+do
 
 
+wget \
+--timeout=10 \
+--tries=1 \
+-O "$PKG_FILE" \
+"$DOWNLOAD_URL"
 
-    info "URL : $DOWNLOAD_URL"
 
+if [ $? -eq 0 ]
+then
 
+break
 
+fi
 
-    # ==============================
-    # 文件路径
-    # ==============================
 
+retry=$((retry-1))
 
-    PKG_FILE="/tmp/luci-app-openclash.${PACKAGE_EXT}"
 
+warning "Download failed, retry..."
 
+sleep 2
 
-    info "Downloading..."
 
+done
 
 
-    # ==============================
-    # 下载
-    # ==============================
 
+if [ ! -f "$PKG_FILE" ]
+then
 
-    if ! wget \
-        --no-check-certificate \
-        -O "$PKG_FILE" \
-        "$DOWNLOAD_URL"
-    then
+error "Download failed!"
 
-        error "Download failed!"
+return 1
 
-        error "URL: $DOWNLOAD_URL"
+fi
 
-        return 1
 
-    fi
 
 
+SIZE=$(ls -lh "$PKG_FILE" | awk '{print $5}')
 
 
-    # ==============================
-    # 检查文件
-    # ==============================
+info "File size : $SIZE"
 
 
-    if [ ! -s "$PKG_FILE" ]
-    then
 
-        error "Downloaded file is empty!"
 
-        rm -f "$PKG_FILE"
+# ==============================
+# 安装
+# ==============================
 
-        return 1
 
-    fi
+info "Installing..."
 
 
 
-    info "Download complete."
+if [ "$PACKAGE_EXT" = "apk" ]
+then
 
-    ls -lh "$PKG_FILE"
 
+apk add \
+--allow-untrusted \
+--force-overwrite \
+"$PKG_FILE"
 
 
 
-    # ==============================
-    # 安装
-    # ==============================
+else
 
 
-    info "Installing..."
+opkg install "$PKG_FILE"
 
 
+fi
 
-    if [ "$PACKAGE_EXT" = "apk" ]
-    then
 
 
-        apk add \
-        --allow-untrusted \
-        --force-overwrite \
-        --clean-protected \
-        "$PKG_FILE"
+if [ $? -eq 0 ]
+then
 
+info "OpenClash installed successfully!"
 
+else
 
-    elif [ "$PACKAGE_EXT" = "ipk" ]
-    then
+error "OpenClash installation failed!"
 
+return 1
 
-        opkg install "$PKG_FILE"
+fi
 
-
-
-    else
-
-
-        error "Unknown package type: $PACKAGE_EXT"
-
-        return 1
-
-
-    fi
-
-
-
-
-    # ==============================
-    # 安装结果
-    # ==============================
-
-
-    if [ $? -eq 0 ]
-    then
-
-        info "OpenClash installed successfully!"
-
-    else
-
-        error "OpenClash installation failed!"
-
-        return 1
-
-    fi
 
 
 }
