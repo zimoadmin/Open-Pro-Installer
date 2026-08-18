@@ -5,16 +5,16 @@
 # iStoreOS / Argon Theme Installer
 #
 # 功能：
-# 1. 自动检测设备 / CPU
-# 2. 自动检测 opkg / apk
-# 3. 临时添加 Argon 软件源
-# 4. 自动检测并安装依赖
-# 5. 下载日志全部隐藏
-# 6. 安装日志全部隐藏
-# 7. 单行动态进度条
-# 8. 失败时自动显示详细错误
-# 9. 自动恢复 customfeeds.conf
-# 10. 自动设置 Argon 为默认主题
+# 1. 自动检测设备
+# 2. 自动检测 CPU
+# 3. 自动检测 opkg
+# 4. 不添加第三方 opkg Feed
+# 5. 不请求 Packages.gz
+# 6. 直接下载 Argon IPK
+# 7. 隐藏 wget/opkg 输出
+# 8. 单行动态进度条
+# 9. 失败时显示详细日志
+# 10. 自动设置 Argon 默认主题
 # 11. 自动清理临时文件
 #
 # BusyBox / OpenWrt Compatible
@@ -34,48 +34,48 @@ RESET="\033[0m"
 
 
 # ============================================================
-# 配置
+# 基础配置
 # ============================================================
+
+THEME_TMP="/tmp/openpro-theme"
+THEME_LOG="/tmp/openpro-theme.log"
 
 ARGON_BASE="https://cafe.cpolar.cn/wkdaily/gl/raw/branch/main/theme"
 
-ARGON_FEED="/etc/opkg/customfeeds.conf"
-ARGON_BACKUP="/tmp/customfeeds.argon.backup"
+ARGON_THEME_FILE="luci-theme-argon.ipk"
+ARGON_CONFIG_FILE="luci-app-argon-config.ipk"
+ARGON_LANG_FILE="luci-i18n-argon-config-zh-cn.ipk"
 
-THEME_PKG="/tmp/luci-theme-argon.ipk"
-CONFIG_PKG="/tmp/luci-app-argon-config.ipk"
-I18N_PKG="/tmp/luci-i18n-argon-config-zh-cn.ipk"
-
-THEME_LOG="/tmp/openpro_theme.log"
-
-THEME_PID=""
+ARGON_THEME_URL="${ARGON_BASE}/luci-theme-argon-master_2.2.9.4_all.ipk"
+ARGON_CONFIG_URL="${ARGON_BASE}/luci-app-argon-config_0.9_all.ipk"
+ARGON_LANG_URL="${ARGON_BASE}/luci-i18n-argon-config-zh-cn.ipk"
 
 
 # ============================================================
-# 日志
+# 日志函数
 # ============================================================
 
 _theme_info()
 {
-    printf "%b\n" "${GREEN}[INFO]${RESET} $*"
+    printf "${GREEN}[INFO]${RESET} %s\n" "$*"
 }
 
 
 _theme_ok()
 {
-    printf "%b\n" "${GREEN}[OK]${RESET} $*"
+    printf "${GREEN}[OK]${RESET} %s\n" "$*"
 }
 
 
 _theme_warn()
 {
-    printf "%b\n" "${YELLOW}[WARN]${RESET} $*"
+    printf "${YELLOW}[WARN]${RESET} %s\n" "$*"
 }
 
 
 _theme_error()
 {
-    printf "%b\n" "${RED}[ERROR]${RESET} $*"
+    printf "${RED}[ERROR]${RESET} %s\n" "$*"
 }
 
 
@@ -97,38 +97,30 @@ theme_progress()
     I=0
 
 
-    while [ "$I" -lt "$FILLED" ]
-    do
+    while [ "$I" -lt "$FILLED" ]; do
+
         BAR="${BAR}#"
+
         I=$((I + 1))
+
     done
 
 
     I=0
 
-    while [ "$I" -lt "$EMPTY" ]
-    do
+    while [ "$I" -lt "$EMPTY" ]; do
+
         BAR="${BAR}-"
+
         I=$((I + 1))
+
     done
 
 
-    printf '\r\033[2K\033[32m[INFO]\033[0m %-18s [\033[32m%s\033[0m] %3d%%' \
+    printf "\r\033[2K${GREEN}[INFO]${RESET} %-18s [${GREEN}%s${RESET}] %3d%%" \
         "$TEXT" \
         "$BAR" \
         "$PERCENT"
-}
-
-
-# ============================================================
-# 进度完成换行
-# ============================================================
-
-theme_progress_done()
-{
-    theme_progress 100 "$1"
-
-    printf "\n"
 }
 
 
@@ -138,64 +130,44 @@ theme_progress_done()
 
 show_theme_error_log()
 {
-    if [ -s "$THEME_LOG" ]
-    then
-        printf "\n"
-        printf "========== ERROR LOG ==========\n"
+    printf "\n"
 
-        tail -n 40 "$THEME_LOG"
-
-        printf "===============================\n"
-        printf "\n"
-    fi
-}
+    printf "${RED}========== ERROR LOG ==========${RESET}\n"
 
 
-# ============================================================
-# 删除临时安装包
-# ============================================================
+    if [ -s "$THEME_LOG" ]; then
 
-cleanup_theme_files()
-{
-    rm -f "$THEME_PKG" 2>/dev/null
-    rm -f "$CONFIG_PKG" 2>/dev/null
-    rm -f "$I18N_PKG" 2>/dev/null
+        tail -n 50 "$THEME_LOG"
 
-    return 0
-}
-
-
-# ============================================================
-# 恢复软件源
-# ============================================================
-
-restore_argon_feed()
-{
-    if [ -f "$ARGON_BACKUP" ]
-    then
-        cp "$ARGON_BACKUP" "$ARGON_FEED" \
-            >/dev/null 2>&1
-
-        rm -f "$ARGON_BACKUP"
     else
-        sed -i '/argon_theme/d' \
-            "$ARGON_FEED" \
-            >/dev/null 2>&1
+
+        printf "没有可用的错误日志\n"
+
     fi
 
-    return 0
+
+    printf "${RED}===============================${RESET}\n"
+
+    printf "\n"
 }
 
 
 # ============================================================
-# 完整清理
+# 清理
 # ============================================================
 
 cleanup_theme()
 {
-    cleanup_theme_files
+    rm -rf "$THEME_TMP" 2>/dev/null
 
-    restore_argon_feed
+    return 0
+}
+
+
+cleanup_theme_all()
+{
+    rm -rf "$THEME_TMP" 2>/dev/null
+    rm -f "$THEME_LOG" 2>/dev/null
 
     return 0
 }
@@ -205,25 +177,13 @@ cleanup_theme()
 # 中断处理
 # ============================================================
 
-interrupt_theme()
+theme_interrupt()
 {
     printf "\n"
 
     _theme_warn "主题安装已中断"
 
-
-    if [ -n "$THEME_PID" ]
-    then
-        kill "$THEME_PID" \
-            >/dev/null 2>&1
-
-        wait "$THEME_PID" \
-            >/dev/null 2>&1
-    fi
-
-
     cleanup_theme
-
 
     trap - INT TERM
 
@@ -232,23 +192,10 @@ interrupt_theme()
 
 
 # ============================================================
-# 检查 OPKG 包是否安装
+# 下载函数
 # ============================================================
 
-opkg_package_installed()
-{
-    PACKAGE="$1"
-
-    opkg status "$PACKAGE" 2>/dev/null |
-        grep -q 'Status:.*installed'
-}
-
-
-# ============================================================
-# 静默下载
-# ============================================================
-
-download_theme_package()
+download_theme_file()
 {
     URL="$1"
     OUTPUT="$2"
@@ -258,18 +205,16 @@ download_theme_package()
 
 
     # --------------------------------------------------------
-    # 优先 CURL
+    # 优先 curl
     # --------------------------------------------------------
 
-    if command -v curl >/dev/null 2>&1
-    then
+    if command -v curl >/dev/null 2>&1; then
 
-        curl -4 \
-            -L \
+        curl -L \
             -f \
             -sS \
-            --connect-timeout 8 \
-            --max-time 60 \
+            --connect-timeout 10 \
+            --max-time 120 \
             --retry 2 \
             --retry-delay 1 \
             -o "$OUTPUT" \
@@ -280,11 +225,10 @@ download_theme_package()
 
 
     # --------------------------------------------------------
-    # WGET
+    # 回退 wget
     # --------------------------------------------------------
 
-    elif command -v wget >/dev/null 2>&1
-    then
+    elif command -v wget >/dev/null 2>&1; then
 
         wget \
             -T 20 \
@@ -294,32 +238,61 @@ download_theme_package()
 
         RESULT=$?
 
+
     else
 
-        printf "curl / wget not found\n" \
-            >>"$THEME_LOG"
+        printf "curl/wget not found\n" >>"$THEME_LOG"
 
         return 1
+
     fi
 
 
-    if [ "$RESULT" -ne 0 ]
-    then
+    # --------------------------------------------------------
+    # 下载命令失败
+    # --------------------------------------------------------
+
+    if [ "$RESULT" -ne 0 ]; then
+
         rm -f "$OUTPUT"
 
         return 1
+
     fi
 
 
-    if [ ! -s "$OUTPUT" ]
-    then
+    # --------------------------------------------------------
+    # 文件为空
+    # --------------------------------------------------------
+
+    if [ ! -s "$OUTPUT" ]; then
+
         printf "Downloaded file is empty: %s\n" \
-            "$OUTPUT" \
-            >>"$THEME_LOG"
+            "$OUTPUT" >>"$THEME_LOG"
 
         rm -f "$OUTPUT"
 
         return 1
+
+    fi
+
+
+    # --------------------------------------------------------
+    # 防止服务器返回 HTML
+    # --------------------------------------------------------
+
+    if head -c 512 "$OUTPUT" 2>/dev/null |
+       grep -Eqi \
+       '<html|<!doctype|404 not found|bad gateway|cloudflare'
+    then
+
+        printf "Invalid HTML response: %s\n" \
+            "$URL" >>"$THEME_LOG"
+
+        rm -f "$OUTPUT"
+
+        return 1
+
     fi
 
 
@@ -328,7 +301,25 @@ download_theme_package()
 
 
 # ============================================================
-# 安装依赖
+# 检测包是否已经安装
+# ============================================================
+
+package_installed()
+{
+    PACKAGE_NAME="$1"
+
+
+    opkg status "$PACKAGE_NAME" 2>/dev/null |
+        grep -q 'Status:.*installed'
+}
+
+
+# ============================================================
+# 尝试安装依赖
+#
+# 注意：
+# 这些依赖并不是所有 OpenWrt/GL.iNet 固件都完全相同。
+# 所以可选依赖安装失败不会立即终止整个脚本。
 # ============================================================
 
 install_theme_dependencies()
@@ -336,38 +327,20 @@ install_theme_dependencies()
     for DEP in \
         luci-lua-runtime \
         luci-lib-ipkg \
-        luci-compat \
-        libopenssl3
+        luci-compat
     do
 
-        # ----------------------------------------------------
-        # 已安装直接跳过
-        # ----------------------------------------------------
-
-        if opkg_package_installed "$DEP"
-        then
+        if package_installed "$DEP"; then
             continue
         fi
 
 
-        printf "\nInstalling dependency: %s\n" \
-            "$DEP" \
-            >>"$THEME_LOG"
+        printf "\n===== Dependency: %s =====\n" \
+            "$DEP" >>"$THEME_LOG"
 
 
-        if ! opkg install "$DEP" \
-            >>"$THEME_LOG" 2>&1
-        then
-
-            # ------------------------------------------------
-            # 某些 OpenWrt 版本可能不存在这些兼容包
-            # 不立即退出，记录后继续
-            # ------------------------------------------------
-
-            printf "Optional dependency failed: %s\n" \
-                "$DEP" \
-                >>"$THEME_LOG"
-        fi
+        opkg install "$DEP" \
+            >>"$THEME_LOG" 2>&1 || true
 
     done
 
@@ -377,45 +350,63 @@ install_theme_dependencies()
 
 
 # ============================================================
-# 安装 Argon 软件包
+# 验证主题安装
 # ============================================================
 
-install_argon_packages()
+verify_argon_install()
 {
-    opkg install \
-        "$THEME_PKG" \
-        "$CONFIG_PKG" \
-        "$I18N_PKG" \
-        >>"$THEME_LOG" 2>&1
+    # --------------------------------------------------------
+    # 方法 1：检查 opkg
+    # --------------------------------------------------------
+
+    if package_installed "luci-theme-argon"; then
+        return 0
+    fi
+
+
+    # --------------------------------------------------------
+    # 方法 2：检查主题目录
+    # --------------------------------------------------------
+
+    if [ -d /www/luci-static/argon ]; then
+        return 0
+    fi
+
+
+    return 1
 }
 
 
 # ============================================================
-# 主安装
+# 安装主题
 # ============================================================
 
 install_theme()
 {
-    echo ""
+    printf "\n"
 
+    printf "%b\n" \
+        "${BLUE}╔══════════════════════════════════════╗${RESET}"
 
-    printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
-    printf "%b\n" "${BLUE}║${GREEN}        iStoreOS主题一键安装          ${BLUE}║${RESET}"
-    printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
+    printf "%b\n" \
+        "${BLUE}║${GREEN}        iStoreOS主题一键安装          ${BLUE}║${RESET}"
 
+    printf "%b\n" \
+        "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
-    echo ""
+    printf "\n"
 
 
     # ========================================================
-    # Root
+    # Root 检测
     # ========================================================
 
-    if [ "$(id -u 2>/dev/null)" != "0" ]
-    then
+    if [ "$(id -u 2>/dev/null)" != "0" ]; then
+
         _theme_error "请使用 root 用户运行"
 
         return 1
+
     fi
 
 
@@ -423,13 +414,21 @@ install_theme()
     # 初始化
     # ========================================================
 
-    rm -f "$THEME_LOG"
-    rm -f "$ARGON_BACKUP"
+    cleanup_theme_all
 
-    cleanup_theme_files
+    mkdir -p "$THEME_TMP" || {
+
+        _theme_error "无法创建临时目录"
+
+        return 1
+
+    }
 
 
-    trap 'interrupt_theme' INT TERM
+    touch "$THEME_LOG" 2>/dev/null
+
+
+    trap 'theme_interrupt' INT TERM
 
 
     # ========================================================
@@ -457,25 +456,26 @@ install_theme()
     # 包管理器
     # ========================================================
 
-    if command -v opkg >/dev/null 2>&1
-    then
+    if command -v opkg >/dev/null 2>&1; then
 
         PKG="opkg"
         EXT="ipk"
 
-    elif command -v apk >/dev/null 2>&1
-    then
+    elif command -v apk >/dev/null 2>&1; then
 
         PKG="apk"
         EXT="apk"
 
     else
 
-        _theme_error "不支持的软件包管理器"
+        _theme_error "未检测到支持的软件包管理器"
+
+        cleanup_theme
 
         trap - INT TERM
 
         return 1
+
     fi
 
 
@@ -484,105 +484,63 @@ install_theme()
     _theme_info "软件包类型: .$EXT"
 
 
+    printf "\n"
+
+
     # ========================================================
-    # 当前 Argon 安装源只支持 OPKG
+    # 当前 Argon 安装源只提供 IPK
     # ========================================================
 
-    if [ "$PKG" != "opkg" ]
-    then
+    if [ "$PKG" != "opkg" ]; then
 
-        _theme_error "当前 Argon 安装源暂不支持 APK"
+        _theme_error "当前 Argon 安装源暂不支持 APK 系统"
+
+        cleanup_theme
 
         trap - INT TERM
 
         return 1
+
     fi
 
 
     # ========================================================
-    # 5% 初始化
+    # 10%
     # ========================================================
 
-    theme_progress 5 "正在准备环境..."
+    theme_progress 10 "正在准备环境..."
 
     sleep 1
 
 
     # ========================================================
-    # 备份软件源
+    # 20% 检查依赖
     # ========================================================
 
-    if [ -f "$ARGON_FEED" ]
-    then
+    theme_progress 20 "正在检查依赖..."
 
-        cp "$ARGON_FEED" "$ARGON_BACKUP" \
-            >/dev/null 2>&1
-    else
-
-        touch "$ARGON_FEED"
-    fi
-
-
-    sed -i '/argon_theme/d' \
-        "$ARGON_FEED" \
-        >/dev/null 2>&1
-
-
-    cat >> "$ARGON_FEED" <<EOF
-
-src/gz argon_theme $ARGON_BASE
-EOF
-
-
-    theme_progress 10 "正在准备环境..."
-
-
-    # ========================================================
-    # 更新临时软件源
-    # ========================================================
-
-    if ! opkg update >>"$THEME_LOG" 2>&1
-    then
-
-        printf "\n"
-
-        _theme_error "软件源更新失败"
-
-        show_theme_error_log
-
-        cleanup_theme
-
-        trap - INT TERM
-
-        return 1
-    fi
-
-
-    theme_progress 20 "正在更新软件源..."
-
-
-    # ========================================================
-    # 依赖
-    # ========================================================
 
     install_theme_dependencies
 
 
-    theme_progress 30 "正在检查依赖..."
+    sleep 1
 
 
     # ========================================================
-    # 下载主题
+    # 30% 下载主题主体
     # ========================================================
 
-    if ! download_theme_package \
-        "$ARGON_BASE/luci-theme-argon-master_2.2.9.4_all.ipk" \
-        "$THEME_PKG"
+    theme_progress 30 "正在下载主题..."
+
+
+    if ! download_theme_file \
+        "$ARGON_THEME_URL" \
+        "$THEME_TMP/$ARGON_THEME_FILE"
     then
 
         printf "\n"
 
-        _theme_error "Argon 主题下载失败"
+        _theme_error "Argon 主题主体下载失败"
 
         show_theme_error_log
 
@@ -591,24 +549,25 @@ EOF
         trap - INT TERM
 
         return 1
+
     fi
 
+
+    # ========================================================
+    # 45%
+    # ========================================================
 
     theme_progress 45 "正在下载主题..."
 
 
-    # ========================================================
-    # 下载配置插件
-    # ========================================================
-
-    if ! download_theme_package \
-        "$ARGON_BASE/luci-app-argon-config_0.9_all.ipk" \
-        "$CONFIG_PKG"
+    if ! download_theme_file \
+        "$ARGON_CONFIG_URL" \
+        "$THEME_TMP/$ARGON_CONFIG_FILE"
     then
 
         printf "\n"
 
-        _theme_error "Argon 配置插件下载失败"
+        _theme_error "Argon 配置组件下载失败"
 
         show_theme_error_log
 
@@ -617,24 +576,25 @@ EOF
         trap - INT TERM
 
         return 1
+
     fi
 
+
+    # ========================================================
+    # 60%
+    # ========================================================
 
     theme_progress 60 "正在下载主题..."
 
 
-    # ========================================================
-    # 下载中文包
-    # ========================================================
-
-    if ! download_theme_package \
-        "$ARGON_BASE/luci-i18n-argon-config-zh-cn.ipk" \
-        "$I18N_PKG"
+    if ! download_theme_file \
+        "$ARGON_LANG_URL" \
+        "$THEME_TMP/$ARGON_LANG_FILE"
     then
 
         printf "\n"
 
-        _theme_error "Argon 中文包下载失败"
+        _theme_error "Argon 中文组件下载失败"
 
         show_theme_error_log
 
@@ -643,99 +603,95 @@ EOF
         trap - INT TERM
 
         return 1
+
     fi
 
 
-    theme_progress 70 "正在下载主题..."
+    # ========================================================
+    # 70%
+    # ========================================================
+
+    theme_progress 70 "正在验证文件..."
+
+
+    if [ ! -s "$THEME_TMP/$ARGON_THEME_FILE" ] ||
+       [ ! -s "$THEME_TMP/$ARGON_CONFIG_FILE" ] ||
+       [ ! -s "$THEME_TMP/$ARGON_LANG_FILE" ]
+    then
+
+        printf "\n"
+
+        _theme_error "主题文件验证失败"
+
+        show_theme_error_log
+
+        cleanup_theme
+
+        trap - INT TERM
+
+        return 1
+
+    fi
 
 
     # ========================================================
-    # 安装
+    # 78%
     # ========================================================
 
-    install_argon_packages >>"$THEME_LOG" 2>&1 &
-
-    THEME_PID=$!
+    theme_progress 78 "正在安装主题..."
 
 
-    PERCENT=72
+    printf "\n===== Argon Install =====\n" \
+        >>"$THEME_LOG"
 
 
-    while kill -0 "$THEME_PID" 2>/dev/null
-    do
-
-        if [ "$PERCENT" -lt 92 ]
-        then
-            PERCENT=$((PERCENT + 2))
-        fi
-
-
-        theme_progress \
-            "$PERCENT" \
-            "正在安装主题..."
-
-
-        sleep 1
-    done
-
-
-    wait "$THEME_PID"
+    opkg install \
+        "$THEME_TMP/$ARGON_THEME_FILE" \
+        "$THEME_TMP/$ARGON_CONFIG_FILE" \
+        "$THEME_TMP/$ARGON_LANG_FILE" \
+        >>"$THEME_LOG" 2>&1
 
     INSTALL_RESULT=$?
 
-    THEME_PID=""
 
+    # ========================================================
+    # 某些情况下 opkg 返回非 0，但主题实际已经安装。
+    # 所以再做一次真实验证。
+    # ========================================================
 
-    if [ "$INSTALL_RESULT" -ne 0 ]
-    then
+    if [ "$INSTALL_RESULT" -ne 0 ]; then
 
-        printf "\n"
+        if ! verify_argon_install; then
 
-        _theme_error "Argon 主题安装失败"
+            printf "\n"
 
-        show_theme_error_log
+            _theme_error "Argon 主题安装失败"
 
-        cleanup_theme
+            show_theme_error_log
 
-        trap - INT TERM
+            cleanup_theme
 
-        return 1
+            trap - INT TERM
+
+            return 1
+
+        fi
+
     fi
 
 
-    theme_progress 94 "正在安装主题..."
-
-
     # ========================================================
-    # 验证主题
+    # 90%
     # ========================================================
 
-    if ! opkg_package_installed "luci-theme-argon"
-    then
-
-        printf "\n"
-
-        _theme_error "未检测到 luci-theme-argon"
-
-        show_theme_error_log
-
-        cleanup_theme
-
-        trap - INT TERM
-
-        return 1
-    fi
+    theme_progress 90 "正在配置主题..."
 
 
-    theme_progress 96 "正在配置主题..."
+    # --------------------------------------------------------
+    # 设置 Argon 为默认主题
+    # --------------------------------------------------------
 
-
-    # ========================================================
-    # 设置默认主题
-    # ========================================================
-
-    if command -v uci >/dev/null 2>&1
-    then
+    if command -v uci >/dev/null 2>&1; then
 
         uci set luci.main.theme='argon' \
             >>"$THEME_LOG" 2>&1
@@ -745,68 +701,105 @@ EOF
 
         uci commit luci \
             >>"$THEME_LOG" 2>&1
+
     fi
 
 
-    theme_progress 98 "正在清理环境..."
-
-
     # ========================================================
-    # 恢复软件源
+    # 95%
     # ========================================================
 
-    restore_argon_feed
+    theme_progress 95 "正在刷新 LuCI..."
 
 
-    # 不需要再次 opkg update。
-    # 避免安装结束时又产生网络等待。
+    # --------------------------------------------------------
+    # 清除 LuCI 缓存
+    # --------------------------------------------------------
+
+    rm -rf /tmp/luci-indexcache \
+        >/dev/null 2>&1
+
+    rm -rf /tmp/luci-modulecache \
+        >/dev/null 2>&1
+
+    rm -rf /tmp/luci-*cache* \
+        >/dev/null 2>&1
 
 
-    # ========================================================
-    # 清理 IPK
-    # ========================================================
+    # --------------------------------------------------------
+    # 重启 rpcd
+    # --------------------------------------------------------
 
-    cleanup_theme_files
+    if [ -x /etc/init.d/rpcd ]; then
 
-
-    # ========================================================
-    # 重启服务
-    # ========================================================
-
-    if [ -x /etc/init.d/rpcd ]
-    then
         /etc/init.d/rpcd restart \
-            >/dev/null 2>&1
+            >>"$THEME_LOG" 2>&1
+
     fi
 
 
-    if [ -x /etc/init.d/uhttpd ]
-    then
+    # --------------------------------------------------------
+    # 重启 uhttpd
+    # --------------------------------------------------------
+
+    if [ -x /etc/init.d/uhttpd ]; then
+
         /etc/init.d/uhttpd restart \
-            >/dev/null 2>&1
+            >>"$THEME_LOG" 2>&1
+
     fi
+
+
+    # ========================================================
+    # 最终验证
+    # ========================================================
+
+    if ! verify_argon_install; then
+
+        printf "\n"
+
+        _theme_error "主题安装完成，但最终验证失败"
+
+        show_theme_error_log
+
+        cleanup_theme
+
+        trap - INT TERM
+
+        return 1
+
+    fi
+
+
+    # ========================================================
+    # 100%
+    # ========================================================
+
+    theme_progress 100 "主题安装完成"
+
+    printf "\n\n"
+
+
+    # ========================================================
+    # 清理
+    # ========================================================
+
+    cleanup_theme_all
+
+
+    trap - INT TERM
 
 
     # ========================================================
     # 完成
     # ========================================================
 
-    theme_progress_done "主题安装完成"
-
-
-    rm -f "$THEME_LOG" 2>/dev/null
-
-
-    trap - INT TERM
-
-
-    printf "\n"
-
     _theme_ok "Argon 主题安装成功"
 
     _theme_info "已设置 Argon 为默认 LuCI 主题"
 
     _theme_info "请刷新或重新登录 LuCI 页面"
+
 
     printf "\n"
 
