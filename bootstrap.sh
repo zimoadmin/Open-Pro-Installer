@@ -434,10 +434,194 @@ rm -f "$ZIP_FILE"
 
 
 # ======================================
+# Check LuCI Dependencies
+# ======================================
+
+check_luci_dependencies()
+{
+    # ----------------------------------
+    # 仅 OPKG 系统执行
+    # ----------------------------------
+
+    if ! command -v opkg >/dev/null 2>&1
+    then
+        return 0
+    fi
+
+
+    NEED_PACKAGES=""
+
+
+    # ----------------------------------
+    # 检测 luci-compat
+    # ----------------------------------
+
+    if ! opkg status luci-compat 2>/dev/null |
+         grep -q 'Status:.*installed'
+    then
+
+        NEED_PACKAGES="$NEED_PACKAGES luci-compat"
+
+    fi
+
+
+    # ----------------------------------
+    # 检测 luci-lib-ipkg
+    # ----------------------------------
+
+    if ! opkg status luci-lib-ipkg 2>/dev/null |
+         grep -q 'Status:.*installed'
+    then
+
+        NEED_PACKAGES="$NEED_PACKAGES luci-lib-ipkg"
+
+    fi
+
+
+    # ----------------------------------
+    # 两个都已安装
+    # 静默跳过
+    # ----------------------------------
+
+    if [ -z "$NEED_PACKAGES" ]
+    then
+        return 0
+    fi
+
+
+    printf "%b\n" "${BLUE}[INFO] 正在检查 LuCI 基础依赖...${RESET}"
+
+
+    # ==================================
+    # 更新软件源
+    # ==================================
+
+    printf "%b\n" "${BLUE}[INFO] 正在更新软件源...${RESET}"
+
+
+    LUCI_UPDATE_LOG="/tmp/zimo_luci_update.log"
+
+    rm -f "$LUCI_UPDATE_LOG"
+
+
+    if opkg update >"$LUCI_UPDATE_LOG" 2>&1
+    then
+
+        printf "%b\n" "${GREEN}[SUCCESS] 软件源更新完成${RESET}"
+
+    else
+
+        printf "%b\n" "${YELLOW}[WARN] 软件源更新存在异常，继续检测可用依赖${RESET}"
+
+    fi
+
+
+    rm -f "$LUCI_UPDATE_LOG"
+
+
+    # ==================================
+    # 安装缺少的软件包
+    # ==================================
+
+    for PKG in $NEED_PACKAGES
+    do
+
+        # --------------------------------
+        # 再次确认是否已经安装
+        # --------------------------------
+
+        if opkg status "$PKG" 2>/dev/null |
+           grep -q 'Status:.*installed'
+        then
+            continue
+        fi
+
+
+        # --------------------------------
+        # 检查软件源是否存在
+        # --------------------------------
+
+        if ! opkg list "$PKG" 2>/dev/null |
+             awk -v pkg="$PKG" \
+             '$1 == pkg {found=1} END {exit !found}'
+        then
+
+            printf "%b\n" \
+                "${YELLOW}[SKIP] 软件源不存在 $PKG，已跳过${RESET}"
+
+            continue
+
+        fi
+
+
+        # --------------------------------
+        # 安装
+        # --------------------------------
+
+        printf "%b\n" \
+            "${BLUE}[INFO] 正在安装 $PKG...${RESET}"
+
+
+        LUCI_INSTALL_LOG="/tmp/zimo_${PKG}_install.log"
+
+        rm -f "$LUCI_INSTALL_LOG"
+
+
+        if opkg install "$PKG" >"$LUCI_INSTALL_LOG" 2>&1
+        then
+
+            # ----------------------------
+            # 安装后验证
+            # ----------------------------
+
+            if opkg status "$PKG" 2>/dev/null |
+               grep -q 'Status:.*installed'
+            then
+
+                printf "%b\n" \
+                    "${GREEN}[SUCCESS] $PKG 安装完成${RESET}"
+
+            else
+
+                printf "%b\n" \
+                    "${YELLOW}[WARN] $PKG 安装状态无法确认，已继续${RESET}"
+
+            fi
+
+        else
+
+            printf "%b\n" \
+                "${YELLOW}[WARN] $PKG 安装失败，已跳过${RESET}"
+
+        fi
+
+
+        rm -f "$LUCI_INSTALL_LOG"
+
+    done
+
+
+    return 0
+}
+
+
+# ======================================
 # Start Installer
 # ======================================
 
 printf "%b\n" "${GREEN}[SUCCESS] 项目准备完成${RESET}"
+
+
+# ======================================
+# Check LuCI Base Dependencies
+# ======================================
+
+check_luci_dependencies
+
+
+# ======================================
+# Start ZIMO
+# ======================================
 
 printf "%b\n" "${BLUE}[INFO] 正在启动 ZIMO--工具箱...${RESET}"
 
