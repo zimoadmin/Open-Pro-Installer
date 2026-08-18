@@ -774,11 +774,6 @@ match_feed()
     _ssr_ok "已自动匹配软件源"
     _ssr_info "$FEED_NAME"
 
-    printf "\n"
-
-    _ssr_info "Packages : ${SSR_BASE}${FEED_PATH}/packages"
-    _ssr_info "LuCI     : ${SSR_BASE}${FEED_PATH}/luci"
-    _ssr_info "Base     : ${SSR_BASE}${FEED_PATH}/base"
 
     printf "\n"
 
