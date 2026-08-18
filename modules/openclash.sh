@@ -6,13 +6,20 @@
 #
 # 功能：
 # 1. 安装 OpenClash
-# 2. 隐藏 opkg/apk 大量安装日志
-# 3. 单行动态安装进度条
-# 4. 安装失败自动显示详细日志
-# 5. 自动检测 OpenClash 是否安装成功
-# 6. 自动检测 CPU 架构
-# 7. 尝试调用 OpenClash 自带更新脚本
-# 8. 清理临时文件
+# 2. GitHub Release 多线路自动测速
+# 3. 自动选择最快下载线路
+# 4. 最快线路失败后自动切换备用线路
+# 5. 最后自动回退 GitHub 官方直连
+# 6. 隐藏 curl/wget/opkg/apk 大量日志
+# 7. OpenClash 安装动态进度条
+# 8. 安装失败自动显示详细日志
+# 9. 自动检测 OpenClash 是否安装成功
+# 10. 自动检测 CPU / Core 架构
+# 11. 自动检测 OpenClash Core
+# 12. 检测 OpenClash 更新组件
+# 13. 清理临时文件
+#
+# BusyBox / OpenWrt Compatible
 # ============================================================
 
 
@@ -31,6 +38,28 @@ OPENCLASH_CORE_ARCH=""
 
 OPENCLASH_DIR="/etc/openclash"
 OPENCLASH_CORE_DIR="/etc/openclash/core"
+
+OC_ROUTE_FILE="/tmp/openpro_openclash_routes"
+OC_TEST_FILE="/tmp/openpro_openclash_test"
+OC_DOWNLOAD_LOG="/tmp/openpro_openclash_download.log"
+
+
+# ============================================================
+# GitHub 下载线路
+#
+# 格式：
+# 名称|前缀
+#
+# DIRECT| 代表 GitHub 官方直连
+#
+# 如果以后代理失效，只需要修改这里。
+# ============================================================
+
+OPENCLASH_DOWNLOAD_NODES="
+GH01|https://ghproxy.net/
+GH02|https://gh-proxy.com/
+DIRECT|
+"
 
 
 # ============================================================
@@ -76,7 +105,7 @@ _oc_ok()
 
 
 # ============================================================
-# 清理临时文件
+# 清理
 # ============================================================
 
 cleanup_openclash_package()
@@ -91,13 +120,24 @@ cleanup_openclash_package()
 cleanup_openclash_logs()
 {
     rm -f "$INSTALL_LOG" 2>/dev/null
+    rm -f "$OC_DOWNLOAD_LOG" 2>/dev/null
+
+    return 0
+}
+
+
+cleanup_openclash_temp()
+{
+    rm -f "$OC_ROUTE_FILE" 2>/dev/null
+    rm -f "$OC_TEST_FILE" 2>/dev/null
+    rm -f "$OC_DOWNLOAD_LOG" 2>/dev/null
 
     return 0
 }
 
 
 # ============================================================
-# 检查 OpenClash 是否安装
+# 检查 OpenClash
 # ============================================================
 
 check_openclash()
@@ -108,7 +148,6 @@ check_openclash()
             grep -q 'Status:.*installed'
 
         return $?
-
     fi
 
 
@@ -118,7 +157,6 @@ check_openclash()
             >/dev/null 2>&1
 
         return $?
-
     fi
 
 
@@ -163,7 +201,539 @@ get_installed_openclash_version()
 
 
 # ============================================================
-# 进度条
+# 根据节点生成下载 URL
+# ============================================================
+
+build_openclash_url()
+{
+    PREFIX="$1"
+    ORIGINAL_URL="$2"
+
+
+    if [ -z "$PREFIX" ]; then
+        printf '%s' "$ORIGINAL_URL"
+    else
+        printf '%s%s' "$PREFIX" "$ORIGINAL_URL"
+    fi
+}
+
+
+# ============================================================
+# 毫秒计算
+# ============================================================
+
+oc_seconds_to_ms()
+{
+    VALUE="$1"
+
+
+    awk -v t="$VALUE" '
+        BEGIN {
+            if (t == "" || t !~ /^[0-9.]+$/) {
+                print 999999
+            } else {
+                printf "%d\n", t * 1000
+            }
+        }
+    '
+}
+
+
+# ============================================================
+# 测试一条 GitHub 下载线路
+#
+# curl 使用 Range，只获取少量数据。
+# 防止测速阶段完整下载 OpenClash 安装包。
+# ============================================================
+
+test_openclash_route()
+{
+    TEST_URL="$1"
+
+    rm -f "$OC_TEST_FILE"
+
+
+    if command -v curl >/dev/null 2>&1; then
+
+        TEST_TIME="$(
+            curl -4 \
+                -L \
+                -sS \
+                -f \
+                --connect-timeout 4 \
+                --max-time 8 \
+                -r 0-1023 \
+                -o "$OC_TEST_FILE" \
+                -w '%{time_total}' \
+                "$TEST_URL" \
+                2>/dev/null
+        )"
+
+        TEST_RESULT=$?
+
+
+        if [ "$TEST_RESULT" -ne 0 ]; then
+            return 1
+        fi
+
+
+        if [ ! -s "$OC_TEST_FILE" ]; then
+            return 1
+        fi
+
+
+        TEST_MS="$(oc_seconds_to_ms "$TEST_TIME")"
+
+
+        case "$TEST_MS" in
+            ''|*[!0-9]*)
+                return 1
+                ;;
+        esac
+
+
+        printf '%s' "$TEST_MS"
+
+        return 0
+    fi
+
+
+    # --------------------------------------------------------
+    # 没有 curl 时使用 wget 做可用性检测
+    #
+    # BusyBox wget 很难准确获得毫秒时间，
+    # 所以只判断线路是否可用。
+    # --------------------------------------------------------
+
+    if command -v wget >/dev/null 2>&1; then
+
+        START_TIME="$(date +%s 2>/dev/null)"
+
+
+        if wget \
+            -T 8 \
+            -O "$OC_TEST_FILE" \
+            "$TEST_URL" \
+            >/dev/null 2>&1
+        then
+
+            END_TIME="$(date +%s 2>/dev/null)"
+
+
+            [ -n "$START_TIME" ] || START_TIME=0
+            [ -n "$END_TIME" ] || END_TIME="$START_TIME"
+
+
+            TEST_MS=$(( (END_TIME - START_TIME) * 1000 ))
+
+
+            if [ "$TEST_MS" -le 0 ]; then
+                TEST_MS=1
+            fi
+
+
+            printf '%s' "$TEST_MS"
+
+            return 0
+        fi
+    fi
+
+
+    return 1
+}
+
+
+# ============================================================
+# GitHub Release 线路测速
+# ============================================================
+
+prepare_openclash_routes()
+{
+    ORIGINAL_URL="$1"
+
+    rm -f "$OC_ROUTE_FILE"
+    rm -f "$OC_TEST_FILE"
+
+
+    printf "\n"
+
+    _oc_info "正在测试 OpenClash 下载线路..."
+
+    printf "\n"
+
+
+    printf '%s\n' "$OPENCLASH_DOWNLOAD_NODES" |
+    while IFS='|' read -r NODE_NAME NODE_PREFIX
+    do
+
+        [ -n "$NODE_NAME" ] || continue
+
+
+        TEST_URL="$(
+            build_openclash_url \
+                "$NODE_PREFIX" \
+                "$ORIGINAL_URL"
+        )"
+
+
+        printf '  %-10s ' "$NODE_NAME"
+
+
+        NODE_MS="$(
+            test_openclash_route "$TEST_URL"
+        )"
+
+        TEST_RESULT=$?
+
+
+        if [ "$TEST_RESULT" -eq 0 ] &&
+           [ -n "$NODE_MS" ]; then
+
+            printf '\033[32m%6s ms\033[0m\n' \
+                "$NODE_MS"
+
+
+            printf '%s|%s|%s|%s\n' \
+                "$NODE_MS" \
+                "$NODE_NAME" \
+                "$NODE_PREFIX" \
+                "$TEST_URL" \
+                >> "$OC_ROUTE_FILE"
+
+        else
+
+            printf '\033[31m不可用\033[0m\n'
+
+        fi
+
+    done
+
+
+    rm -f "$OC_TEST_FILE"
+
+
+    if [ ! -s "$OC_ROUTE_FILE" ]; then
+
+        printf "\n"
+
+        _oc_warn "测速没有发现可用代理线路"
+        _oc_info "稍后将尝试 GitHub 官方地址"
+
+        return 1
+    fi
+
+
+    # --------------------------------------------------------
+    # 按延迟排序
+    # --------------------------------------------------------
+
+    SORTED_FILE="${OC_ROUTE_FILE}.sorted"
+
+
+    sort -n -t '|' -k 1,1 \
+        "$OC_ROUTE_FILE" \
+        > "$SORTED_FILE" 2>/dev/null
+
+
+    if [ -s "$SORTED_FILE" ]; then
+
+        mv "$SORTED_FILE" "$OC_ROUTE_FILE"
+
+    else
+
+        rm -f "$SORTED_FILE"
+
+    fi
+
+
+    BEST_LINE="$(
+        sed -n '1p' "$OC_ROUTE_FILE"
+    )"
+
+
+    BEST_MS="$(
+        printf '%s\n' "$BEST_LINE" |
+        cut -d '|' -f 1
+    )"
+
+
+    BEST_NAME="$(
+        printf '%s\n' "$BEST_LINE" |
+        cut -d '|' -f 2
+    )"
+
+
+    printf "\n"
+
+    _oc_ok "最快线路：$BEST_NAME"
+
+    _oc_info "线路延迟：${BEST_MS} ms"
+
+    printf "\n"
+
+
+    return 0
+}
+
+
+# ============================================================
+# 验证下载文件
+# ============================================================
+
+verify_openclash_package()
+{
+    FILE="$1"
+
+
+    if [ ! -s "$FILE" ]; then
+        return 1
+    fi
+
+
+    FILE_SIZE="$(
+        wc -c < "$FILE" 2>/dev/null
+    )"
+
+
+    case "$FILE_SIZE" in
+        ''|*[!0-9]*)
+            FILE_SIZE=0
+            ;;
+    esac
+
+
+    # OpenClash 软件包正常远大于 100KB。
+    # 主要防止代理返回 HTML 错误页。
+    if [ "$FILE_SIZE" -lt 102400 ]; then
+        return 1
+    fi
+
+
+    # --------------------------------------------------------
+    # HTML 错误页检测
+    # --------------------------------------------------------
+
+    if head -c 512 "$FILE" 2>/dev/null |
+        grep -Eqi \
+        '<html|<!doctype|bad gateway|cloudflare|error 404'
+    then
+        return 1
+    fi
+
+
+    return 0
+}
+
+
+# ============================================================
+# 使用 curl 下载
+# ============================================================
+
+download_openclash_curl()
+{
+    URL="$1"
+    OUTPUT="$2"
+
+
+    curl -4 \
+        -L \
+        -f \
+        -sS \
+        --connect-timeout 8 \
+        --max-time 180 \
+        --retry 1 \
+        --retry-delay 1 \
+        -o "$OUTPUT" \
+        "$URL" \
+        >"$OC_DOWNLOAD_LOG" 2>&1
+}
+
+
+# ============================================================
+# 使用 wget 下载
+# ============================================================
+
+download_openclash_wget()
+{
+    URL="$1"
+    OUTPUT="$2"
+
+
+    wget \
+        -T 20 \
+        -O "$OUTPUT" \
+        "$URL" \
+        >"$OC_DOWNLOAD_LOG" 2>&1
+}
+
+
+# ============================================================
+# 下载单条线路
+# ============================================================
+
+download_openclash_from_url()
+{
+    URL="$1"
+    OUTPUT="$2"
+
+
+    rm -f "$OUTPUT"
+    rm -f "$OC_DOWNLOAD_LOG"
+
+
+    if command -v curl >/dev/null 2>&1; then
+
+        download_openclash_curl \
+            "$URL" \
+            "$OUTPUT"
+
+        RESULT=$?
+
+    elif command -v wget >/dev/null 2>&1; then
+
+        download_openclash_wget \
+            "$URL" \
+            "$OUTPUT"
+
+        RESULT=$?
+
+    else
+
+        _oc_error "系统缺少 curl / wget"
+
+        return 1
+
+    fi
+
+
+    if [ "$RESULT" -ne 0 ]; then
+
+        rm -f "$OUTPUT"
+
+        return 1
+    fi
+
+
+    if ! verify_openclash_package "$OUTPUT"; then
+
+        rm -f "$OUTPUT"
+
+        return 1
+    fi
+
+
+    return 0
+}
+
+
+# ============================================================
+# OpenClash 多线路智能下载
+#
+# 1. 测速
+# 2. 延迟排序
+# 3. 最快线路优先
+# 4. 失败自动切换下一条
+# 5. 确保最后尝试 GitHub 官方直连
+# ============================================================
+
+smart_download_openclash()
+{
+    ORIGINAL_URL="$1"
+    OUTPUT="$2"
+
+
+    prepare_openclash_routes "$ORIGINAL_URL"
+
+
+    DOWNLOAD_SUCCESS=0
+    DIRECT_TRIED=0
+
+
+    # ========================================================
+    # 按测速结果依次下载
+    # ========================================================
+
+    if [ -s "$OC_ROUTE_FILE" ]; then
+
+        while IFS='|' read -r \
+            ROUTE_MS \
+            ROUTE_NAME \
+            ROUTE_PREFIX \
+            ROUTE_URL
+        do
+
+            [ -n "$ROUTE_NAME" ] || continue
+            [ -n "$ROUTE_URL" ] || continue
+
+
+            if [ "$ROUTE_NAME" = "DIRECT" ]; then
+                DIRECT_TRIED=1
+            fi
+
+
+            _oc_info "正在使用线路：$ROUTE_NAME"
+
+
+            if download_openclash_from_url \
+                "$ROUTE_URL" \
+                "$OUTPUT"
+            then
+
+                _oc_ok "下载线路：$ROUTE_NAME"
+
+                DOWNLOAD_SUCCESS=1
+
+                break
+
+            fi
+
+
+            _oc_warn "$ROUTE_NAME 下载失败，自动切换下一线路..."
+
+
+        done < "$OC_ROUTE_FILE"
+
+    fi
+
+
+    # ========================================================
+    # 如果测速列表全部失败，确保再尝试官方直连
+    # ========================================================
+
+    if [ "$DOWNLOAD_SUCCESS" -ne 1 ] &&
+       [ "$DIRECT_TRIED" -ne 1 ]; then
+
+        _oc_info "正在尝试 GitHub 官方直连..."
+
+
+        if download_openclash_from_url \
+            "$ORIGINAL_URL" \
+            "$OUTPUT"
+        then
+
+            _oc_ok "GitHub 官方直连下载成功"
+
+            DOWNLOAD_SUCCESS=1
+
+        fi
+
+    fi
+
+
+    cleanup_openclash_temp
+
+
+    if [ "$DOWNLOAD_SUCCESS" -eq 1 ]; then
+        return 0
+    fi
+
+
+    return 1
+}
+
+
+# ============================================================
+# 安装进度条
 # ============================================================
 
 openclash_progress_bar()
@@ -217,10 +787,6 @@ install_openclash_with_progress()
     rm -f "$INSTALL_LOG"
 
 
-    # ========================================================
-    # 后台安装
-    # ========================================================
-
     case "$PKG_TYPE" in
 
         apk)
@@ -260,95 +826,56 @@ install_openclash_with_progress()
     openclash_progress_bar "$PERCENT"
 
 
-    # ========================================================
-    # 动态判断安装阶段
-    # ========================================================
-
     while kill -0 "$PROGRESS_PID" 2>/dev/null; do
 
-
-        # ----------------------------------------------------
-        # Configuring
-        # ----------------------------------------------------
 
         if grep -q '^Configuring ' \
             "$INSTALL_LOG" 2>/dev/null
         then
 
             if [ "$PERCENT" -lt 94 ]; then
-
                 PERCENT=$((PERCENT + 3))
-
             fi
 
-
-        # ----------------------------------------------------
-        # Installing
-        # ----------------------------------------------------
 
         elif grep -q '^Installing ' \
             "$INSTALL_LOG" 2>/dev/null
         then
 
             if [ "$PERCENT" -lt 78 ]; then
-
                 PERCENT=$((PERCENT + 3))
-
             fi
 
-
-        # ----------------------------------------------------
-        # Downloading
-        # ----------------------------------------------------
 
         elif grep -q '^Downloading ' \
             "$INSTALL_LOG" 2>/dev/null
         then
 
             if [ "$PERCENT" -lt 48 ]; then
-
                 PERCENT=$((PERCENT + 2))
-
             fi
 
-
-        # ----------------------------------------------------
-        # 等待阶段
-        # ----------------------------------------------------
 
         else
 
             if [ "$PERCENT" -lt 15 ]; then
-
                 PERCENT=$((PERCENT + 1))
-
             fi
 
         fi
 
 
-        # ----------------------------------------------------
-        # 真正完成以前最多 95%
-        # ----------------------------------------------------
-
         if [ "$PERCENT" -gt 95 ]; then
-
             PERCENT=95
-
         fi
 
 
         openclash_progress_bar "$PERCENT"
 
-
         sleep 1
 
     done
 
-
-    # ========================================================
-    # 获取真实安装结果
-    # ========================================================
 
     wait "$PROGRESS_PID"
 
@@ -357,10 +884,6 @@ install_openclash_with_progress()
 
     PROGRESS_PID=""
 
-
-    # ========================================================
-    # 成功
-    # ========================================================
 
     if [ "$RESULT" -eq 0 ]; then
 
@@ -372,10 +895,6 @@ install_openclash_with_progress()
 
     fi
 
-
-    # ========================================================
-    # 失败
-    # ========================================================
 
     printf "\n"
 
@@ -471,7 +990,7 @@ detect_openclash_arch()
 
 
 # ============================================================
-# 检测当前 OpenClash 内核
+# 检测 OpenClash 内核
 # ============================================================
 
 check_openclash_core()
@@ -485,7 +1004,7 @@ check_openclash_core()
 
 
     # ========================================================
-    # Mihomo / Meta
+    # Meta / Mihomo
     # ========================================================
 
     if [ -x "$OPENCLASH_CORE_DIR/clash_meta" ]; then
@@ -493,6 +1012,7 @@ check_openclash_core()
         CORE_FOUND=1
 
         _oc_ok "已检测到 Meta / Mihomo 内核"
+
 
         CORE_VERSION="$(
             "$OPENCLASH_CORE_DIR/clash_meta" \
@@ -502,9 +1022,7 @@ check_openclash_core()
 
 
         if [ -n "$CORE_VERSION" ]; then
-
             _oc_info "$CORE_VERSION"
-
         fi
 
     fi
@@ -524,7 +1042,7 @@ check_openclash_core()
 
 
     # ========================================================
-    # Tun
+    # TUN
     # ========================================================
 
     if [ -x "$OPENCLASH_CORE_DIR/clash_tun" ]; then
@@ -550,14 +1068,7 @@ check_openclash_core()
 
 
 # ============================================================
-# 尝试使用 OpenClash 自带脚本更新内核
-#
-# 不自己拼第三方下载地址。
-# 优先让 OpenClash 自己判断：
-#   架构
-#   分支
-#   下载源
-#   Core 类型
+# 检测 OpenClash 自带更新组件
 # ============================================================
 
 auto_update_openclash_core()
@@ -566,10 +1077,6 @@ auto_update_openclash_core()
 
     _oc_info "正在检测 OpenClash 内核更新能力..."
 
-
-    # ========================================================
-    # 常见 OpenClash shell 路径
-    # ========================================================
 
     CORE_UPDATE_SCRIPT=""
 
@@ -591,13 +1098,10 @@ auto_update_openclash_core()
     done
 
 
-    # ========================================================
-    # 找不到脚本
-    # ========================================================
-
     if [ -z "$CORE_UPDATE_SCRIPT" ]; then
 
         _oc_warn "没有找到可直接调用的 OpenClash 内核更新脚本"
+
         _oc_info "可进入 OpenClash → 版本更新 页面检查内核"
 
         return 0
@@ -609,14 +1113,6 @@ auto_update_openclash_core()
 
     _oc_info "更新脚本 : $CORE_UPDATE_SCRIPT"
 
-
-    # ========================================================
-    # 注意：
-    # 不盲目执行未知参数。
-    #
-    # OpenClash 不同版本脚本参数可能变化。
-    # 安装完成后至少确保 OpenClash 自身更新组件存在。
-    # ========================================================
 
     if [ -x "$CORE_UPDATE_SCRIPT" ]; then
 
@@ -635,7 +1131,7 @@ auto_update_openclash_core()
 
 
 # ============================================================
-# 重载 uhttpd
+# 刷新 LuCI
 # ============================================================
 
 reload_luci()
@@ -655,7 +1151,7 @@ reload_luci()
 
 
 # ============================================================
-# 中断处理
+# 中断
 # ============================================================
 
 interrupt_openclash()
@@ -678,6 +1174,7 @@ interrupt_openclash()
 
 
     cleanup_openclash_package
+    cleanup_openclash_temp
 
 
     trap - INT TERM
@@ -721,14 +1218,28 @@ install_openclash()
 
 
     # ========================================================
-    # 检测架构
+    # 下载工具
+    # ========================================================
+
+    if ! command -v curl >/dev/null 2>&1 &&
+       ! command -v wget >/dev/null 2>&1; then
+
+        _oc_error "系统缺少 curl / wget"
+
+        return 1
+
+    fi
+
+
+    # ========================================================
+    # 架构
     # ========================================================
 
     detect_openclash_arch
 
 
     # ========================================================
-    # 检查 install.sh 传进来的变量
+    # install.sh 传入参数
     # ========================================================
 
     if [ -z "$DOWNLOAD_URL" ]; then
@@ -770,70 +1281,36 @@ install_openclash()
 
 
     rm -f "$OPENCLASH_PKG"
-
     rm -f "$INSTALL_LOG"
+
+    cleanup_openclash_temp
 
 
     trap 'interrupt_openclash' INT TERM
 
 
     # ========================================================
-    # 下载
+    # 智能线路下载
     # ========================================================
 
-    _oc_info "正在下载 OpenClash..."
+    if ! smart_download_openclash \
+        "$DOWNLOAD_URL" \
+        "$OPENCLASH_PKG"
+    then
 
-
-    RETRY=3
-
-    DOWNLOAD_OK=0
-
-
-    while [ "$RETRY" -gt 0 ]; do
-
-
-        if wget \
-            -T 20 \
-            -O "$OPENCLASH_PKG" \
-            "$DOWNLOAD_URL"
-        then
-
-            if [ -s "$OPENCLASH_PKG" ]; then
-
-                DOWNLOAD_OK=1
-
-                break
-
-            fi
-
-        fi
-
-
-        RETRY=$((RETRY - 1))
-
-
-        if [ "$RETRY" -gt 0 ]; then
-
-            _oc_warn "下载失败，正在重试..."
-
-            sleep 2
-
-        fi
-
-    done
-
-
-    # ========================================================
-    # 下载失败
-    # ========================================================
-
-    if [ "$DOWNLOAD_OK" -ne 1 ]; then
+        printf "\n"
 
         _oc_error "OpenClash 下载失败"
 
+        _oc_error "所有下载线路均不可用"
+
+
         cleanup_openclash_package
+        cleanup_openclash_temp
+
 
         trap - INT TERM
+
 
         return 1
 
@@ -854,9 +1331,7 @@ install_openclash()
 
 
     if [ -n "$SIZE" ]; then
-
         _oc_info "File Size : $SIZE"
-
     fi
 
 
@@ -959,8 +1434,7 @@ install_openclash()
 
 
         cleanup_openclash_package
-
-        cleanup_openclash_logs
+        cleanup_openclash_temp
 
 
         trap - INT TERM
@@ -982,7 +1456,7 @@ install_openclash()
 
 
     # ========================================================
-    # 验证 OpenClash
+    # 验证
     # ========================================================
 
     _oc_info "正在验证 OpenClash 安装结果..."
@@ -1005,6 +1479,8 @@ install_openclash()
 
 
         cleanup_openclash_logs
+        cleanup_openclash_temp
+
 
         trap - INT TERM
 
@@ -1032,10 +1508,11 @@ install_openclash()
     # ========================================================
 
     cleanup_openclash_logs
+    cleanup_openclash_temp
 
 
     # ========================================================
-    # 创建核心目录
+    # 创建 Core 目录
     # ========================================================
 
     mkdir -p "$OPENCLASH_CORE_DIR" \
@@ -1043,14 +1520,14 @@ install_openclash()
 
 
     # ========================================================
-    # 检测内核
+    # Core 检测
     # ========================================================
 
     check_openclash_core
 
 
     # ========================================================
-    # 检测更新组件
+    # 更新组件检测
     # ========================================================
 
     auto_update_openclash_core
