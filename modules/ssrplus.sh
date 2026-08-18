@@ -3,48 +3,19 @@
 # ============================================================
 # Open-Pro-Installer
 # SSR Plus+ Auto Installer
+# Five Stage Progress Edition
 #
-# 支持：
-#
-# MT798X
-#   OpenWrt 21 / Kernel 5.4 / 64bit
-#   OpenWrt 24 / Kernel 6.6 / 64bit
-#
-# IPQ6000
-#   OpenWrt 23 / 64bit
-#   旧 32bit
-#
-# IPQ53XX
-#   BE3600 / BE6500 / BE9300
-#   IPQ5312 / IPQ5332
-#   OpenWrt 23 / 64bit
-#
-# IPQ5018
-#   B3000 / OpenWrt 19 / 64bit
-#
-# IPQ401X
-#   OpenWrt 21 / 32bit
-#
-# SDX72
-#   Mudi7 / E5800 / OpenWrt 23 / 64bit
-#
-# 安装流程：
-# 1. 检测设备
-# 2. 识别处理器平台
-# 3. 检测 OpenWrt
-# 4. 检测 Kernel
-# 5. 检测 32/64 位
-# 6. 自动匹配软件源
-# 7. 备份原始软件源
-# 8. 临时添加软件源
-# 9. 更新软件列表
-# 10. 安装 SSR Plus+
-# 11. 验证 SSR Plus+
-# 12. 自动安装中文语言包
-# 13. 自动扫描并安装全部 shadowsocksr-libev-ssr-*
-# 14. 启用 SSR Plus+
-# 15. 删除临时源
-# 16. 恢复原始软件源
+# 功能：
+# 1. 自动识别设备平台
+# 2. 自动匹配软件源
+# 3. 自动备份原始软件源
+# 4. 临时添加 SSR Plus+ 软件源
+# 5. 静默更新软件列表
+# 6. 五阶段动态进度安装 SSR Plus+
+# 7. 自动检测中文语言包
+# 8. 自动扫描所有 shadowsocksr-libev-ssr-*
+# 9. 自动安装缺失组件
+# 10. 自动恢复原始软件源
 # ============================================================
 
 
@@ -58,6 +29,9 @@ BACKUP_DIR="/tmp/openpro_ssrplus_backup"
 
 CUSTOMFEEDS="/etc/opkg/customfeeds.conf"
 DISTFEEDS="/etc/opkg/distfeeds.conf"
+
+UPDATE_LOG="/tmp/openpro_ssrplus_update.log"
+INSTALL_LOG="/tmp/openpro_ssrplus_install.log"
 
 FEED_PATH=""
 FEED_NAME=""
@@ -75,6 +49,8 @@ TARGET_FAMILY=""
 MODEL_LOWER=""
 
 PKG_MANAGER=""
+
+PROGRESS_PID=""
 
 
 # ============================================================
@@ -118,6 +94,265 @@ _ssr_ok()
 
 
 # ============================================================
+# 生成进度条
+# ============================================================
+
+make_bar()
+{
+    PERCENT="$1"
+    WIDTH="${2:-25}"
+
+    FILLED=$((PERCENT * WIDTH / 100))
+    EMPTY=$((WIDTH - FILLED))
+
+    BAR=""
+
+    I=0
+    while [ "$I" -lt "$FILLED" ]; do
+        BAR="${BAR}#"
+        I=$((I + 1))
+    done
+
+    I=0
+    while [ "$I" -lt "$EMPTY" ]; do
+        BAR="${BAR}-"
+        I=$((I + 1))
+    done
+
+    printf '%s' "$BAR"
+}
+
+
+# ============================================================
+# 绘制五阶段进度
+# ============================================================
+
+draw_install_progress()
+{
+    P1="$1"
+    P2="$2"
+    P3="$3"
+    P4="$4"
+    P5="$5"
+    TOTAL="$6"
+
+    B1="$(make_bar "$P1" 20)"
+    B2="$(make_bar "$P2" 20)"
+    B3="$(make_bar "$P3" 20)"
+    B4="$(make_bar "$P4" 20)"
+    B5="$(make_bar "$P5" 20)"
+    BT="$(make_bar "$TOTAL" 30)"
+
+    printf '\033[6A'
+
+    printf '\033[2K\r[1/5] 准备安装环境  [\033[32m%s\033[0m] %3d%%\n' \
+        "$B1" "$P1"
+
+    printf '\033[2K\r[2/5] 下载软件包    [\033[32m%s\033[0m] %3d%%\n' \
+        "$B2" "$P2"
+
+    printf '\033[2K\r[3/5] 安装软件包    [\033[32m%s\033[0m] %3d%%\n' \
+        "$B3" "$P3"
+
+    printf '\033[2K\r[4/5] 配置软件包    [\033[32m%s\033[0m] %3d%%\n' \
+        "$B4" "$P4"
+
+    printf '\033[2K\r[5/5] 完成安装      [\033[32m%s\033[0m] %3d%%\n' \
+        "$B5" "$P5"
+
+    printf '\033[2K\r总体进度           [\033[32m%s\033[0m] %3d%%\n' \
+        "$BT" "$TOTAL"
+}
+
+
+# ============================================================
+# 初始化进度区域
+# ============================================================
+
+init_install_progress()
+{
+    printf "[1/5] 准备安装环境  [--------------------]   0%%\n"
+    printf "[2/5] 下载软件包    [--------------------]   0%%\n"
+    printf "[3/5] 安装软件包    [--------------------]   0%%\n"
+    printf "[4/5] 配置软件包    [--------------------]   0%%\n"
+    printf "[5/5] 完成安装      [--------------------]   0%%\n"
+    printf "总体进度           [------------------------------]   0%%\n"
+}
+
+
+# ============================================================
+# 五阶段安装
+# ============================================================
+
+install_with_progress()
+{
+    PACKAGE="$1"
+    LOG_FILE="$2"
+
+    rm -f "$LOG_FILE"
+
+    P1=100
+    P2=0
+    P3=0
+    P4=0
+    P5=0
+
+    TOTAL=5
+
+    init_install_progress
+
+    draw_install_progress \
+        "$P1" "$P2" "$P3" "$P4" "$P5" "$TOTAL"
+
+    opkg install "$PACKAGE" >"$LOG_FILE" 2>&1 &
+
+    PROGRESS_PID=$!
+
+
+    while kill -0 "$PROGRESS_PID" 2>/dev/null; do
+
+        HAS_DOWNLOAD=0
+        HAS_INSTALL=0
+        HAS_CONFIG=0
+
+
+        if grep -q '^Downloading ' "$LOG_FILE" 2>/dev/null; then
+            HAS_DOWNLOAD=1
+        fi
+
+
+        if grep -q '^Installing ' "$LOG_FILE" 2>/dev/null; then
+            HAS_INSTALL=1
+        fi
+
+
+        if grep -q '^Configuring ' "$LOG_FILE" 2>/dev/null; then
+            HAS_CONFIG=1
+        fi
+
+
+        # ----------------------------------------------------
+        # 下载阶段
+        # ----------------------------------------------------
+
+        if [ "$HAS_DOWNLOAD" -eq 1 ]; then
+
+            if [ "$P2" -lt 90 ]; then
+                P2=$((P2 + 5))
+            fi
+
+        else
+
+            if [ "$P2" -lt 15 ]; then
+                P2=$((P2 + 3))
+            fi
+
+        fi
+
+
+        # ----------------------------------------------------
+        # 安装阶段
+        # ----------------------------------------------------
+
+        if [ "$HAS_INSTALL" -eq 1 ]; then
+
+            P2=100
+
+            if [ "$P3" -lt 90 ]; then
+                P3=$((P3 + 5))
+            fi
+
+        fi
+
+
+        # ----------------------------------------------------
+        # 配置阶段
+        # ----------------------------------------------------
+
+        if [ "$HAS_CONFIG" -eq 1 ]; then
+
+            P2=100
+            P3=100
+
+            if [ "$P4" -lt 90 ]; then
+                P4=$((P4 + 5))
+            fi
+
+        fi
+
+
+        [ "$P2" -gt 100 ] && P2=100
+        [ "$P3" -gt 100 ] && P3=100
+        [ "$P4" -gt 100 ] && P4=100
+
+
+        TOTAL=$(
+            expr \
+            "$P1" + \
+            "$P2" + \
+            "$P3" + \
+            "$P4" + \
+            "$P5"
+        )
+
+        TOTAL=$((TOTAL / 5))
+
+
+        if [ "$TOTAL" -gt 95 ]; then
+            TOTAL=95
+        fi
+
+
+        draw_install_progress \
+            "$P1" \
+            "$P2" \
+            "$P3" \
+            "$P4" \
+            "$P5" \
+            "$TOTAL"
+
+
+        sleep 1
+
+    done
+
+
+    wait "$PROGRESS_PID"
+
+    RESULT=$?
+
+    PROGRESS_PID=""
+
+
+    if [ "$RESULT" -eq 0 ]; then
+
+        P1=100
+        P2=100
+        P3=100
+        P4=100
+        P5=100
+        TOTAL=100
+
+
+        draw_install_progress \
+            "$P1" \
+            "$P2" \
+            "$P3" \
+            "$P4" \
+            "$P5" \
+            "$TOTAL"
+
+
+        return 0
+
+    fi
+
+
+    return "$RESULT"
+}
+
+
+# ============================================================
 # 检测系统
 # ============================================================
 
@@ -136,6 +371,7 @@ detect_system()
     TARGET_LOWER=""
     TARGET_FAMILY=""
     MODEL_LOWER=""
+
 
     KERNEL_VERSION="$(uname -r 2>/dev/null)"
     ARCH="$(uname -m 2>/dev/null)"
@@ -162,11 +398,12 @@ detect_system()
 
     fi
 
+
     [ -n "$MODEL" ] || MODEL="unknown"
 
 
     # ========================================================
-    # 获取 OpenWrt 信息
+    # OpenWrt
     # ========================================================
 
     if [ -f /etc/openwrt_release ]; then
@@ -197,9 +434,8 @@ detect_system()
                 jsonfilter -e '@.release.target' 2>/dev/null
             )"
 
-            if [ -n "$TMP_TARGET" ]; then
+            [ -n "$TMP_TARGET" ] &&
                 OPENWRT_TARGET="$TMP_TARGET"
-            fi
 
         fi
 
@@ -212,9 +448,8 @@ detect_system()
                 jsonfilter -e '@.release.version' 2>/dev/null
             )"
 
-            if [ -n "$TMP_VERSION" ]; then
+            [ -n "$TMP_VERSION" ] &&
                 OPENWRT_VERSION="$TMP_VERSION"
-            fi
 
         fi
 
@@ -230,10 +465,12 @@ detect_system()
         tr -d '\r\n\t '
     )"
 
+
     OPENWRT_VERSION="$(
         printf '%s' "$OPENWRT_VERSION" |
         tr -d '\r\n\t '
     )"
+
 
     MODEL="$(
         printf '%s' "$MODEL" |
@@ -242,7 +479,7 @@ detect_system()
 
 
     # ========================================================
-    # 检测 32 / 64 位
+    # 32 / 64 位
     # ========================================================
 
     case "$ARCH" in
@@ -290,16 +527,13 @@ detect_system()
         tr -d '\r\n\t '
     )"
 
+
     MODEL_LOWER="$(
         printf '%s' "$MODEL" |
         tr '[:upper:]' '[:lower:]' |
         tr -d '\r\n'
     )"
 
-
-    # ========================================================
-    # Target Family
-    # ========================================================
 
     TARGET_FAMILY="$(
         printf '%s' "$TARGET_LOWER" |
@@ -308,7 +542,7 @@ detect_system()
 
 
     # ========================================================
-    # 第一层：Target Family
+    # Target Family
     # ========================================================
 
     case "$TARGET_FAMILY" in
@@ -337,7 +571,7 @@ detect_system()
 
 
     # ========================================================
-    # 第二层：完整 Target
+    # 完整 Target
     # ========================================================
 
     if [ "$PLATFORM" = "unknown" ]; then
@@ -374,7 +608,7 @@ detect_system()
 
 
     # ========================================================
-    # 第三层：Model / SoC
+    # Model
     # ========================================================
 
     if [ "$PLATFORM" = "unknown" ]; then
@@ -411,7 +645,7 @@ detect_system()
 
 
     # ========================================================
-    # 第四层：GL.iNet 型号
+    # GL.iNet 型号兜底
     # ========================================================
 
     if [ "$PLATFORM" = "unknown" ]; then
@@ -456,7 +690,8 @@ detect_system()
         if printf '%s\n%s\n' \
             "$OPENWRT_TARGET" \
             "$MODEL" |
-            grep -Eqi 'ipq53xx|ipq5332|ipq5312|be3600|be6500|be9300'
+            grep -Eqi \
+            'ipq53xx|ipq5332|ipq5312|be3600|be6500|be9300'
         then
 
             PLATFORM="IPQ53XX"
@@ -475,7 +710,8 @@ detect_system()
         if printf '%s\n%s\n' \
             "$OPENWRT_TARGET" \
             "$MODEL" |
-            grep -Eqi 'mt7981|mt7986|mt7987|mt7988|mt2500|mt3000|mt5000|mt6000|mt3600'
+            grep -Eqi \
+            'mt7981|mt7986|mt7987|mt7988|mt2500|mt3000|mt5000|mt6000|mt3600'
         then
 
             PLATFORM="MT798X"
@@ -486,7 +722,7 @@ detect_system()
 
 
     # ========================================================
-    # 显示检测结果
+    # 显示
     # ========================================================
 
     printf "\n"
@@ -541,46 +777,43 @@ match_feed()
     # MT798X
     # ========================================================
 
-    if [ "$PLATFORM" = "MT798X" ]; then
+    if [ "$PLATFORM" = "MT798X" ] &&
+       [ "$BITS" = "64" ]; then
 
-        if [ "$BITS" = "64" ]; then
+        case "$OPENWRT_VERSION" in
 
-            case "$OPENWRT_VERSION" in
+            21.*)
 
-                21.*)
+                case "$KERNEL_VERSION" in
 
-                    case "$KERNEL_VERSION" in
+                    5.4.*)
 
-                        5.4.*)
+                        FEED_PATH="/mt798x-openwrt21"
+                        FEED_NAME="MT798X / OpenWrt 21 / Kernel 5.4 / 64位"
 
-                            FEED_PATH="/mt798x-openwrt21"
-                            FEED_NAME="MT798X / OpenWrt 21 / Kernel 5.4 / 64位"
+                        ;;
 
-                            ;;
+                esac
 
-                    esac
-
-                    ;;
+                ;;
 
 
-                24.*)
+            24.*)
 
-                    case "$KERNEL_VERSION" in
+                case "$KERNEL_VERSION" in
 
-                        6.6.*)
+                    6.6.*)
 
-                            FEED_PATH="/mt798x-openwrt24"
-                            FEED_NAME="MT798X / OpenWrt 24 / Kernel 6.6 / 64位"
+                        FEED_PATH="/mt798x-openwrt24"
+                        FEED_NAME="MT798X / OpenWrt 24 / Kernel 6.6 / 64位"
 
-                            ;;
+                        ;;
 
-                    esac
+                esac
 
-                    ;;
+                ;;
 
-            esac
-
-        fi
+        esac
 
     fi
 
@@ -604,7 +837,6 @@ match_feed()
 
             esac
 
-
         elif [ "$BITS" = "32" ]; then
 
             FEED_PATH="/ipq6000-2023-09-不再更新"
@@ -622,46 +854,40 @@ match_feed()
     # IPQ53XX
     # ========================================================
 
-    if [ "$PLATFORM" = "IPQ53XX" ]; then
+    if [ "$PLATFORM" = "IPQ53XX" ] &&
+       [ "$BITS" = "64" ]; then
 
-        if [ "$BITS" = "64" ]; then
+        case "$OPENWRT_VERSION" in
 
-            case "$OPENWRT_VERSION" in
+            23.*)
 
-                23.*)
+                FEED_PATH="/ipq5312-qsdk12-5-64bit"
+                FEED_NAME="IPQ53XX / QSDK 12.5 / OpenWrt 23 / 64位"
 
-                    FEED_PATH="/ipq5312-qsdk12-5-64bit"
-                    FEED_NAME="IPQ53XX / QSDK 12.5 / OpenWrt 23 / 64位"
+                ;;
 
-                    ;;
-
-            esac
-
-        fi
+        esac
 
     fi
 
 
     # ========================================================
-    # IPQ5018 / B3000
+    # IPQ5018
     # ========================================================
 
-    if [ "$PLATFORM" = "IPQ5018" ]; then
+    if [ "$PLATFORM" = "IPQ5018" ] &&
+       [ "$BITS" = "64" ]; then
 
-        if [ "$BITS" = "64" ]; then
+        case "$OPENWRT_VERSION" in
 
-            case "$OPENWRT_VERSION" in
+            19.*)
 
-                19.*)
+                FEED_PATH="/b3000-qsdk12-2"
+                FEED_NAME="IPQ5018 / B3000 / OpenWrt 19 / 64位"
 
-                    FEED_PATH="/b3000-qsdk12-2"
-                    FEED_NAME="IPQ5018 / B3000 / OpenWrt 19 / 64位"
+                ;;
 
-                    ;;
-
-            esac
-
-        fi
+        esac
 
     fi
 
@@ -670,46 +896,40 @@ match_feed()
     # IPQ401X
     # ========================================================
 
-    if [ "$PLATFORM" = "IPQ401X" ]; then
+    if [ "$PLATFORM" = "IPQ401X" ] &&
+       [ "$BITS" = "32" ]; then
 
-        if [ "$BITS" = "32" ]; then
+        case "$OPENWRT_VERSION" in
 
-            case "$OPENWRT_VERSION" in
+            21.*)
 
-                21.*)
+                FEED_PATH="/ipq4019"
+                FEED_NAME="IPQ401X / OpenWrt 21 / 32位"
 
-                    FEED_PATH="/ipq4019"
-                    FEED_NAME="IPQ401X / OpenWrt 21 / 32位"
+                ;;
 
-                    ;;
-
-            esac
-
-        fi
+        esac
 
     fi
 
 
     # ========================================================
-    # SDX72 / Mudi7 / E5800
+    # SDX72
     # ========================================================
 
-    if [ "$PLATFORM" = "SDX72" ]; then
+    if [ "$PLATFORM" = "SDX72" ] &&
+       [ "$BITS" = "64" ]; then
 
-        if [ "$BITS" = "64" ]; then
+        case "$OPENWRT_VERSION" in
 
-            case "$OPENWRT_VERSION" in
+            23.*)
 
-                23.*)
+                FEED_PATH="/mudi7"
+                FEED_NAME="Mudi7 / SDX72 / OpenWrt 23 / 64位"
 
-                    FEED_PATH="/mudi7"
-                    FEED_NAME="Mudi7 / SDX72 / OpenWrt 23 / 64位"
+                ;;
 
-                    ;;
-
-            esac
-
-        fi
+        esac
 
     fi
 
@@ -762,23 +982,20 @@ backup_feeds()
 
     rm -rf "$BACKUP_DIR"
 
+
     mkdir -p "$BACKUP_DIR" || {
 
         _ssr_error "无法创建备份目录"
 
         return 1
+
     }
 
 
     if [ -f "$DISTFEEDS" ]; then
 
         cp "$DISTFEEDS" \
-            "$BACKUP_DIR/distfeeds.conf" || {
-
-            _ssr_error "备份 distfeeds.conf 失败"
-
-            return 1
-        }
+            "$BACKUP_DIR/distfeeds.conf" || return 1
 
     else
 
@@ -790,12 +1007,7 @@ backup_feeds()
     if [ -f "$CUSTOMFEEDS" ]; then
 
         cp "$CUSTOMFEEDS" \
-            "$BACKUP_DIR/customfeeds.conf" || {
-
-            _ssr_error "备份 customfeeds.conf 失败"
-
-            return 1
-        }
+            "$BACKUP_DIR/customfeeds.conf" || return 1
 
     else
 
@@ -818,24 +1030,13 @@ add_temp_feeds()
 {
     _ssr_info "正在添加 SSR Plus+ 临时软件源..."
 
-    mkdir -p /etc/opkg || {
 
-        _ssr_error "无法创建 /etc/opkg"
+    mkdir -p /etc/opkg || return 1
 
+
+    [ -f "$CUSTOMFEEDS" ] ||
+        touch "$CUSTOMFEEDS" ||
         return 1
-    }
-
-
-    if [ ! -f "$CUSTOMFEEDS" ]; then
-
-        touch "$CUSTOMFEEDS" || {
-
-            _ssr_error "无法创建 customfeeds.conf"
-
-            return 1
-        }
-
-    fi
 
 
     sed -i \
@@ -871,14 +1072,13 @@ add_temp_feeds()
 
 
 # ============================================================
-# 恢复原始软件源
+# 恢复软件源
 # ============================================================
 
 restore_feeds()
 {
-    if [ ! -d "$BACKUP_DIR" ]; then
+    [ -d "$BACKUP_DIR" ] ||
         return 0
-    fi
 
 
     _ssr_info "正在恢复原始软件源..."
@@ -918,7 +1118,7 @@ restore_feeds()
 
 
 # ============================================================
-# 清理临时软件列表
+# 清理
 # ============================================================
 
 clean_openpro_lists()
@@ -926,13 +1126,18 @@ clean_openpro_lists()
     rm -f /var/opkg-lists/openpro_packages 2>/dev/null
     rm -f /var/opkg-lists/openpro_luci 2>/dev/null
     rm -f /var/opkg-lists/openpro_base 2>/dev/null
+}
 
-    return 0
+
+clean_ssr_logs()
+{
+    rm -f "$UPDATE_LOG" 2>/dev/null
+    rm -f "$INSTALL_LOG" 2>/dev/null
 }
 
 
 # ============================================================
-# 检查指定软件包是否已经安装
+# 检测指定软件包是否安装
 # ============================================================
 
 is_package_installed()
@@ -943,7 +1148,7 @@ is_package_installed()
 
 
 # ============================================================
-# 检查 SSR Plus+
+# SSR Plus+
 # ============================================================
 
 check_ssrplus()
@@ -953,19 +1158,23 @@ check_ssrplus()
 
 
 # ============================================================
-# 安装单个可选软件包
+# 安装一个可选组件
 #
-# 安装失败不会中止整个 SSR Plus+ 安装
+# 失败不影响 SSR Plus+ 主程序
 # ============================================================
 
 install_optional_package()
 {
     OPTIONAL_PKG="$1"
 
-    [ -n "$OPTIONAL_PKG" ] || return 0
+    [ -n "$OPTIONAL_PKG" ] ||
+        return 0
 
 
+    # --------------------------------------------------------
     # 已安装
+    # --------------------------------------------------------
+
     if is_package_installed "$OPTIONAL_PKG"; then
 
         _ssr_ok "$OPTIONAL_PKG 已安装"
@@ -975,7 +1184,10 @@ install_optional_package()
     fi
 
 
-    # 开始安装
+    # --------------------------------------------------------
+    # 安装
+    # --------------------------------------------------------
+
     _ssr_info "正在安装：$OPTIONAL_PKG"
 
 
@@ -984,7 +1196,9 @@ install_optional_package()
     rm -f "$OPTIONAL_LOG"
 
 
-    if opkg install "$OPTIONAL_PKG" >"$OPTIONAL_LOG" 2>&1; then
+    if opkg install "$OPTIONAL_PKG" \
+        >"$OPTIONAL_LOG" 2>&1
+    then
 
         if is_package_installed "$OPTIONAL_PKG"; then
 
@@ -999,7 +1213,6 @@ install_optional_package()
     else
 
         _ssr_warn "$OPTIONAL_PKG 安装失败，已跳过"
-        _ssr_warn "不会影响 SSR Plus+ 主程序"
 
     fi
 
@@ -1011,34 +1224,23 @@ install_optional_package()
 
 
 # ============================================================
-# 自动安装 SSR Plus+ 可选组件
+# 自动检测并安装 SSR Plus+ 扩展组件
 #
-# 功能：
+# 1. luci-i18n-ssr-plus-zh-cn
 #
-# 1. 检测中文语言包
-# 2. 自动扫描全部：
+# 2. 自动扫描所有：
 #
 #    shadowsocksr-libev-ssr-*
 #
-# 例如：
-#
-# shadowsocksr-libev-ssr-local
-# shadowsocksr-libev-ssr-redir
-# shadowsocksr-libev-ssr-nat
-# shadowsocksr-libev-ssr-server
-#
-# 以后软件源新增同前缀包：
-#
-# shadowsocksr-libev-ssr-xxxx
-#
-# 也会自动识别并安装
+# 软件源以后出现新的同前缀包，
+# 也会自动识别并安装。
 # ============================================================
 
 install_optional_ssr_packages()
 {
     printf "\n"
 
-    _ssr_info "正在检测 SSR Plus+ 可选组件..."
+    _ssr_info "正在检测 SSR Plus+ 扩展组件..."
 
     printf "\n"
 
@@ -1052,7 +1254,7 @@ install_optional_ssr_packages()
 
     if is_package_installed "$LANG_PKG"; then
 
-        _ssr_ok "$LANG_PKG 已安装"
+        _ssr_ok "中文语言包已安装"
 
     else
 
@@ -1069,13 +1271,13 @@ install_optional_ssr_packages()
 
         if [ "$LANG_FOUND" = "$LANG_PKG" ]; then
 
-            _ssr_info "发现中文语言包：$LANG_PKG"
+            _ssr_info "发现中文语言包"
 
             install_optional_package "$LANG_PKG"
 
         else
 
-            _ssr_warn "未找到 $LANG_PKG，已跳过"
+            _ssr_warn "未找到中文语言包，已跳过"
 
         fi
 
@@ -1086,7 +1288,8 @@ install_optional_ssr_packages()
 
 
     # ========================================================
-    # 自动扫描 ShadowsocksR Libev 全部组件
+    # ShadowsocksR Libev
+    # 自动扫描所有匹配包
     # ========================================================
 
     _ssr_info "正在扫描 ShadowsocksR Libev 组件..."
@@ -1104,12 +1307,12 @@ install_optional_ssr_packages()
 
 
     # ========================================================
-    # 一个都没有
+    # 没有发现
     # ========================================================
 
     if [ -z "$SSR_LIBEV_PACKAGES" ]; then
 
-        _ssr_warn "软件源中未发现 shadowsocksr-libev-ssr-* 组件"
+        _ssr_warn "未发现 shadowsocksr-libev-ssr-* 组件"
 
         printf "\n"
 
@@ -1119,12 +1322,20 @@ install_optional_ssr_packages()
 
 
     # ========================================================
-    # 统计发现数量
+    # 统计数量
     # ========================================================
 
     SSR_LIBEV_COUNT="$(
         printf '%s\n' "$SSR_LIBEV_PACKAGES" |
-        awk 'NF {count++} END {print count+0}'
+        awk '
+            NF {
+                count++
+            }
+
+            END {
+                print count+0
+            }
+        '
     )"
 
 
@@ -1134,10 +1345,11 @@ install_optional_ssr_packages()
 
 
     # ========================================================
-    # 逐个处理
+    # 逐个安装
     # ========================================================
 
-    for pkg in $SSR_LIBEV_PACKAGES; do
+    for pkg in $SSR_LIBEV_PACKAGES
+    do
 
         install_optional_package "$pkg"
 
@@ -1146,7 +1358,7 @@ install_optional_ssr_packages()
 
     printf "\n"
 
-    _ssr_ok "SSR Plus+ 可选组件检测完成"
+    _ssr_ok "SSR Plus+ 扩展组件检测完成"
 
     printf "\n"
 
@@ -1162,11 +1374,12 @@ cleanup_ssrplus()
 {
     restore_feeds
     clean_openpro_lists
+    clean_ssr_logs
 }
 
 
 # ============================================================
-# 中断处理
+# 中断
 # ============================================================
 
 interrupt_ssrplus()
@@ -1174,6 +1387,15 @@ interrupt_ssrplus()
     printf "\n"
 
     _ssr_warn "安装被中断"
+
+
+    if [ -n "$PROGRESS_PID" ]; then
+
+        kill "$PROGRESS_PID" 2>/dev/null
+        wait "$PROGRESS_PID" 2>/dev/null
+
+    fi
+
 
     cleanup_ssrplus
 
@@ -1221,7 +1443,6 @@ install_ssrplus()
 
         _ssr_error "检测到 APK 包管理器"
         _ssr_warn "当前 SSR Plus+ 软件源为 OPKG 软件源"
-        _ssr_warn "为避免软件包格式不兼容，已取消安装"
 
         return 1
 
@@ -1240,24 +1461,12 @@ install_ssrplus()
 
 
     # ========================================================
-    # 如果已经安装
+    # 检测设备
     #
     # 注意：
-    # 这里仍然直接返回。
-    # 新安装流程会自动安装可选组件。
-    # ========================================================
-
-    if check_ssrplus; then
-
-        _ssr_ok "SSR Plus+ 已经安装"
-
-        return 0
-
-    fi
-
-
-    # ========================================================
-    # 检测系统
+    # 即使 SSR Plus+ 已经安装，
+    # 也继续检测平台和软件源，
+    # 这样以后再次运行时可以自动补齐扩展组件。
     # ========================================================
 
     if ! detect_system; then
@@ -1279,7 +1488,7 @@ install_ssrplus()
 
 
     # ========================================================
-    # 备份原始软件源
+    # 备份
     # ========================================================
 
     if ! backup_feeds; then
@@ -1291,16 +1500,12 @@ install_ssrplus()
     fi
 
 
-    # ========================================================
-    # 设置安全恢复
-    # ========================================================
-
     trap 'cleanup_ssrplus' EXIT
     trap 'interrupt_ssrplus' INT TERM
 
 
     # ========================================================
-    # 添加临时软件源
+    # 临时源
     # ========================================================
 
     if ! add_temp_feeds; then
@@ -1316,10 +1521,6 @@ install_ssrplus()
     fi
 
 
-    # ========================================================
-    # 清理旧缓存
-    # ========================================================
-
     clean_openpro_lists
 
 
@@ -1331,14 +1532,27 @@ install_ssrplus()
 
     _ssr_info "正在更新软件列表..."
 
-    printf "\n"
+    rm -f "$UPDATE_LOG"
 
 
-    if ! opkg update; then
+    if ! opkg update >"$UPDATE_LOG" 2>&1; then
 
         printf "\n"
 
         _ssr_error "软件源更新失败"
+
+
+        if [ -s "$UPDATE_LOG" ]; then
+
+            printf "\n"
+            printf "========== OPKG UPDATE ERROR ==========\n"
+
+            cat "$UPDATE_LOG"
+
+            printf "=======================================\n"
+
+        fi
+
 
         cleanup_ssrplus
 
@@ -1349,7 +1563,7 @@ install_ssrplus()
     fi
 
 
-    printf "\n"
+    rm -f "$UPDATE_LOG"
 
     _ssr_ok "软件列表更新完成"
 
@@ -1357,142 +1571,173 @@ install_ssrplus()
 
 
     # ========================================================
-    # 查询 SSR Plus+
-    # ========================================================
-
-    _ssr_info "正在查询 luci-app-ssr-plus..."
-
-
-    SSR_PACKAGE="$(
-        opkg list 2>/dev/null |
-        awk '
-            $1 == "luci-app-ssr-plus" {
-                print $1
-                exit
-            }
-        '
-    )"
-
-
-    if [ "$SSR_PACKAGE" != "luci-app-ssr-plus" ]; then
-
-        printf "\n"
-
-        _ssr_error "软件源中没有找到 luci-app-ssr-plus"
-
-        printf "\n"
-
-        _ssr_warn "请检查该软件源是否包含 SSR Plus+"
-
-        cleanup_ssrplus
-
-        trap - EXIT INT TERM
-
-        return 2
-
-    fi
-
-
-    _ssr_ok "已找到 luci-app-ssr-plus"
-
-
-    # ========================================================
-    # 获取版本
-    # ========================================================
-
-    SSR_VERSION="$(
-        opkg list luci-app-ssr-plus 2>/dev/null |
-        awk -F ' - ' '
-            NR == 1 {
-                print $2
-            }
-        '
-    )"
-
-
-    if [ -n "$SSR_VERSION" ]; then
-
-        _ssr_info "SSR Plus+ Version : $SSR_VERSION"
-
-    fi
-
-
-    # ========================================================
-    # 安装主程序
-    # ========================================================
-
-    printf "\n"
-
-    _ssr_info "开始安装 SSR Plus+..."
-
-    printf "\n"
-
-
-    if ! opkg install luci-app-ssr-plus; then
-
-        printf "\n"
-
-        _ssr_error "SSR Plus+ 安装失败"
-
-        cleanup_ssrplus
-
-        trap - EXIT INT TERM
-
-        return 1
-
-    fi
-
-
-    # ========================================================
-    # 验证主程序
-    # ========================================================
-
-    printf "\n"
-
-    _ssr_info "正在检查安装结果..."
-
-
-    if ! check_ssrplus; then
-
-        _ssr_error "未检测到 luci-app-ssr-plus"
-        _ssr_error "SSR Plus+ 安装可能失败"
-
-        cleanup_ssrplus
-
-        trap - EXIT INT TERM
-
-        return 1
-
-    fi
-
-
-    _ssr_ok "SSR Plus+ 主程序安装成功"
-
-
-    # ========================================================
-    # 自动检测并安装可选组件
+    # 如果 SSR Plus+ 已经安装
     #
-    # 必须在恢复软件源之前执行
+    # 不再重新安装主程序，
+    # 直接进入扩展组件检查。
+    # ========================================================
+
+    if check_ssrplus; then
+
+        _ssr_ok "SSR Plus+ 主程序已经安装"
+
+    else
+
+        # ====================================================
+        # 查询 SSR Plus+
+        # ====================================================
+
+        _ssr_info "正在查询 luci-app-ssr-plus..."
+
+
+        SSR_PACKAGE="$(
+            opkg list 2>/dev/null |
+            awk '
+                $1 == "luci-app-ssr-plus" {
+                    print $1
+                    exit
+                }
+            '
+        )"
+
+
+        if [ "$SSR_PACKAGE" != "luci-app-ssr-plus" ]; then
+
+            _ssr_error "软件源中没有找到 luci-app-ssr-plus"
+
+            cleanup_ssrplus
+
+            trap - EXIT INT TERM
+
+            return 2
+
+        fi
+
+
+        _ssr_ok "已找到 luci-app-ssr-plus"
+
+
+        # ====================================================
+        # 版本
+        # ====================================================
+
+        SSR_VERSION="$(
+            opkg list luci-app-ssr-plus 2>/dev/null |
+            awk -F ' - ' '
+                NR == 1 {
+                    print $2
+                }
+            '
+        )"
+
+
+        if [ -n "$SSR_VERSION" ]; then
+
+            _ssr_info "SSR Plus+ Version : $SSR_VERSION"
+
+        fi
+
+
+        # ====================================================
+        # 五阶段安装
+        # ====================================================
+
+        printf "\n"
+
+        _ssr_info "开始安装 SSR Plus+..."
+
+        printf "\n"
+
+
+        if ! install_with_progress \
+            "luci-app-ssr-plus" \
+            "$INSTALL_LOG"
+        then
+
+            printf "\n"
+
+            _ssr_error "SSR Plus+ 安装失败"
+
+
+            if [ -s "$INSTALL_LOG" ]; then
+
+                printf "\n"
+
+                printf "========== OPKG INSTALL ERROR =========\n"
+
+                cat "$INSTALL_LOG"
+
+                printf "=======================================\n"
+
+            fi
+
+
+            cleanup_ssrplus
+
+            trap - EXIT INT TERM
+
+            return 1
+
+        fi
+
+
+        rm -f "$INSTALL_LOG"
+
+        printf "\n"
+
+
+        # ====================================================
+        # 验证
+        # ====================================================
+
+        _ssr_info "正在检查安装结果..."
+
+
+        if ! check_ssrplus; then
+
+            _ssr_error "未检测到 luci-app-ssr-plus"
+
+            cleanup_ssrplus
+
+            trap - EXIT INT TERM
+
+            return 1
+
+        fi
+
+
+        _ssr_ok "SSR Plus+ 主程序安装成功"
+
+    fi
+
+
+    # ========================================================
+    # 自动检查扩展组件
+    #
+    # 必须放在 cleanup_ssrplus 前面
+    # 因为这里还需要使用临时软件源
     # ========================================================
 
     install_optional_ssr_packages
 
 
     # ========================================================
-    # 启用 SSR Plus+
+    # 启用服务
     # ========================================================
 
     if [ -x /etc/init.d/shadowsocksr ]; then
 
         _ssr_info "正在设置 SSR Plus+ 开机启动..."
 
-        /etc/init.d/shadowsocksr enable >/dev/null 2>&1
+        /etc/init.d/shadowsocksr enable \
+            >/dev/null 2>&1
+
 
         _ssr_ok "SSR Plus+ 已设置开机启动"
 
     else
 
-        _ssr_warn "未找到 /etc/init.d/shadowsocksr"
+        _ssr_warn "未找到 SSR Plus+ 服务脚本"
 
     fi
 
@@ -1519,7 +1764,7 @@ install_ssrplus()
     printf "\n"
 
     _ssr_ok "SSR Plus+ 安装完成"
-    _ssr_ok "可选组件检测完成"
+    _ssr_ok "扩展组件检测完成"
     _ssr_ok "临时软件源已经删除"
     _ssr_ok "临时软件列表已经清理"
     _ssr_ok "路由器原始软件源已经恢复"
