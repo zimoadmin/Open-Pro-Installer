@@ -2,6 +2,12 @@
 
 
 # ======================================
+# Open-Pro-Installer Bootstrap
+# BusyBox / OpenWrt Compatible
+# ======================================
+
+
+# ======================================
 # Color
 # ======================================
 
@@ -13,8 +19,6 @@ RED="\033[31m"
 RESET="\033[0m"
 
 
-
-
 # ======================================
 # Config
 # ======================================
@@ -24,6 +28,10 @@ REPO="https://github.com/zimoadmin/Open-Pro-Installer/archive/refs/heads/main.zi
 WORKDIR="/tmp/Open-Pro-Installer"
 
 AUTH_SERVER="https://auth.12334123.xyz"
+
+ZIP_FILE="$WORKDIR/main.zip"
+
+
 # ======================================
 # Header
 # ======================================
@@ -35,353 +43,380 @@ echo ""
 # Disclaimer
 # ======================================
 
-
 printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
 printf "%b\n" "${BLUE}║${GREEN}              免责声明                ${BLUE}║${RESET}"
 printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
-
 printf "%b\n" "${BLUE}║${CYAN} 本工具仅用于学习交流和个人设备管理。 ${BLUE}║${RESET}"
 printf "%b\n" "${BLUE}║${CYAN} 使用本工具产生的风险由用户承担。     ${BLUE}║${RESET}"
 printf "%b\n" "${BLUE}║${CYAN} 请勿用于违反当地法律法规的用途。     ${BLUE}║${RESET}"
-
 printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
-
 printf "%b\n" "${BLUE}║${YELLOW} 是否同意以上免责声明？(Y/N)          ${BLUE}║${RESET}"
-
 printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
-
-printf "${YELLOW} 输入 > ${RESET}"
-
+printf "%b" "${YELLOW} 输入 > ${RESET}"
 
 read AGREE </dev/tty
 
 
-
-
 case "$AGREE" in
-
 
 Y|y)
 
-printf "\n"
+    printf "\n"
+    printf "%b\n" "${GREEN}[INFO] 已同意免责声明，继续运行...${RESET}"
+    printf "\n"
 
-printf "${GREEN}[INFO] 已同意免责声明，继续运行...${RESET}\n"
-
-echo ""
-
-;;
-
+    ;;
 
 N|n)
 
+    printf "\n"
+    printf "%b\n" "${RED}[INFO] 已拒绝免责声明，程序退出。${RESET}"
 
-printf "\n"
+    exit 0
 
-printf "${RED}[INFO] 已拒绝免责声明，程序退出。${RESET}\n"
-
-exit 0
-
-;;
-
+    ;;
 
 *)
 
+    printf "\n"
+    printf "%b\n" "${RED}[ERROR] 输入无效，程序退出。${RESET}"
 
-printf "\n"
+    exit 1
 
-printf "${RED}[ERROR] 输入无效，程序退出。${RESET}\n"
-
-exit 1
-
-;;
-
+    ;;
 
 esac
-
-
-
-
-
 
 
 # ======================================
 # Check tools
 # ======================================
 
+for cmd in curl wget unzip
+do
 
-for cmd in curl wget unzip; do
+    if ! command -v "$cmd" >/dev/null 2>&1
+    then
 
-
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-
-
-        printf "${RED}[ERROR] Missing command: $cmd${RESET}\n"
+        printf "%b\n" "${RED}[ERROR] 缺少命令: $cmd${RESET}"
 
         exit 1
 
-
     fi
 
-
 done
-
-
-
-
-
 
 
 # ======================================
 # Request Auth
 # ======================================
 
-
-printf "${GREEN}[AUTH] 正在申请授权...${RESET}\n"
-
+printf "%b\n" "${GREEN}[AUTH] 正在申请授权...${RESET}"
 
 
-AUTH_RESPONSE="$(curl -fsS \
--X POST \
-"$AUTH_SERVER/request" \
-2>/dev/null)"
+AUTH_RESPONSE="$(
+
+curl -4 \
+    --connect-timeout 10 \
+    --max-time 20 \
+    -fsS \
+    -X POST \
+    "$AUTH_SERVER/request" \
+    2>/dev/null
+
+)"
 
 
+if [ -z "$AUTH_RESPONSE" ]
+then
 
-
-
-if [ -z "$AUTH_RESPONSE" ]; then
-
-
-    printf "${RED}[ERROR] 无法连接授权服务器${RESET}\n"
+    printf "%b\n" "${RED}[ERROR] 无法连接授权服务器${RESET}"
 
     exit 1
 
-
 fi
-
-
-
 
 
 if ! printf "%s" "$AUTH_RESPONSE" | grep -q \
 '"success"[[:space:]]*:[[:space:]]*true'
 then
 
+    printf "%b\n" "${RED}[ERROR] 申请验证码失败${RESET}"
 
-    printf "${RED}[ERROR] 申请验证码失败${RESET}\n"
-
-    echo "$AUTH_RESPONSE"
+    printf "%s\n" "$AUTH_RESPONSE"
 
     exit 1
-
 
 fi
 
 
+printf "%b\n" "${GREEN}[AUTH] 验证码已发送给管理员${RESET}"
 
-
-
-printf "${GREEN}[AUTH] 验证码已发送给管理员${RESET}\n"
-
-echo ""
-
-
-
-
-
+printf "\n"
 
 
 # ======================================
 # Input Code
 # ======================================
 
+printf "%b" "${YELLOW}请输入验证码: ${RESET}" >/dev/tty
 
-printf "${YELLOW}请输入验证码: ${RESET}" > /dev/tty
-
-
-IFS= read -r AUTH_CODE < /dev/tty
+IFS= read -r AUTH_CODE </dev/tty
 
 
+if [ -z "$AUTH_CODE" ]
+then
 
-
-
-if [ -z "$AUTH_CODE" ]; then
-
-
-    printf "${RED}[ERROR] 验证码不能为空${RESET}\n"
+    printf "%b\n" "${RED}[ERROR] 验证码不能为空${RESET}"
 
     exit 1
-
 
 fi
 
 
-
-
-
 case "$AUTH_CODE" in
 
+    [0-9][0-9][0-9][0-9][0-9][0-9])
 
-[0-9][0-9][0-9][0-9][0-9][0-9])
+        ;;
 
+    *)
 
-;;
+        printf "%b\n" "${RED}[ERROR] 验证码必须是6位数字${RESET}"
 
+        exit 1
 
-*)
-
-
-printf "${RED}[ERROR] 验证码必须是6位数字${RESET}\n"
-
-exit 1
-
-
-;;
-
+        ;;
 
 esac
 
 
+printf "\n"
 
-
-
-echo ""
-
-printf "${GREEN}[AUTH] 正在验证...${RESET}\n"
-
-
-
-
-
+printf "%b\n" "${GREEN}[AUTH] 正在验证...${RESET}"
 
 
 # ======================================
 # Verify
 # ======================================
 
-
 VERIFY_DATA="$(printf '{"code":"%s"}' "$AUTH_CODE")"
 
 
+VERIFY_RESPONSE="$(
 
+curl -4 \
+    --connect-timeout 10 \
+    --max-time 20 \
+    -sS \
+    -X POST \
+    -H "Content-Type: application/json" \
+    --data "$VERIFY_DATA" \
+    "$AUTH_SERVER/verify" \
+    2>/dev/null
 
-
-VERIFY_RESPONSE="$(curl -sS \
--X POST \
--H "Content-Type: application/json" \
---data "$VERIFY_DATA" \
-"$AUTH_SERVER/verify" \
-2>/dev/null)"
-
-
-
-
-
+)"
 
 
 if printf '%s' "$VERIFY_RESPONSE" | grep -q \
 '"success"[[:space:]]*:[[:space:]]*true'
 then
 
+    printf "%b\n" "${GREEN}[AUTH] 授权成功${RESET}"
 
-printf "${GREEN}[AUTH] 授权成功${RESET}\n"
-
-echo ""
-
+    printf "\n"
 
 else
 
+    printf "%b\n" "${RED}[ERROR] 授权失败${RESET}"
 
-printf "${RED}[ERROR] 授权失败${RESET}\n"
+    printf "%s\n" "$VERIFY_RESPONSE"
 
-echo "$VERIFY_RESPONSE"
-
-exit 1
-
+    exit 1
 
 fi
 
 
-
-
-
-
-
 # ======================================
-# Download
+# Prepare Workdir
 # ======================================
-
 
 rm -rf "$WORKDIR"
 
 mkdir -p "$WORKDIR"
 
 
+# ======================================
+# Download Function
+# ======================================
+
+download_repo()
+{
+
+    rm -f "$ZIP_FILE"
+
+    printf "%b\n" "${BLUE}[INFO] 正在下载最新版本...${RESET}"
 
 
+    # ----------------------------------
+    # 方法1：curl IPv4
+    # ----------------------------------
 
-printf "${BLUE}[INFO] Downloading latest version...${RESET}\n"
+    printf "%b\n" "${CYAN}[INFO] 下载方式 1/2：curl${RESET}"
 
 
+    if curl -4 \
+        -L \
+        --connect-timeout 10 \
+        --max-time 60 \
+        --retry 2 \
+        -f \
+        -o "$ZIP_FILE" \
+        "$REPO"
+    then
+
+        if [ -s "$ZIP_FILE" ]
+        then
+
+            printf "%b\n" "${GREEN}[SUCCESS] 下载完成${RESET}"
+
+            return 0
+
+        fi
+
+    fi
 
 
+    rm -f "$ZIP_FILE"
 
-if ! wget \
--O "$WORKDIR/main.zip" \
-"$REPO"
 
+    # ----------------------------------
+    # 方法2：BusyBox wget
+    # ----------------------------------
+
+    printf "%b\n" "${YELLOW}[WARN] curl 下载失败，切换 wget...${RESET}"
+
+    printf "%b\n" "${CYAN}[INFO] 下载方式 2/2：wget${RESET}"
+
+
+    if wget \
+        -4 \
+        -T 15 \
+        -O "$ZIP_FILE" \
+        "$REPO"
+    then
+
+        if [ -s "$ZIP_FILE" ]
+        then
+
+            printf "%b\n" "${GREEN}[SUCCESS] 下载完成${RESET}"
+
+            return 0
+
+        fi
+
+    fi
+
+
+    rm -f "$ZIP_FILE"
+
+    return 1
+}
+
+
+# ======================================
+# Download
+# ======================================
+
+if ! download_repo
 then
 
+    printf "\n"
 
-printf "${RED}[ERROR] Download failed${RESET}\n"
+    printf "%b\n" "${RED}[ERROR] 项目文件下载失败${RESET}"
 
-exit 1
+    printf "%b\n" "${YELLOW}[INFO] 当前设备无法正常连接 GitHub${RESET}"
 
+    printf "%b\n" "${YELLOW}[INFO] 请检查 DNS、网络或代理后重新运行${RESET}"
+
+    exit 1
 
 fi
 
 
+# ======================================
+# Check ZIP
+# ======================================
+
+if [ ! -s "$ZIP_FILE" ]
+then
+
+    printf "%b\n" "${RED}[ERROR] 下载文件为空${RESET}"
+
+    exit 1
+
+fi
 
 
+FILE_SIZE="$(du -h "$ZIP_FILE" 2>/dev/null | awk '{print $1}')"
 
+printf "%b\n" "${GREEN}[INFO] 文件大小: ${FILE_SIZE:-未知}${RESET}"
 
 
 # ======================================
 # Extract
 # ======================================
 
-
-printf "${BLUE}[INFO] Extracting...${RESET}\n"
-
-
-
+printf "%b\n" "${BLUE}[INFO] 正在解压...${RESET}"
 
 
 if ! unzip -oq \
-"$WORKDIR/main.zip" \
--d "$WORKDIR"
-
+    "$ZIP_FILE" \
+    -d "$WORKDIR"
 then
 
+    printf "%b\n" "${RED}[ERROR] 解压失败${RESET}"
 
-printf "${RED}[ERROR] Unzip failed${RESET}\n"
+    printf "%b\n" "${YELLOW}[INFO] 下载文件可能不完整${RESET}"
 
-exit 1
-
+    exit 1
 
 fi
 
 
+# ======================================
+# Check Installer
+# ======================================
+
+INSTALL_DIR="$WORKDIR/Open-Pro-Installer-main"
 
 
+if [ ! -d "$INSTALL_DIR" ]
+then
+
+    printf "%b\n" "${RED}[ERROR] 项目目录不存在${RESET}"
+
+    exit 1
+
+fi
 
 
+if [ ! -f "$INSTALL_DIR/install.sh" ]
+then
 
-cd "$WORKDIR/Open-Pro-Installer-main" || exit 1
+    printf "%b\n" "${RED}[ERROR] install.sh 不存在${RESET}"
+
+    exit 1
+
+fi
 
 
+# ======================================
+# Permission
+# ======================================
 
+cd "$INSTALL_DIR" || exit 1
 
 
 chmod +x install.sh
@@ -391,15 +426,22 @@ chmod +x lib/*.sh 2>/dev/null
 chmod +x modules/*.sh 2>/dev/null
 
 
+# ======================================
+# Clean ZIP
+# ======================================
+
+rm -f "$ZIP_FILE"
 
 
+# ======================================
+# Start Installer
+# ======================================
 
-printf "${BLUE}[INFO] Starting installer...${RESET}\n"
+printf "%b\n" "${GREEN}[SUCCESS] 项目准备完成${RESET}"
 
-echo ""
+printf "%b\n" "${BLUE}[INFO] 正在启动 ZIMO--工具箱...${RESET}"
 
-
-
+printf "\n"
 
 
 exec ./install.sh
