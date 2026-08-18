@@ -23,7 +23,7 @@ RESET="\033[0m"
 # Config
 # ======================================
 
-REPO="https://github.com/zimoadmin/Open-Pro-Installer/archive/refs/heads/main.zip"
+REPO="https://auth.12334123.xyz/installer"
 
 WORKDIR="/tmp/Open-Pro-Installer"
 
