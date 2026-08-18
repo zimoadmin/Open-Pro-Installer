@@ -4,17 +4,20 @@
 # Open-Pro-Installer
 # iStore 商店安装模块
 #
-# 特点：
+# 功能：
 # 1. 不修改 /etc/opkg/customfeeds.conf
-# 2. 不执行普通 opkg update
-# 3. 获取官方推荐的 reinstall_istore.sh
+# 2. 不主动执行普通 opkg update
+# 3. 获取 reinstall_istore.sh
 # 4. curl / wget 自动选择
 # 5. 隐藏大量安装输出
 # 6. 单行动态进度条
-# 7. 安装失败才显示日志
-# 8. 安装完成后真实验证 luci-app-store
-# 9. 自动刷新 LuCI
-# 10. BusyBox / OpenWrt /bin/sh 兼容
+# 7. 安装失败才显示详细日志
+# 8. 严格通过包管理器验证 luci-app-store
+# 9. 不使用 LuCI 残留文件判断安装状态
+# 10. 已安装时显示真实版本
+# 11. 自动刷新 LuCI
+# 12. 自动清理临时文件
+# 13. BusyBox / OpenWrt /bin/sh 兼容
 # ============================================================
 
 
@@ -37,6 +40,7 @@ ISTORE_SCRIPT="/tmp/reinstall_istore.sh"
 ISTORE_LOG="/tmp/openpro_istore.log"
 
 ISTORE_PID=""
+ISTORE_VERSION=""
 
 
 # ============================================================
@@ -93,16 +97,22 @@ istore_progress()
     I=0
 
     while [ "$I" -lt "$FILLED" ]; do
+
         BAR="${BAR}#"
+
         I=$((I + 1))
+
     done
 
 
     I=0
 
     while [ "$I" -lt "$EMPTY" ]; do
+
         BAR="${BAR}-"
+
         I=$((I + 1))
+
     done
 
 
@@ -114,7 +124,7 @@ istore_progress()
 
 
 # ============================================================
-# 清理
+# 清理临时文件
 # ============================================================
 
 cleanup_istore()
@@ -129,7 +139,7 @@ cleanup_istore()
 
 
 # ============================================================
-# 错误日志
+# 显示错误日志
 # ============================================================
 
 show_istore_error()
@@ -142,7 +152,7 @@ show_istore_error()
 
     if [ -s "$ISTORE_LOG" ]; then
 
-        tail -n 60 "$ISTORE_LOG"
+        tail -n 80 "$ISTORE_LOG"
 
     else
 
@@ -159,28 +169,71 @@ show_istore_error()
 
 
 # ============================================================
-# 检查 iStore
+# 严格检查 iStore 是否真正安装
+#
+# 重要：
+#
+# 不再检测：
+#
+# /usr/lib/lua/luci/*
+# /www/luci-static/*
+# /etc/config/store
+#
+# 因为卸载以后这些目录可能存在残留文件，
+# 使用这些文件判断会造成“已经卸载但仍显示安装”的误判。
+#
+# 这里只相信包管理器数据库。
 # ============================================================
 
 check_istore()
 {
-    # 软件包检测
+    # ========================================================
+    # OPKG
+    # ========================================================
 
-    if opkg status luci-app-store 2>/dev/null |
-       grep -q 'Status:.*installed'
-    then
-        return 0
+    if command -v opkg >/dev/null 2>&1; then
+
+        ISTORE_STATUS="$(
+            opkg status luci-app-store 2>/dev/null |
+            sed -n 's/^Status:[[:space:]]*//p' |
+            head -n 1
+        )"
+
+
+        case "$ISTORE_STATUS" in
+
+            *installed*)
+
+                return 0
+
+                ;;
+
+        esac
+
+
+        return 1
+
     fi
 
 
-    # LuCI 文件检测
+    # ========================================================
+    # APK
+    # 预留给新版 OpenWrt
+    # ========================================================
 
-    if [ -d /usr/lib/lua/luci/controller ] &&
-       find /usr/lib/lua/luci \
-            -iname '*store*' 2>/dev/null |
-            grep -q .
-    then
-        return 0
+    if command -v apk >/dev/null 2>&1; then
+
+        if apk info -e luci-app-store \
+            >/dev/null 2>&1
+        then
+
+            return 0
+
+        fi
+
+
+        return 1
+
     fi
 
 
@@ -189,7 +242,60 @@ check_istore()
 
 
 # ============================================================
-# 下载脚本
+# 获取已安装 iStore 版本
+# ============================================================
+
+get_istore_version()
+{
+    ISTORE_VERSION=""
+
+
+    # ========================================================
+    # OPKG
+    # ========================================================
+
+    if command -v opkg >/dev/null 2>&1; then
+
+        ISTORE_VERSION="$(
+            opkg status luci-app-store 2>/dev/null |
+            awk -F ': ' '
+                /^Version:/ {
+                    print $2
+                    exit
+                }
+            '
+        )"
+
+    fi
+
+
+    # ========================================================
+    # APK
+    # ========================================================
+
+    if [ -z "$ISTORE_VERSION" ] &&
+       command -v apk >/dev/null 2>&1
+    then
+
+        ISTORE_VERSION="$(
+            apk info -v luci-app-store 2>/dev/null |
+            sed -n '1p' |
+            sed 's/^luci-app-store-//'
+        )"
+
+    fi
+
+
+    [ -n "$ISTORE_VERSION" ] ||
+        ISTORE_VERSION="unknown"
+
+
+    return 0
+}
+
+
+# ============================================================
+# 下载 iStore 安装脚本
 # ============================================================
 
 download_istore_script()
@@ -197,9 +303,9 @@ download_istore_script()
     rm -f "$ISTORE_SCRIPT"
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # 优先 curl
-    # --------------------------------------------------------
+    # ========================================================
 
     if command -v curl >/dev/null 2>&1; then
 
@@ -218,9 +324,9 @@ download_istore_script()
         RESULT=$?
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # 回退 wget
-    # --------------------------------------------------------
+    # ========================================================
 
     elif command -v wget >/dev/null 2>&1; then
 
@@ -232,6 +338,7 @@ download_istore_script()
 
         RESULT=$?
 
+
     else
 
         printf "curl / wget not found\n" \
@@ -242,6 +349,10 @@ download_istore_script()
     fi
 
 
+    # ========================================================
+    # 下载命令失败
+    # ========================================================
+
     if [ "$RESULT" -ne 0 ]; then
 
         rm -f "$ISTORE_SCRIPT"
@@ -251,9 +362,9 @@ download_istore_script()
     fi
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # 文件不能为空
-    # --------------------------------------------------------
+    # ========================================================
 
     if [ ! -s "$ISTORE_SCRIPT" ]; then
 
@@ -267,9 +378,9 @@ download_istore_script()
     fi
 
 
-    # --------------------------------------------------------
-    # 防止下载到 HTML
-    # --------------------------------------------------------
+    # ========================================================
+    # 防止下载到 HTML 错误页面
+    # ========================================================
 
     if head -c 512 "$ISTORE_SCRIPT" 2>/dev/null |
        grep -Eqi \
@@ -286,9 +397,9 @@ download_istore_script()
     fi
 
 
-    # --------------------------------------------------------
-    # Shell 基础验证
-    # --------------------------------------------------------
+    # ========================================================
+    # Shell 语法检查
+    # ========================================================
 
     if ! sh -n "$ISTORE_SCRIPT" \
         >>"$ISTORE_LOG" 2>&1
@@ -306,17 +417,22 @@ download_istore_script()
 
     chmod 755 "$ISTORE_SCRIPT"
 
+
     return 0
 }
 
 
 # ============================================================
-# 安装 iStore + 动态进度
+# 安装 iStore
+#
+# 安装过程全部写入日志
+# 终端只显示动态进度条
 # ============================================================
 
 run_istore_install()
 {
-    rm -f "$ISTORE_LOG"
+    # 保留下载阶段产生的日志
+    # 不在这里删除 ISTORE_LOG
 
 
     sh "$ISTORE_SCRIPT" \
@@ -329,12 +445,17 @@ run_istore_install()
     PERCENT=45
 
 
+    istore_progress \
+        "$PERCENT" \
+        "正在安装 iStore..."
+
+
     while kill -0 "$ISTORE_PID" 2>/dev/null; do
 
 
-        # ----------------------------------------------------
-        # 根据日志判断大概安装阶段
-        # ----------------------------------------------------
+        # ====================================================
+        # 已经出现 luci-app-store
+        # ====================================================
 
         if grep -qi \
             'luci-app-store' \
@@ -342,9 +463,15 @@ run_istore_install()
         then
 
             if [ "$PERCENT" -lt 88 ]; then
+
                 PERCENT=$((PERCENT + 3))
+
             fi
 
+
+        # ====================================================
+        # 安装阶段
+        # ====================================================
 
         elif grep -qi \
             'install' \
@@ -352,9 +479,15 @@ run_istore_install()
         then
 
             if [ "$PERCENT" -lt 75 ]; then
+
                 PERCENT=$((PERCENT + 2))
+
             fi
 
+
+        # ====================================================
+        # 软件源阶段
+        # ====================================================
 
         elif grep -qi \
             'update' \
@@ -362,23 +495,35 @@ run_istore_install()
         then
 
             if [ "$PERCENT" -lt 60 ]; then
+
                 PERCENT=$((PERCENT + 2))
+
             fi
 
+
+        # ====================================================
+        # 等待
+        # ====================================================
 
         else
 
             if [ "$PERCENT" -lt 55 ]; then
+
                 PERCENT=$((PERCENT + 1))
+
             fi
 
         fi
 
 
-        # 安装真正结束前最多 92%
+        # ====================================================
+        # 真正安装结束之前最多 92%
+        # ====================================================
 
         if [ "$PERCENT" -gt 92 ]; then
+
             PERCENT=92
+
         fi
 
 
@@ -391,6 +536,10 @@ run_istore_install()
 
     done
 
+
+    # ========================================================
+    # 获取真实返回值
+    # ========================================================
 
     wait "$ISTORE_PID"
 
@@ -405,7 +554,55 @@ run_istore_install()
 
 
 # ============================================================
-# 中断
+# 刷新 LuCI
+# ============================================================
+
+refresh_istore_luci()
+{
+    # ========================================================
+    # 清理 LuCI 缓存
+    # ========================================================
+
+    rm -rf /tmp/luci-indexcache \
+        >/dev/null 2>&1
+
+    rm -rf /tmp/luci-modulecache \
+        >/dev/null 2>&1
+
+    rm -rf /tmp/luci-*cache* \
+        >/dev/null 2>&1
+
+
+    # ========================================================
+    # rpcd
+    # ========================================================
+
+    if [ -x /etc/init.d/rpcd ]; then
+
+        /etc/init.d/rpcd restart \
+            >/dev/null 2>&1
+
+    fi
+
+
+    # ========================================================
+    # uhttpd
+    # ========================================================
+
+    if [ -x /etc/init.d/uhttpd ]; then
+
+        /etc/init.d/uhttpd restart \
+            >/dev/null 2>&1
+
+    fi
+
+
+    return 0
+}
+
+
+# ============================================================
+# Ctrl+C / 中断
 # ============================================================
 
 interrupt_istore()
@@ -427,7 +624,8 @@ interrupt_istore()
     fi
 
 
-    rm -f "$ISTORE_SCRIPT" 2>/dev/null
+    rm -f "$ISTORE_SCRIPT" \
+        >/dev/null 2>&1
 
 
     trap - INT TERM
@@ -439,6 +637,10 @@ interrupt_istore()
 
 # ============================================================
 # 主函数
+#
+# install.sh 调用：
+#
+# install_istore
 # ============================================================
 
 install_istore()
@@ -458,7 +660,7 @@ install_istore()
 
 
     # ========================================================
-    # Root
+    # Root 检测
     # ========================================================
 
     if [ "$(id -u 2>/dev/null)" != "0" ]; then
@@ -471,12 +673,20 @@ install_istore()
 
 
     # ========================================================
-    # opkg
+    # 包管理器
     # ========================================================
 
-    if ! command -v opkg >/dev/null 2>&1; then
+    if command -v opkg >/dev/null 2>&1; then
 
-        _istore_error "当前系统没有检测到 opkg"
+        ISTORE_PKG_MANAGER="opkg"
+
+    elif command -v apk >/dev/null 2>&1; then
+
+        ISTORE_PKG_MANAGER="apk"
+
+    else
+
+        _istore_error "没有检测到支持的软件包管理器"
 
         return 1
 
@@ -490,6 +700,7 @@ install_istore()
     rm -f "$ISTORE_SCRIPT"
     rm -f "$ISTORE_LOG"
 
+
     touch "$ISTORE_LOG"
 
 
@@ -497,16 +708,22 @@ install_istore()
 
 
     # ========================================================
-    # 设备
+    # 设备信息
     # ========================================================
 
-    MODEL="$(cat /tmp/sysinfo/model 2>/dev/null)"
+    MODEL="$(
+        cat /tmp/sysinfo/model 2>/dev/null
+    )"
+
 
     [ -n "$MODEL" ] ||
         MODEL="Unknown"
 
 
-    ARCH="$(uname -m 2>/dev/null)"
+    ARCH="$(
+        uname -m 2>/dev/null
+    )"
+
 
     [ -n "$ARCH" ] ||
         ARCH="Unknown"
@@ -516,25 +733,45 @@ install_istore()
 
     _istore_info "CPU架构: $ARCH"
 
-    _istore_info "软件管理器: opkg"
+    _istore_info "软件管理器: $ISTORE_PKG_MANAGER"
 
 
     printf "\n"
 
 
     # ========================================================
-    # 已安装
+    # 严格检查是否已经安装
     # ========================================================
 
     if check_istore; then
 
+        get_istore_version
+
+
         _istore_ok "检测到 iStore 已经安装"
 
+        _istore_info "当前版本: $ISTORE_VERSION"
+
+
+        rm -f "$ISTORE_LOG"
+
+
         trap - INT TERM
+
 
         return 0
 
     fi
+
+
+    # ========================================================
+    # 明确告诉用户当前没有安装
+    # ========================================================
+
+    _istore_info "未检测到 iStore，准备开始安装"
+
+
+    printf "\n"
 
 
     # ========================================================
@@ -544,6 +781,7 @@ install_istore()
     istore_progress \
         10 \
         "正在准备环境..."
+
 
     sleep 1
 
@@ -558,9 +796,12 @@ install_istore()
 
         printf "\n"
 
+
         _istore_error "系统缺少 curl / wget"
 
+
         trap - INT TERM
+
 
         return 1
 
@@ -570,21 +811,28 @@ install_istore()
     # ========================================================
     # 20%
     #
-    # 这里故意：
+    # 注意：
     #
-    # 不执行 opkg update
-    # 不修改 customfeeds.conf
+    # 不执行：
+    #
+    # opkg update
+    #
+    # 不修改：
+    #
+    # /etc/opkg/customfeeds.conf
     # ========================================================
 
     istore_progress \
         20 \
         "正在检查环境..."
 
+
     sleep 1
 
 
     # ========================================================
-    # 30% 下载
+    # 30%
+    # 下载 iStore 安装脚本
     # ========================================================
 
     istore_progress \
@@ -596,13 +844,18 @@ install_istore()
 
         printf "\n"
 
+
         _istore_error "获取 iStore 安装组件失败"
+
 
         show_istore_error
 
+
         rm -f "$ISTORE_SCRIPT"
 
+
         trap - INT TERM
+
 
         return 1
 
@@ -617,14 +870,16 @@ install_istore()
         40 \
         "正在验证组件..."
 
+
     sleep 1
 
 
     # ========================================================
-    # 安装
+    # 执行安装
     # ========================================================
 
     run_istore_install
+
 
     INSTALL_RESULT=$?
 
@@ -637,13 +892,18 @@ install_istore()
 
         printf "\n"
 
+
         _istore_error "iStore 安装程序执行失败"
+
 
         show_istore_error
 
+
         rm -f "$ISTORE_SCRIPT"
 
+
         trap - INT TERM
+
 
         return 1
 
@@ -651,7 +911,8 @@ install_istore()
 
 
     # ========================================================
-    # 95% 验证
+    # 95%
+    # 严格验证软件包
     # ========================================================
 
     istore_progress \
@@ -666,13 +927,20 @@ install_istore()
 
         printf "\n"
 
+
         _istore_error "未检测到 luci-app-store"
+
+        _istore_error "iStore 没有正确安装"
+
 
         show_istore_error
 
+
         rm -f "$ISTORE_SCRIPT"
 
+
         trap - INT TERM
+
 
         return 1
 
@@ -680,6 +948,14 @@ install_istore()
 
 
     # ========================================================
+    # 获取版本
+    # ========================================================
+
+    get_istore_version
+
+
+    # ========================================================
+    # 98%
     # 刷新 LuCI
     # ========================================================
 
@@ -688,27 +964,7 @@ install_istore()
         "正在刷新 LuCI..."
 
 
-    rm -rf /tmp/luci-indexcache \
-        >/dev/null 2>&1
-
-    rm -rf /tmp/luci-modulecache \
-        >/dev/null 2>&1
-
-
-    if [ -x /etc/init.d/rpcd ]; then
-
-        /etc/init.d/rpcd restart \
-            >/dev/null 2>&1
-
-    fi
-
-
-    if [ -x /etc/init.d/uhttpd ]; then
-
-        /etc/init.d/uhttpd restart \
-            >/dev/null 2>&1
-
-    fi
+    refresh_istore_luci
 
 
     # ========================================================
@@ -727,8 +983,7 @@ install_istore()
     # 清理
     # ========================================================
 
-    rm -f "$ISTORE_SCRIPT"
-    rm -f "$ISTORE_LOG"
+    cleanup_istore
 
 
     trap - INT TERM
@@ -739,6 +994,8 @@ install_istore()
     # ========================================================
 
     _istore_ok "iStore 商店安装成功"
+
+    _istore_info "版本: $ISTORE_VERSION"
 
     _istore_info "请刷新 LuCI 后台页面"
 
