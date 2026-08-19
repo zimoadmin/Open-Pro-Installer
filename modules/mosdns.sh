@@ -23,10 +23,11 @@
 # 16. 自动检查六个必要组件
 # 17. 按依赖顺序逐个安装
 # 18. 每安装一个组件立即验证
-# 19. 安装失败显示对应日志
-# 20. 自动启动 MosDNS
-# 21. 自动刷新 LuCI
-# 22. 最终验证 MosDNS / LuCI
+# 19. OPKG 长文件名/特殊字符自动兼容
+# 20. 安装失败显示对应日志
+# 21. 自动启动 MosDNS
+# 22. 自动刷新 LuCI
+# 23. 最终验证 MosDNS / LuCI
 #
 # BusyBox / OpenWrt /bin/sh Compatible
 # ============================================================
@@ -37,6 +38,7 @@
 # ============================================================
 
 MOSDNS_TMP_DIR="/tmp/openpro_mosdns"
+
 MOSDNS_ARCHIVE_FILE=""
 MOSDNS_ARCHIVE_NAME=""
 MOSDNS_BASE_URL=""
@@ -51,6 +53,7 @@ MOSDNS_TEST_DIR="/tmp/openpro_mosdns_speedtest.d"
 
 MOSDNS_CPU_ARCH=""
 MOSDNS_ARCH=""
+
 MOSDNS_PKG_MANAGER=""
 MOSDNS_PKG_EXT=""
 MOSDNS_SDK=""
@@ -63,6 +66,8 @@ V2RAY_GEOSITE_PKG=""
 MOSDNS_MAIN_PKG=""
 MOSDNS_LUCI_PKG=""
 MOSDNS_I18N_PKG=""
+
+MOSDNS_VERSION=""
 
 
 # ============================================================
@@ -150,8 +155,10 @@ _mos_warn()
 {
     if command -v warning >/dev/null 2>&1; then
         warning "$*"
+
     elif command -v warn >/dev/null 2>&1; then
         warn "$*"
+
     else
         printf '\033[1;93m[WARN]\033[0m %s\n' "$*"
     fi
@@ -175,7 +182,26 @@ _mos_ok()
 
 
 # ============================================================
-# 清理
+# 清理 OPKG 临时短文件名
+# ============================================================
+
+cleanup_mosdns_safe_packages()
+{
+    rm -f \
+        /tmp/mos1.ipk \
+        /tmp/mos2.ipk \
+        /tmp/mos3.ipk \
+        /tmp/mos4.ipk \
+        /tmp/mos5.ipk \
+        /tmp/mos6.ipk \
+        2>/dev/null
+
+    return 0
+}
+
+
+# ============================================================
+# 清理临时文件
 # ============================================================
 
 cleanup_mosdns_temp()
@@ -187,9 +213,15 @@ cleanup_mosdns_temp()
 
     rm -rf "$MOSDNS_TEST_DIR" 2>/dev/null
 
+    cleanup_mosdns_safe_packages
+
     return 0
 }
 
+
+# ============================================================
+# 清理日志
+# ============================================================
 
 cleanup_mosdns_logs()
 {
@@ -220,19 +252,25 @@ interrupt_mosdns()
     _mos_warn "MosDNS 安装被中断"
 
 
+    cleanup_mosdns_safe_packages
+
+
     if [ "$MOSDNS_WAS_RUNNING" -eq 1 ] &&
        [ -x /etc/init.d/mosdns ]
     then
 
+        _mos_info "正在恢复 MosDNS 服务..."
+
         /etc/init.d/mosdns start \
             >/dev/null 2>&1
-
     fi
 
 
     cleanup_mosdns_all
 
+
     trap - INT TERM
+
 
     return 130
 }
@@ -260,7 +298,9 @@ check_mosdns_runtime()
         gzip \
         df \
         wc \
-        curl
+        curl \
+        cp \
+        basename
     do
 
         if ! command -v "$CMD" >/dev/null 2>&1; then
@@ -295,7 +335,6 @@ detect_mosdns_openwrt()
         _mos_error "当前系统不是受支持的 OpenWrt"
 
         return 1
-
     fi
 
 
@@ -314,7 +353,6 @@ detect_mosdns_openwrt()
         _mos_error "MosDNS 要求 OpenWrt 21.02 或更高版本"
 
         return 1
-
     fi
 
 
@@ -345,7 +383,7 @@ detect_mosdns_cpu()
 # ============================================================
 # 检测包管理器
 #
-# 当前官方：
+# MosDNS 官方当前：
 #
 # APK  → openwrt-25.12
 # OPKG → openwrt-24.10
@@ -381,7 +419,6 @@ detect_mosdns_package_manager()
         _mos_error "没有检测到 APK / OPKG 包管理器"
 
         return 1
-
     fi
 
 
@@ -467,7 +504,6 @@ detect_mosdns_arch()
         _mos_error "无法识别 OpenWrt 软件包架构"
 
         return 1
-
     fi
 
 
@@ -479,7 +515,7 @@ detect_mosdns_arch()
 
 
 # ============================================================
-# 检查官方是否支持此架构
+# 检查官方是否支持当前架构
 # ============================================================
 
 check_mosdns_arch_supported()
@@ -506,7 +542,6 @@ check_mosdns_arch_supported()
         _mos_error "MosDNS 官方暂不支持当前架构：$MOSDNS_ARCH"
 
         return 1
-
     fi
 
 
@@ -534,9 +569,13 @@ check_mosdns_disk_space()
 
 
     case "$FREE_KB" in
+
         ''|*[!0-9]*)
+
             FREE_KB=0
+
             ;;
+
     esac
 
 
@@ -553,7 +592,6 @@ check_mosdns_disk_space()
         _mos_error "安装 MosDNS 至少需要约 35 MB 可用空间"
 
         return 1
-
     fi
 
 
@@ -702,7 +740,7 @@ mosdns_calculate_score()
 
 
 # ============================================================
-# 检测 HTML 错误页
+# 检测 HTML / 错误页
 # ============================================================
 
 mosdns_test_is_error_page()
@@ -711,13 +749,15 @@ mosdns_test_is_error_page()
 
 
     if [ ! -s "$FILE" ]; then
+
         return 1
+
     fi
 
 
     if head -c 1024 "$FILE" 2>/dev/null |
         grep -Eqi \
-        '<html|<!doctype|bad gateway|502 bad gateway|404 not found|403 forbidden|access denied|cloudflare'
+        '<html|<!doctype|bad gateway|502 bad gateway|404 not found|403 forbidden|access denied'
     then
 
         return 0
@@ -782,8 +822,8 @@ test_mosdns_route()
     )"
 
 
-    # curl 超时 28 时，如果已经真实下载到数据，
-    # 仍允许参与测速。
+    # curl 28 = 超时
+    # 如果已经收到足够真实数据，仍可参与测速
 
     case "$CURL_CODE" in
 
@@ -862,6 +902,19 @@ test_mosdns_route()
         mosdns_seconds_to_ms \
             "$TTFB"
     )"
+
+
+    case "$TTFB_MS" in
+
+        ''|*[!0-9]*)
+
+            rm -f "$TEST_FILE"
+
+            return 1
+
+            ;;
+
+    esac
 
 
     SPEED_INT="$(
@@ -951,7 +1004,6 @@ test_mosdns_route_background()
         rm -f "$TEST_FILE"
 
         return 1
-
     fi
 
 
@@ -1097,7 +1149,6 @@ prepare_mosdns_routes()
                 "不可用"
 
             continue
-
         fi
 
 
@@ -1116,7 +1167,6 @@ prepare_mosdns_routes()
                 "不可用"
 
             continue
-
         fi
 
 
@@ -1185,7 +1235,6 @@ prepare_mosdns_routes()
         _mos_warn "没有发现可用测速线路"
 
         return 1
-
     fi
 
 
@@ -1287,8 +1336,8 @@ verify_mosdns_archive()
     esac
 
 
-    # 正常 Release 包十几 MB。
-    # 小于 1MB 基本可以判定异常。
+    # 正常 MosDNS Release 包大约十几 MB
+    # 小于 1MB 基本判定异常
 
     if [ "$FILE_SIZE" -lt 1048576 ]; then
 
@@ -1304,7 +1353,7 @@ verify_mosdns_archive()
     fi
 
 
-    # 真正验证 gzip/tar
+    # 真正验证 tar.gz
 
     if ! tar -tzf "$FILE" \
         >/dev/null 2>&1
@@ -1435,7 +1484,6 @@ smart_download_mosdns()
                 DOWNLOAD_SUCCESS=1
 
                 break
-
             fi
 
 
@@ -1512,13 +1560,16 @@ extract_mosdns_archive()
 # ============================================================
 # 查找指定软件包
 #
-# 自动递归查找，所以同时支持：
+# 同时支持：
 #
 # /tmp/openpro_mosdns/*.apk
 #
-# 以及
+# /tmp/openpro_mosdns/*.ipk
 #
 # /tmp/openpro_mosdns/packages_ci/*.apk
+#
+# /tmp/openpro_mosdns/packages_ci/*.ipk
+#
 # ============================================================
 
 find_mosdns_package()
@@ -1707,6 +1758,29 @@ check_mosdns_package_installed()
 
 # ============================================================
 # 安装单个软件包
+#
+# 重要兼容处理：
+#
+# GL.iNet / 部分旧版 OPKG 对以下字符或较长 IPK
+# 文件名可能出现：
+#
+# opkg_install_cmd: xxx.ipk: Illegal file name
+#
+# 因此 OPKG 安装时：
+#
+# 原始：
+# v2dat_2022.12.15~xxxx_aarch64_cortex-a53.ipk
+#
+# 自动复制为：
+# /tmp/mos1.ipk
+#
+# 再交给 OPKG 安装。
+#
+# 软件包真实：
+# Package / Version / Architecture
+#
+# 都存储在 IPK 内部 control 中，
+# 不受外部文件名改变影响。
 # ============================================================
 
 install_single_mosdns_package()
@@ -1716,6 +1790,8 @@ install_single_mosdns_package()
     INDEX="$3"
     TOTAL="$4"
 
+    SAFE_PACKAGE_FILE=""
+
 
     rm -f "$MOSDNS_INSTALL_LOG"
 
@@ -1724,6 +1800,25 @@ install_single_mosdns_package()
 
     _mos_info "[$INDEX/$TOTAL] 正在安装：$PACKAGE_NAME"
 
+
+    # ========================================================
+    # 安装文件检查
+    # ========================================================
+
+    if [ -z "$PACKAGE_FILE" ] ||
+       [ ! -f "$PACKAGE_FILE" ]
+    then
+
+        _mos_error "安装文件不存在：$PACKAGE_NAME"
+
+        return 1
+
+    fi
+
+
+    # ========================================================
+    # APK
+    # ========================================================
 
     case "$MOSDNS_PKG_MANAGER" in
 
@@ -1739,21 +1834,83 @@ install_single_mosdns_package()
             ;;
 
 
+        # ====================================================
+        # OPKG
+        # ====================================================
+
         opkg)
+
+            # ------------------------------------------------
+            # 旧版 OPKG 文件名兼容
+            # ------------------------------------------------
+
+            SAFE_PACKAGE_FILE="/tmp/mos${INDEX}.ipk"
+
+
+            rm -f "$SAFE_PACKAGE_FILE" \
+                >/dev/null 2>&1
+
+
+            # ------------------------------------------------
+            # 将长文件名 IPK 复制为短文件名
+            # ------------------------------------------------
+
+            if ! cp \
+                "$PACKAGE_FILE" \
+                "$SAFE_PACKAGE_FILE" \
+                >/dev/null 2>&1
+            then
+
+                _mos_error "无法创建 OPKG 临时安装文件"
+
+                return 1
+
+            fi
+
+
+            # ------------------------------------------------
+            # 检查复制结果
+            # ------------------------------------------------
+
+            if [ ! -s "$SAFE_PACKAGE_FILE" ]; then
+
+                _mos_error "OPKG 临时安装文件无效"
+
+                rm -f "$SAFE_PACKAGE_FILE" \
+                    >/dev/null 2>&1
+
+                return 1
+
+            fi
+
+
+            # ------------------------------------------------
+            # 使用短文件名安装
+            # ------------------------------------------------
 
             opkg install \
                 --force-downgrade \
-                "$PACKAGE_FILE" \
+                "$SAFE_PACKAGE_FILE" \
                 > "$MOSDNS_INSTALL_LOG" 2>&1
 
             RESULT=$?
+
+
+            # ------------------------------------------------
+            # 安装结束立即删除
+            # ------------------------------------------------
+
+            rm -f "$SAFE_PACKAGE_FILE" \
+                >/dev/null 2>&1
+
+            SAFE_PACKAGE_FILE=""
 
             ;;
 
 
         *)
 
-            _mos_error "未知包管理器"
+            _mos_error "未知包管理器：$MOSDNS_PKG_MANAGER"
 
             return 1
 
@@ -1762,7 +1919,16 @@ install_single_mosdns_package()
     esac
 
 
+    # ========================================================
+    # 安装命令失败
+    # ========================================================
+
     if [ "$RESULT" -ne 0 ]; then
+
+        [ -n "$SAFE_PACKAGE_FILE" ] &&
+            rm -f "$SAFE_PACKAGE_FILE" \
+                >/dev/null 2>&1
+
 
         _mos_error "$PACKAGE_NAME 安装失败"
 
@@ -1786,6 +1952,10 @@ install_single_mosdns_package()
     fi
 
 
+    # ========================================================
+    # 安装后真实验证
+    # ========================================================
+
     if ! check_mosdns_package_installed \
         "$PACKAGE_NAME"
     then
@@ -1797,7 +1967,12 @@ install_single_mosdns_package()
 
             printf "\n"
 
+            printf "========== %s VERIFY LOG ==========\n" \
+                "$PACKAGE_NAME"
+
             cat "$MOSDNS_INSTALL_LOG"
+
+            printf "====================================\n"
 
         fi
 
@@ -1823,6 +1998,10 @@ install_mosdns_packages()
     TOTAL=6
 
 
+    # ========================================================
+    # 1. v2dat
+    # ========================================================
+
     install_single_mosdns_package \
         "v2dat" \
         "$V2DAT_PKG" \
@@ -1830,6 +2009,10 @@ install_mosdns_packages()
         "$TOTAL" ||
         return 1
 
+
+    # ========================================================
+    # 2. GeoIP
+    # ========================================================
 
     install_single_mosdns_package \
         "v2ray-geoip" \
@@ -1839,6 +2022,10 @@ install_mosdns_packages()
         return 1
 
 
+    # ========================================================
+    # 3. GeoSite
+    # ========================================================
+
     install_single_mosdns_package \
         "v2ray-geosite" \
         "$V2RAY_GEOSITE_PKG" \
@@ -1846,6 +2033,10 @@ install_mosdns_packages()
         "$TOTAL" ||
         return 1
 
+
+    # ========================================================
+    # 4. MosDNS
+    # ========================================================
 
     install_single_mosdns_package \
         "mosdns" \
@@ -1855,6 +2046,10 @@ install_mosdns_packages()
         return 1
 
 
+    # ========================================================
+    # 5. LuCI
+    # ========================================================
+
     install_single_mosdns_package \
         "luci-app-mosdns" \
         "$MOSDNS_LUCI_PKG" \
@@ -1863,12 +2058,19 @@ install_mosdns_packages()
         return 1
 
 
+    # ========================================================
+    # 6. 中文语言包
+    # ========================================================
+
     install_single_mosdns_package \
         "luci-i18n-mosdns-zh-cn" \
         "$MOSDNS_I18N_PKG" \
         "6" \
         "$TOTAL" ||
         return 1
+
+
+    cleanup_mosdns_safe_packages
 
 
     return 0
@@ -1957,8 +2159,12 @@ start_mosdns_service()
     fi
 
 
-    # 某些固件的 init.d status 返回值并不可靠，
-    # 因此只要二进制与软件包存在，也不直接判安装失败。
+    # ========================================================
+    # 某些固件 init.d status 返回值并不标准
+    #
+    # 如果二进制与软件包都存在，
+    # 不直接判定安装失败。
+    # ========================================================
 
     if command -v mosdns >/dev/null 2>&1 &&
        check_mosdns_package_installed "mosdns"
@@ -1973,12 +2179,13 @@ start_mosdns_service()
 
     _mos_error "MosDNS 服务启动失败"
 
+
     return 1
 }
 
 
 # ============================================================
-# 清理 LuCI 缓存
+# 清理 LuCI 缓存 / 刷新 LuCI
 # ============================================================
 
 reload_mosdns_luci()
@@ -2199,7 +2406,7 @@ install_mosdns()
 
 
     # ========================================================
-    # 构造 Release 下载地址
+    # 清理旧临时文件
     # ========================================================
 
     cleanup_mosdns_all
@@ -2208,6 +2415,10 @@ install_mosdns()
     mkdir -p "$MOSDNS_TMP_DIR" \
         >/dev/null 2>&1
 
+
+    # ========================================================
+    # 构造 Release 下载地址
+    # ========================================================
 
     prepare_mosdns_download_info
 
@@ -2326,14 +2537,14 @@ install_mosdns()
 
 
     # ========================================================
-    # 停止 MosDNS
+    # 停止旧 MosDNS
     # ========================================================
 
     stop_mosdns_service
 
 
     # ========================================================
-    # 逐个安装
+    # 安装
     # ========================================================
 
     printf "\n"
@@ -2347,6 +2558,13 @@ install_mosdns()
 
         _mos_error "MosDNS 组件安装失败"
 
+
+        cleanup_mosdns_safe_packages
+
+
+        # ====================================================
+        # 原来 MosDNS 正在运行则尝试恢复
+        # ====================================================
 
         if [ "$MOSDNS_WAS_RUNNING" -eq 1 ] &&
            [ -x /etc/init.d/mosdns ]
@@ -2370,7 +2588,7 @@ install_mosdns()
 
 
     # ========================================================
-    # 最终验证
+    # 最终软件包验证
     # ========================================================
 
     if ! verify_mosdns_installation; then
@@ -2378,9 +2596,12 @@ install_mosdns()
         _mos_error "MosDNS 最终验证失败"
 
 
+        cleanup_mosdns_safe_packages
         cleanup_mosdns_temp
 
+
         trap - INT TERM
+
 
         return 1
 
@@ -2398,7 +2619,13 @@ install_mosdns()
     # 启动服务
     # ========================================================
 
-    start_mosdns_service
+    if ! start_mosdns_service; then
+
+        _mos_warn "MosDNS 软件包已经安装"
+
+        _mos_warn "但服务自动启动存在异常"
+
+    fi
 
 
     # ========================================================
@@ -2415,6 +2642,8 @@ install_mosdns()
     cleanup_mosdns_temp
 
     cleanup_mosdns_logs
+
+    cleanup_mosdns_safe_packages
 
 
     trap - INT TERM
