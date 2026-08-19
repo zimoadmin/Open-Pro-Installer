@@ -15,6 +15,9 @@
 # 8. 自动修复旧版 rpcd 无法加载 /usr/share/rpcd/ucode/luci.mosdns
 # 9. 旧 rpcd 自动创建 /usr/libexec/rpcd/luci.mosdns 兼容桥
 # 10. 自动验证 ubus 对象 luci.mosdns
+# 11. 自动归一化 aarch64_cortex-a53_neon-vfpv4 等 Release 架构
+# 12. GitHub Release API 自动匹配真实 tar.gz Asset，避免 404
+# 13. ucode 模块缺失时阻止数据库更新假启动/无限转圈
 #
 # BusyBox / OpenWrt /bin/sh Compatible
 # ============================================================
@@ -26,12 +29,14 @@ MOSDNS_ROUTE_FILE="/tmp/openpro_mosdns_routes"
 MOSDNS_SORTED_FILE="/tmp/openpro_mosdns_routes.sorted"
 MOSDNS_TEST_DIR="/tmp/openpro_mosdns_speedtest.d"
 MOSDNS_RPC_COMPAT="/usr/libexec/rpcd/luci.mosdns"
+MOSDNS_RELEASE_JSON="/tmp/openpro_mosdns_release.json"
 
 MOSDNS_ARCHIVE_FILE=""
 MOSDNS_ARCHIVE_NAME=""
 MOSDNS_BASE_URL=""
 MOSDNS_CPU_ARCH=""
 MOSDNS_ARCH=""
+MOSDNS_ARCH_RAW=""
 MOSDNS_PKG_MANAGER=""
 MOSDNS_PKG_EXT=""
 MOSDNS_SDK=""
@@ -75,7 +80,7 @@ cleanup_mosdns_safe_packages() {
 }
 cleanup_mosdns_temp() {
     rm -rf "$MOSDNS_TMP_DIR" "$MOSDNS_TEST_DIR" 2>/dev/null
-    rm -f "$MOSDNS_ROUTE_FILE" "$MOSDNS_SORTED_FILE" 2>/dev/null
+    rm -f "$MOSDNS_ROUTE_FILE" "$MOSDNS_SORTED_FILE" "$MOSDNS_RELEASE_JSON" 2>/dev/null
     cleanup_mosdns_safe_packages
 }
 cleanup_mosdns_logs() {
@@ -142,20 +147,64 @@ detect_mosdns_package_manager() {
     _mos_info "MosDNS SDK       : $MOSDNS_SDK"
 }
 
+normalize_mosdns_arch() {
+    MOSDNS_ARCH_RAW="$MOSDNS_ARCH"
+
+    case "$MOSDNS_ARCH" in
+        aarch64_cortex-a53|aarch64_cortex-a53_*)
+            MOSDNS_ARCH="aarch64_cortex-a53"
+            ;;
+        aarch64_cortex-a72|aarch64_cortex-a72_*)
+            MOSDNS_ARCH="aarch64_cortex-a72"
+            ;;
+        aarch64_cortex-a76|aarch64_cortex-a76_*)
+            MOSDNS_ARCH="aarch64_cortex-a76"
+            ;;
+        aarch64_generic|aarch64_generic_*)
+            MOSDNS_ARCH="aarch64_generic"
+            ;;
+        aarch64|arm64)
+            MOSDNS_ARCH="aarch64_generic"
+            ;;
+        *)
+            ;;
+    esac
+
+    if [ "$MOSDNS_ARCH_RAW" != "$MOSDNS_ARCH" ]; then
+        _mos_info "Package Arch Raw : $MOSDNS_ARCH_RAW"
+        _mos_info "Release Arch     : $MOSDNS_ARCH"
+    else
+        _mos_info "Package Arch     : $MOSDNS_ARCH"
+    fi
+}
+
 detect_mosdns_arch() {
     MOSDNS_ARCH=""
+
     if [ -f /etc/openwrt_release ]; then
         . /etc/openwrt_release
         MOSDNS_ARCH="${DISTRIB_ARCH:-}"
     fi
+
     if [ -z "$MOSDNS_ARCH" ] && command -v opkg >/dev/null 2>&1; then
-        MOSDNS_ARCH="$(opkg print-architecture 2>/dev/null | awk '$1=="arch" && $2!="all" && $2!="noarch" { if ($3>p) {p=$3;a=$2} } END{print a}')"
+        MOSDNS_ARCH="$(
+            opkg print-architecture 2>/dev/null |
+            awk '$1=="arch" && $2!="all" && $2!="noarch" {
+                if ($3>p) { p=$3; a=$2 }
+            } END { print a }'
+        )"
     fi
+
     if [ -z "$MOSDNS_ARCH" ] && command -v apk >/dev/null 2>&1; then
         MOSDNS_ARCH="$(apk --print-arch 2>/dev/null | head -n 1)"
     fi
-    [ -n "$MOSDNS_ARCH" ] || { _mos_error "无法识别 OpenWrt 软件包架构"; return 1; }
-    _mos_info "Package Arch     : $MOSDNS_ARCH"
+
+    [ -n "$MOSDNS_ARCH" ] || {
+        _mos_error "无法识别 OpenWrt 软件包架构"
+        return 1
+    }
+
+    normalize_mosdns_arch
 }
 
 check_mosdns_disk_space() {
@@ -170,11 +219,84 @@ check_mosdns_disk_space() {
 }
 
 prepare_mosdns_download_info() {
-    MOSDNS_ARCHIVE_NAME="${MOSDNS_ARCH}-${MOSDNS_SDK}.tar.gz"
-    MOSDNS_BASE_URL="https://github.com/sbwml/luci-app-mosdns/releases/latest/download/${MOSDNS_ARCHIVE_NAME}"
     mkdir -p "$MOSDNS_TMP_DIR" || return 1
+
+    rm -f "$MOSDNS_RELEASE_JSON" 2>/dev/null
+
+    _mos_info "正在获取 MosDNS 最新 Release 信息..."
+
+    if curl -4 -fLsS \
+        --connect-timeout 8 \
+        --max-time 30 \
+        -H 'Accept: application/vnd.github+json' \
+        -H 'User-Agent: Open-Pro-Installer' \
+        'https://api.github.com/repos/sbwml/luci-app-mosdns/releases/latest' \
+        -o "$MOSDNS_RELEASE_JSON" \
+        >/dev/null 2>&1
+    then
+        :
+    else
+        rm -f "$MOSDNS_RELEASE_JSON"
+        _mos_warn "GitHub Release API 获取失败，将使用标准 latest/download 兜底"
+    fi
+
+    EXPECTED_NAME="${MOSDNS_ARCH}-${MOSDNS_SDK}.tar.gz"
+    MOSDNS_BASE_URL=""
+
+    if [ -s "$MOSDNS_RELEASE_JSON" ]; then
+        MOSDNS_BASE_URL="$(
+            sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*\.tar\.gz\)".*/\1/p' \
+                "$MOSDNS_RELEASE_JSON" |
+            awk -v name="$EXPECTED_NAME" '
+                {
+                    n=$0
+                    sub(/^.*\//, "", n)
+                    if (n == name) {
+                        print $0
+                        exit
+                    }
+                }
+            '
+        )"
+
+        if [ -z "$MOSDNS_BASE_URL" ]; then
+            MOSDNS_BASE_URL="$(
+                sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*\.tar\.gz\)".*/\1/p' \
+                    "$MOSDNS_RELEASE_JSON" |
+                grep "/${MOSDNS_ARCH}[^/]*-${MOSDNS_SDK}\.tar\.gz$" |
+                head -n 1
+            )"
+        fi
+
+        if [ -z "$MOSDNS_BASE_URL" ] &&
+           [ -n "$MOSDNS_ARCH_RAW" ] &&
+           [ "$MOSDNS_ARCH_RAW" != "$MOSDNS_ARCH" ]
+        then
+            MOSDNS_BASE_URL="$(
+                sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*\.tar\.gz\)".*/\1/p' \
+                    "$MOSDNS_RELEASE_JSON" |
+                grep "/${MOSDNS_ARCH_RAW}[^/]*-${MOSDNS_SDK}\.tar\.gz$" |
+                head -n 1
+            )"
+        fi
+    fi
+
+    if [ -z "$MOSDNS_BASE_URL" ]; then
+        MOSDNS_ARCHIVE_NAME="$EXPECTED_NAME"
+        MOSDNS_BASE_URL="https://github.com/sbwml/luci-app-mosdns/releases/latest/download/${MOSDNS_ARCHIVE_NAME}"
+        _mos_warn "未从 API 匹配到 Asset，尝试标准地址：$MOSDNS_ARCHIVE_NAME"
+    else
+        MOSDNS_ARCHIVE_NAME="$(basename "$MOSDNS_BASE_URL")"
+        _mos_ok "已匹配官方 Release Asset"
+    fi
+
     MOSDNS_ARCHIVE_FILE="${MOSDNS_TMP_DIR}/${MOSDNS_ARCHIVE_NAME}"
+
     _mos_info "Release Package  : $MOSDNS_ARCHIVE_NAME"
+    _mos_info "Release Arch     : $MOSDNS_ARCH"
+    _mos_info "Release SDK      : $MOSDNS_SDK"
+
+    return 0
 }
 
 build_mosdns_url() {
@@ -406,6 +528,16 @@ start_mosdns_service() {
     _mos_error "MosDNS 服务启动失败"; return 1
 }
 
+check_mosdns_ucode_modules() {
+    command -v ucode >/dev/null 2>&1 || return 1
+
+    ucode -e '
+        import { stat } from "fs";
+        import { cursor } from "uci";
+        import { connect } from "ubus";
+    ' >/dev/null 2>&1
+}
+
 rpc_mosdns_exists() {
     command -v ubus >/dev/null 2>&1 || return 1
     ubus list 2>/dev/null | grep -qx 'luci.mosdns'
@@ -483,17 +615,33 @@ case "$1" in
                     json_reply_error "Another update is already in progress."
                     exit 0
                 fi
-                : > /var/log/mosdns_update.log 2>/dev/null
-                if [ -f /usr/share/mosdns/mosdns.uc ]; then
-                    if command -v ucode >/dev/null 2>&1; then
-                        ucode /usr/share/mosdns/mosdns.uc update > /var/log/mosdns_update.log 2>&1 </dev/null &
-                        printf '%s\n' '{"success":true}'
-                    else
-                        printf '%s\n' '{"success":false,"error":"ucode not found"}'
-                    fi
-                else
+
+                if [ ! -f /usr/share/mosdns/mosdns.uc ]; then
                     json_reply_error "mosdns.uc not found."
+                    exit 0
                 fi
+
+                if ! command -v ucode >/dev/null 2>&1; then
+                    json_reply_error "ucode not found."
+                    exit 0
+                fi
+
+                if ! ucode -e '
+                    import { stat } from "fs";
+                    import { cursor } from "uci";
+                    import { connect } from "ubus";
+                ' >/dev/null 2>&1
+                then
+                    json_reply_error "ucode modules fs/uci/ubus are missing. Please install the matching ucode modules first."
+                    exit 0
+                fi
+
+                : > /var/log/mosdns_update.log 2>/dev/null
+
+                /usr/share/mosdns/mosdns.uc update \
+                    > /var/log/mosdns_update.log 2>&1 </dev/null &
+
+                printf '%s\n' '{"success":true}'
                 ;;
             get_update_log)
                 if [ -f /var/log/mosdns_update.log ]; then
@@ -523,7 +671,6 @@ ensure_mosdns_rpc() {
 
     _mos_info "正在检测 MosDNS RPC..."
 
-    # 先移除我们旧版本留下的兼容桥，测试系统是否已原生支持 ucode RPC。
     if [ -f "$MOSDNS_RPC_COMPAT" ]; then
         rm -f "$MOSDNS_RPC_COMPAT" 2>/dev/null
     fi
@@ -531,23 +678,21 @@ ensure_mosdns_rpc() {
     /etc/init.d/rpcd restart >/dev/null 2>&1
     sleep 2
 
-    # 检测新版 ucode RPC 是否真的可运行
-    UCODE_RPC_OK=0
-    if [ -f /usr/share/rpcd/ucode/luci.mosdns ]; then
-        if ucode /usr/share/rpcd/ucode/luci.mosdns >/tmp/mosdns_ucode_test.log 2>&1; then
-            UCODE_RPC_OK=1
-        fi
+    UCODE_MODULES_OK=0
+
+    if check_mosdns_ucode_modules; then
+        UCODE_MODULES_OK=1
+        _mos_ok "ucode fs / uci / ubus 模块正常"
+    else
+        _mos_warn "ucode fs / uci / ubus 模块不完整"
     fi
 
-    if rpc_mosdns_exists && [ "$UCODE_RPC_OK" -eq 1 ]; then
+    if rpc_mosdns_exists && [ "$UCODE_MODULES_OK" -eq 1 ]; then
         _mos_ok "MosDNS RPC 原生注册成功"
         return 0
     fi
 
-    _mos_warn "检测到旧版 rpcd 或 ucode 模块不完整，切换兼容模式..."
-
-    # 删除不兼容的新版 ucode RPC，避免旧系统反复加载报错
-    rm -f /usr/share/rpcd/ucode/luci.mosdns 2>/dev/null
+    _mos_warn "当前 rpcd 无法原生注册 luci.mosdns，正在启用兼容模式..."
 
     if ! write_mosdns_rpc_compat; then
         _mos_error "MosDNS RPC 兼容桥创建失败"
@@ -559,11 +704,17 @@ ensure_mosdns_rpc() {
 
     if rpc_mosdns_exists; then
         _mos_ok "MosDNS RPC 兼容模式已启用"
+
+        if [ "$UCODE_MODULES_OK" -ne 1 ]; then
+            _mos_warn "数据库在线更新仍需安装匹配版本的 ucode fs/uci/ubus 模块"
+        fi
+
         return 0
     fi
 
     _mos_error "MosDNS RPC 注册失败"
     _mos_error "请检查 /usr/libexec/rpcd/luci.mosdns 与 rpcd 日志"
+
     return 1
 }
 
@@ -654,6 +805,7 @@ install_mosdns() {
     _mos_info "Package  : $MOSDNS_PKG_EXT"
     [ -n "$MOSDNS_VERSION" ] && _mos_info "Version  : $MOSDNS_VERSION"
     if rpc_mosdns_exists; then _mos_ok "RPC      : luci.mosdns 正常"; else _mos_warn "RPC      : luci.mosdns 未注册"; fi
+    if check_mosdns_ucode_modules; then _mos_ok "Ucode    : fs / uci / ubus 正常"; else _mos_warn "Ucode    : 缺少 fs / uci / ubus 模块，数据库在线更新不可用"; fi
     printf '\nLuCI：服务 → MosDNS\n\n'
     return 0
 }
