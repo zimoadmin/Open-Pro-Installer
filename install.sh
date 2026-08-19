@@ -79,8 +79,9 @@ main_menu()
         printf "%b\n" "${BLUE}║${CYAN}  [1] 一键仿 iStoreOS 主题            ${BLUE}║${RESET}"
         printf "%b\n" "${BLUE}║${CYAN}  [2] 安装 iStore 商店                ${BLUE}║${RESET}"
         printf "%b\n" "${BLUE}║${CYAN}  [3] 安装代理工具                    ${BLUE}║${RESET}"
-        printf "%b\n" "${BLUE}║${CYAN}  [4] 解锁区域限制                    ${BLUE}║${RESET}"
-        printf "%b\n" "${BLUE}║${CYAN}  [5] 修改云服务                      ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [4] 其他工具                        ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [5] 解锁区域限制                    ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [6] 修改云服务                      ${BLUE}║${RESET}"
         printf "%b\n" "${BLUE}║${CYAN}  [0] 退出                            ${BLUE}║${RESET}"
         printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
@@ -100,13 +101,11 @@ main_menu()
 
         1)
 
-            if [ -f "$SCRIPT_DIR/modules/theme.sh" ]
-            then
+            if [ -f "$SCRIPT_DIR/modules/theme.sh" ]; then
 
                 . "$SCRIPT_DIR/modules/theme.sh"
 
-                if command -v install_theme >/dev/null 2>&1
-                then
+                if command -v install_theme >/dev/null 2>&1; then
 
                     install_theme
 
@@ -135,13 +134,11 @@ main_menu()
 
         2)
 
-            if [ -f "$SCRIPT_DIR/modules/istore.sh" ]
-            then
+            if [ -f "$SCRIPT_DIR/modules/istore.sh" ]; then
 
                 . "$SCRIPT_DIR/modules/istore.sh"
 
-                if command -v install_istore >/dev/null 2>&1
-                then
+                if command -v install_istore >/dev/null 2>&1; then
 
                     install_istore
 
@@ -176,18 +173,27 @@ main_menu()
 
 
         # ====================================================
-        # 4. 解锁区域限制
+        # 4. 其他工具
         # ====================================================
 
         4)
 
-            if [ -f "$SCRIPT_DIR/modules/unlock.sh" ]
-            then
+            other_tools_menu
+
+        ;;
+
+
+        # ====================================================
+        # 5. 解锁区域限制
+        # ====================================================
+
+        5)
+
+            if [ -f "$SCRIPT_DIR/modules/unlock.sh" ]; then
 
                 . "$SCRIPT_DIR/modules/unlock.sh"
 
-                if command -v region_menu >/dev/null 2>&1
-                then
+                if command -v region_menu >/dev/null 2>&1; then
 
                     region_menu
 
@@ -213,18 +219,16 @@ main_menu()
 
 
         # ====================================================
-        # 5. 修改云服务
+        # 6. 修改云服务
         # ====================================================
 
-        5)
+        6)
 
-            if [ -f "$SCRIPT_DIR/modules/cloud.sh" ]
-            then
+            if [ -f "$SCRIPT_DIR/modules/cloud.sh" ]; then
 
                 . "$SCRIPT_DIR/modules/cloud.sh"
 
-                if command -v cloud_menu >/dev/null 2>&1
-                then
+                if command -v cloud_menu >/dev/null 2>&1; then
 
                     cloud_menu
 
@@ -279,7 +283,6 @@ main_menu()
 
         ;;
 
-
         esac
 
     done
@@ -332,8 +335,7 @@ proxy_menu()
                 "${GREEN}===== OpenClash =====${RESET}"
 
 
-            if [ ! -f "$SCRIPT_DIR/modules/openclash.sh" ]
-            then
+            if [ ! -f "$SCRIPT_DIR/modules/openclash.sh" ]; then
 
                 printf "%b\n" \
                     "${RED}OpenClash模块不存在${RESET}"
@@ -348,14 +350,12 @@ proxy_menu()
             fi
 
 
-            if get_latest_release
-            then
+            if get_latest_release; then
 
                 . "$SCRIPT_DIR/modules/openclash.sh"
 
 
-                if command -v install_openclash >/dev/null 2>&1
-                then
+                if command -v install_openclash >/dev/null 2>&1; then
 
                     install_openclash
 
@@ -391,14 +391,12 @@ proxy_menu()
                 "${GREEN}===== SSR Plus+ =====${RESET}"
 
 
-            if [ -f "$SCRIPT_DIR/modules/ssrplus.sh" ]
-            then
+            if [ -f "$SCRIPT_DIR/modules/ssrplus.sh" ]; then
 
                 . "$SCRIPT_DIR/modules/ssrplus.sh"
 
 
-                if command -v install_ssrplus >/dev/null 2>&1
-                then
+                if command -v install_ssrplus >/dev/null 2>&1; then
 
                     install_ssrplus
 
@@ -437,14 +435,12 @@ proxy_menu()
                 "${GREEN}===== PassWall =====${RESET}"
 
 
-            if [ -f "$SCRIPT_DIR/modules/passwall.sh" ]
-            then
+            if [ -f "$SCRIPT_DIR/modules/passwall.sh" ]; then
 
                 . "$SCRIPT_DIR/modules/passwall.sh"
 
 
-                if command -v install_passwall >/dev/null 2>&1
-                then
+                if command -v install_passwall >/dev/null 2>&1; then
 
                     install_passwall
 
@@ -483,14 +479,12 @@ proxy_menu()
                 "${GREEN}===== PassWall2 =====${RESET}"
 
 
-            if [ -f "$SCRIPT_DIR/modules/passwall2.sh" ]
-            then
+            if [ -f "$SCRIPT_DIR/modules/passwall2.sh" ]; then
 
                 . "$SCRIPT_DIR/modules/passwall2.sh"
 
 
-                if command -v install_passwall2 >/dev/null 2>&1
-                then
+                if command -v install_passwall2 >/dev/null 2>&1; then
 
                     install_passwall2
 
@@ -528,6 +522,111 @@ proxy_menu()
         ;;
 
 
+        *)
+
+            printf "%b\n" \
+                "${RED}输入错误${RESET}"
+
+            sleep 1
+
+        ;;
+
+        esac
+
+    done
+}
+
+
+# ============================================================
+# 其他工具菜单
+# ============================================================
+
+other_tools_menu()
+{
+    while true
+    do
+
+        clear
+
+        printf "\n"
+
+        printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
+        printf "%b\n" "${BLUE}║${GREEN}              其他工具                ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [1] 安装 MosDNS                     ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [0] 返回主菜单                      ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
+
+        printf "\n"
+
+        printf "%b" \
+            "${YELLOW}选择序列 > ${RESET}"
+
+        read TOOL_CHOOSE </dev/tty
+
+
+        case "$TOOL_CHOOSE" in
+
+
+        # ====================================================
+        # 1. MosDNS
+        # ====================================================
+
+        1)
+
+            clear
+
+            printf "\n"
+
+            printf "%b\n" \
+                "${GREEN}===== MosDNS =====${RESET}"
+
+            printf "\n"
+
+
+            if [ -f "$SCRIPT_DIR/modules/mosdns.sh" ]; then
+
+                . "$SCRIPT_DIR/modules/mosdns.sh"
+
+
+                if command -v install_mosdns >/dev/null 2>&1; then
+
+                    install_mosdns
+
+                else
+
+                    printf "%b\n" \
+                        "${RED}MosDNS模块缺少 install_mosdns()${RESET}"
+
+                fi
+
+            else
+
+                printf "%b\n" \
+                    "${RED}MosDNS模块不存在${RESET}"
+
+                printf "%b\n" \
+                    "${YELLOW}缺少：modules/mosdns.sh${RESET}"
+
+            fi
+
+
+            pause
+
+        ;;
+
+
+        # ====================================================
+        # 0. 返回主菜单
+        # ====================================================
+
+        0)
+
+            return
+
+        ;;
+
+
         # ====================================================
         # 输入错误
         # ====================================================
@@ -540,7 +639,6 @@ proxy_menu()
             sleep 1
 
         ;;
-
 
         esac
 
