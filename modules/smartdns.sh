@@ -3,6 +3,23 @@
 # ============================================================
 # Open-Pro-Installer
 # SmartDNS Smart Installer
+#
+# 功能：
+# 1. OpenWrt / OPKG / APK 自动识别
+# 2. CPU 架构自动识别
+# 3. GitHub 官方 Release API 获取最新版
+# 4. 自动匹配 SmartDNS OpenWrt IPK/APK
+# 5. 自动选择 LuCI / luci-compat
+# 6. GH01-GH06 + DIRECT 并行测速
+# 7. 自动选择最快下载线路
+# 8. 总体单行进度条
+# 9. 完全非静默调试模式，实时显示过程
+# 10. 失败自动显示日志
+# 11. 安装后刷新 LuCI
+# 12. 不强制修改 DNS 53 端口
+# 13. 修复旧 BusyBox awk 兼容问题
+# 14. Release Asset 优先 jsonfilter 解析
+#
 # BusyBox / OpenWrt /bin/sh Compatible
 # ============================================================
 
@@ -22,6 +39,7 @@ SMARTDNS_EXT=""
 
 SMARTDNS_MAIN_URL=""
 SMARTDNS_LUCI_URL=""
+
 SMARTDNS_MAIN_FILE=""
 SMARTDNS_LUCI_FILE=""
 
@@ -29,11 +47,6 @@ SMARTDNS_ROUTE_FILE="$SMARTDNS_TMP/routes"
 SMARTDNS_TEST_DIR="$SMARTDNS_TMP/test"
 
 SMARTDNS_WAS_RUNNING=0
-
-
-# ============================================================
-# 下载节点
-# ============================================================
 
 SMARTDNS_NODES="
 GH01|https://ghproxy.net/
@@ -44,11 +57,6 @@ GH05|https://github.mxw.qzz.io/
 GH06|https://gh.07150721.xyz/
 DIRECT|
 "
-
-
-# ============================================================
-# 输出
-# ============================================================
 
 _sd_info()
 {
@@ -70,66 +78,47 @@ _sd_error()
     printf '\033[1;91m[ERROR]\033[0m %s\n' "$*"
 }
 
-
-# ============================================================
-# 单条总体进度条
-# ============================================================
-
 smartdns_progress()
 {
     PERCENT="$1"
-
     WIDTH=30
+
     FILLED=$((PERCENT * WIDTH / 100))
     EMPTY=$((WIDTH - FILLED))
 
     BAR=""
     I=0
 
-    while [ "$I" -lt "$FILLED" ]
-    do
+    while [ "$I" -lt "$FILLED" ]; do
         BAR="${BAR}#"
         I=$((I + 1))
     done
 
     I=0
 
-    while [ "$I" -lt "$EMPTY" ]
-    do
+    while [ "$I" -lt "$EMPTY" ]; do
         BAR="${BAR}-"
         I=$((I + 1))
     done
 
-    printf \
-        "\r\033[2K\033[1;92m[INFO]\033[0m 总体进度: [\033[1;92m%s\033[0m] %3d%%" \
+    printf '\r\033[2K\033[1;92m[INFO]\033[0m 总体进度: [\033[1;92m%s\033[0m] %3d%%\033[K' \
         "$BAR" \
         "$PERCENT"
 }
-
-
-# ============================================================
-# 错误日志
-# ============================================================
 
 smartdns_show_log()
 {
     printf '\n\n'
     printf '\033[1;91m========== SMARTDNS ERROR ==========\033[0m\n'
 
-    if [ -s "$SMARTDNS_LOG" ]
-    then
-        tail -n 80 "$SMARTDNS_LOG"
+    if [ -s "$SMARTDNS_LOG" ]; then
+        tail -n 100 "$SMARTDNS_LOG"
     else
         printf '没有可用错误日志\n'
     fi
 
     printf '\033[1;91m====================================\033[0m\n\n'
 }
-
-
-# ============================================================
-# 清理
-# ============================================================
 
 smartdns_cleanup()
 {
@@ -143,49 +132,33 @@ smartdns_cleanup_all()
     rm -f "$SMARTDNS_LOG" 2>/dev/null
 }
 
-
-# ============================================================
-# 中断
-# ============================================================
-
 smartdns_interrupt()
 {
     printf '\n'
-
     _sd_warn "SmartDNS 安装已中断"
 
     if [ "$SMARTDNS_WAS_RUNNING" -eq 1 ] &&
-       [ -x /etc/init.d/smartdns ]
-    then
+       [ -x /etc/init.d/smartdns ]; then
         /etc/init.d/smartdns start >/dev/null 2>&1
     fi
 
     smartdns_cleanup
-
     trap - INT TERM
 
     return 130
 }
 
-
-# ============================================================
-# 环境检测
-# ============================================================
-
 smartdns_check_runtime()
 {
     MISSING=""
 
-    for CMD in \
-        awk sed grep cut sort head tail \
-        curl cp basename mkdir chmod cat df wc
+    for CMD in awk sed grep cut sort head tail curl cp basename mkdir chmod cat df wc
     do
         command -v "$CMD" >/dev/null 2>&1 ||
             MISSING="$MISSING $CMD"
     done
 
-    if [ -n "$MISSING" ]
-    then
+    if [ -n "$MISSING" ]; then
         _sd_error "系统缺少必要命令:$MISSING"
         return 1
     fi
@@ -193,208 +166,114 @@ smartdns_check_runtime()
     return 0
 }
 
-
-# ============================================================
-# OpenWrt
-# 正常情况完全静默
-# ============================================================
-
 smartdns_detect_system()
 {
-    if [ ! -f /etc/openwrt_release ]
-    then
+    _sd_info "正在检测 OpenWrt 系统..."
+
+    if [ ! -f /etc/openwrt_release ]; then
         _sd_error "当前系统不是受支持的 OpenWrt"
         return 1
     fi
 
     . /etc/openwrt_release
 
+    _sd_ok "OpenWrt 检测完成"
+    _sd_info "OpenWrt Version : ${DISTRIB_RELEASE:-unknown}"
+    _sd_info "OpenWrt Target  : ${DISTRIB_TARGET:-unknown}"
+
     return 0
 }
 
-
-# ============================================================
-# 包管理器
-# ============================================================
-
 smartdns_detect_package_manager()
 {
-    if command -v apk >/dev/null 2>&1
-    then
+    _sd_info "正在检测软件包管理器..."
+
+    if command -v apk >/dev/null 2>&1; then
         SMARTDNS_PKG_MANAGER="apk"
         SMARTDNS_EXT="apk"
-
-    elif command -v opkg >/dev/null 2>&1
-    then
+    elif command -v opkg >/dev/null 2>&1; then
         SMARTDNS_PKG_MANAGER="opkg"
         SMARTDNS_EXT="ipk"
-
     else
         _sd_error "没有检测到 OPKG / APK"
         return 1
     fi
 
+    _sd_ok "软件包管理器检测完成"
+    _sd_info "Package Manager  : $SMARTDNS_PKG_MANAGER"
+    _sd_info "Package Format   : .$SMARTDNS_EXT"
+
     return 0
 }
 
-
-# ============================================================
-# 架构检测
-#
-# OpenWrt：
-# aarch64_cortex-a53_neon-vfpv4
-#
-# SmartDNS Release：
-# aarch64
-# ============================================================
-
 smartdns_detect_arch()
 {
+    _sd_info "正在检测 CPU / 软件包架构..."
+
     SMARTDNS_ARCH=""
     SMARTDNS_ARCH_RAW=""
     SMARTDNS_CPU="$(uname -m 2>/dev/null)"
 
-    # ========================================================
-    # OPKG 精确架构
-    # ========================================================
+    case "$SMARTDNS_CPU" in
+        aarch64|arm64)
+            SMARTDNS_ARCH="aarch64"
+            ;;
+        x86_64|amd64)
+            SMARTDNS_ARCH="x86_64"
+            ;;
+        armv7*|armv6*|arm)
+            SMARTDNS_ARCH="arm"
+            ;;
+        i386|i486|i586|i686)
+            SMARTDNS_ARCH="i386"
+            ;;
+        mips64el*)
+            SMARTDNS_ARCH="mips64el"
+            ;;
+        mips64*)
+            SMARTDNS_ARCH="mips64"
+            ;;
+        mipsel*)
+            SMARTDNS_ARCH="mipsel"
+            ;;
+        mips*)
+            SMARTDNS_ARCH="mips"
+            ;;
+        *)
+            _sd_error "暂不支持 CPU 架构：$SMARTDNS_CPU"
+            return 1
+            ;;
+    esac
 
-    if [ "$SMARTDNS_PKG_MANAGER" = "opkg" ]
-    then
+    if [ "$SMARTDNS_PKG_MANAGER" = "opkg" ]; then
         SMARTDNS_ARCH_RAW="$(
             opkg print-architecture 2>/dev/null |
-            awk '
-                $1 == "arch" &&
-                $2 != "all" &&
-                $2 != "noarch"
-                {
-                    if ($3 > p)
-                    {
-                        p = $3
-                        a = $2
-                    }
-                }
-
-                END
-                {
-                    print a
-                }
-            '
+            tail -n 1 |
+            cut -d ' ' -f 2
         )"
-    fi
-
-    # ========================================================
-    # APK 架构
-    # ========================================================
-
-    if [ "$SMARTDNS_PKG_MANAGER" = "apk" ]
-    then
+    elif [ "$SMARTDNS_PKG_MANAGER" = "apk" ]; then
         SMARTDNS_ARCH_RAW="$(
             apk --print-arch 2>/dev/null |
             head -n 1
         )"
     fi
 
-    # ========================================================
-    # OpenWrt → SmartDNS Release 架构
-    # ========================================================
-
-    case "$SMARTDNS_ARCH_RAW" in
-
-        aarch64*|arm64*)
-            SMARTDNS_ARCH="aarch64"
-            ;;
-
-        x86_64*|amd64*)
-            SMARTDNS_ARCH="x86_64"
-            ;;
-
-        arm_cortex*|arm_arm*|armv7*|armv6*|arm*)
-            SMARTDNS_ARCH="arm"
-            ;;
-
-        i386*|i486*|i586*|i686*)
-            SMARTDNS_ARCH="i386"
-            ;;
-
-        mips64el*)
-            SMARTDNS_ARCH="mips64el"
-            ;;
-
-        mips64*)
-            SMARTDNS_ARCH="mips64"
-            ;;
-
-        mipsel*)
-            SMARTDNS_ARCH="mipsel"
-            ;;
-
-        mips*)
-            SMARTDNS_ARCH="mips"
-            ;;
-
-    esac
-
-    # ========================================================
-    # OPKG 无结果 → uname 兜底
-    # ========================================================
-
-    if [ -z "$SMARTDNS_ARCH" ]
-    then
-        case "$SMARTDNS_CPU" in
-
-            aarch64|arm64)
-                SMARTDNS_ARCH="aarch64"
-                ;;
-
-            x86_64|amd64)
-                SMARTDNS_ARCH="x86_64"
-                ;;
-
-            armv7*|armv6*|arm)
-                SMARTDNS_ARCH="arm"
-                ;;
-
-            i386|i486|i586|i686)
-                SMARTDNS_ARCH="i386"
-                ;;
-
-            mips64el*)
-                SMARTDNS_ARCH="mips64el"
-                ;;
-
-            mips64*)
-                SMARTDNS_ARCH="mips64"
-                ;;
-
-            mipsel*)
-                SMARTDNS_ARCH="mipsel"
-                ;;
-
-            mips*)
-                SMARTDNS_ARCH="mips"
-                ;;
-
-            *)
-                _sd_error "暂不支持 CPU 架构：$SMARTDNS_CPU"
-                return 1
-                ;;
-
-        esac
-    fi
+    _sd_ok "架构检测完成"
+    _sd_info "CPU Architecture : ${SMARTDNS_CPU:-unknown}"
+    _sd_info "OpenWrt Arch     : ${SMARTDNS_ARCH_RAW:-unknown}"
+    _sd_info "Release Arch     : ${SMARTDNS_ARCH:-unknown}"
 
     return 0
 }
 
-
-# ============================================================
-# 空间
-# ============================================================
-
 smartdns_check_space()
 {
+    _sd_info "正在检测可用空间..."
+
     FREE_KB="$(
         df -k /usr 2>/dev/null |
-        awk 'END {print $4}'
+        tail -n 1 |
+        awk '{print $4}'
     )"
 
     case "$FREE_KB" in
@@ -405,31 +284,46 @@ smartdns_check_space()
 
     FREE_MB=$((FREE_KB / 1024))
 
-    if [ "$FREE_MB" -lt 25 ]
-    then
+    _sd_info "可用空间        : ${FREE_MB} MB"
+
+    if [ "$FREE_MB" -lt 25 ]; then
         _sd_error "可用空间不足，建议至少保留 25 MB"
         return 1
     fi
 
+    _sd_ok "空间检测完成"
+
     return 0
 }
 
+smartdns_extract_assets()
+{
+    rm -f "$SMARTDNS_ASSET_LIST"
 
-# ============================================================
-# 获取官方 Release
-# ============================================================
+    if command -v jsonfilter >/dev/null 2>&1; then
+        jsonfilter \
+            -i "$SMARTDNS_RELEASE_JSON" \
+            -e '@.assets[*].browser_download_url' \
+            2>/dev/null \
+            > "$SMARTDNS_ASSET_LIST"
+    else
+        grep '"browser_download_url"' "$SMARTDNS_RELEASE_JSON" |
+            sed 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/' \
+            > "$SMARTDNS_ASSET_LIST"
+    fi
+
+    [ -s "$SMARTDNS_ASSET_LIST" ]
+}
 
 smartdns_get_release()
 {
+    _sd_info "正在获取 SmartDNS 官方最新 Release..."
+
     mkdir -p "$SMARTDNS_TMP" || return 1
 
     rm -f \
         "$SMARTDNS_RELEASE_JSON" \
         "$SMARTDNS_ASSET_LIST"
-
-    # ========================================================
-    # GitHub API
-    # ========================================================
 
     if ! curl -4 \
         -L \
@@ -447,127 +341,77 @@ smartdns_get_release()
         return 1
     fi
 
-    # ========================================================
-    # GitHub API 错误 JSON 检测
-    # ========================================================
-
-    if grep -q '"message"[[:space:]]*:' \
-        "$SMARTDNS_RELEASE_JSON" 2>/dev/null &&
-       ! grep -q '"browser_download_url"' \
-        "$SMARTDNS_RELEASE_JSON" 2>/dev/null
-    then
-        cat "$SMARTDNS_RELEASE_JSON" >>"$SMARTDNS_LOG"
-        _sd_error "GitHub Release API 返回异常"
-        return 1
+    if command -v jsonfilter >/dev/null 2>&1; then
+        SMARTDNS_VERSION="$(
+            jsonfilter \
+                -i "$SMARTDNS_RELEASE_JSON" \
+                -e '@.tag_name' \
+                2>/dev/null
+        )"
+    else
+        SMARTDNS_VERSION="$(
+            grep '"tag_name"' "$SMARTDNS_RELEASE_JSON" |
+            head -n 1 |
+            sed 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/'
+        )"
     fi
 
-    # ========================================================
-    # Release 版本
-    # ========================================================
+    if ! smartdns_extract_assets; then
+        {
+            printf '\n===== SMARTDNS RELEASE JSON =====\n'
+            cat "$SMARTDNS_RELEASE_JSON"
+            printf '\n=================================\n'
+        } >>"$SMARTDNS_LOG"
 
-    SMARTDNS_VERSION="$(
-        sed -n \
-            's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' \
-            "$SMARTDNS_RELEASE_JSON" |
-        head -n 1
-    )"
-
-    # ========================================================
-    # Asset URL
-    # ========================================================
-
-    sed -n \
-        's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p' \
-        "$SMARTDNS_RELEASE_JSON" \
-        >"$SMARTDNS_ASSET_LIST"
-
-    if [ ! -s "$SMARTDNS_ASSET_LIST" ]
-    then
         _sd_error "SmartDNS Release 中没有找到安装文件"
         return 1
     fi
 
-    # ========================================================
-    # 主程序
-    #
-    # 第一优先：
-    # smartdns + arch + openwrt + ext
-    # ========================================================
-
     SMARTDNS_MAIN_URL="$(
-        grep -i 'smartdns' "$SMARTDNS_ASSET_LIST" |
-        grep -vi 'luci-app-smartdns' |
-        grep -i "$SMARTDNS_ARCH" |
-        grep -i 'openwrt' |
-        grep -E "\.${SMARTDNS_EXT}$" |
+        grep '/smartdns\.' "$SMARTDNS_ASSET_LIST" |
+        grep "\.${SMARTDNS_ARCH}-openwrt-all\.${SMARTDNS_EXT}$" |
         head -n 1
     )"
 
-    # ========================================================
-    # 第二匹配
-    # 不要求 openwrt 字段
-    # ========================================================
-
-    if [ -z "$SMARTDNS_MAIN_URL" ]
-    then
+    if [ -z "$SMARTDNS_MAIN_URL" ]; then
         SMARTDNS_MAIN_URL="$(
             grep -i 'smartdns' "$SMARTDNS_ASSET_LIST" |
             grep -vi 'luci-app-smartdns' |
             grep -i "$SMARTDNS_ARCH" |
-            grep -E "\.${SMARTDNS_EXT}$" |
+            grep -i 'openwrt' |
+            grep "\.${SMARTDNS_EXT}$" |
             head -n 1
         )"
     fi
-
-    # ========================================================
-    # LuCI
-    # ========================================================
 
     SMARTDNS_LUCI_URL=""
 
-    if [ "$SMARTDNS_PKG_MANAGER" = "opkg" ]
-    then
-
-        # ----------------------------------------------------
-        # 优先 luci-compat
-        # ----------------------------------------------------
-
+    if [ "$SMARTDNS_PKG_MANAGER" = "opkg" ]; then
         SMARTDNS_LUCI_URL="$(
             grep -i 'luci-app-smartdns' "$SMARTDNS_ASSET_LIST" |
             grep -i 'luci-compat' |
-            grep -E '\.ipk$' |
+            grep '\.ipk$' |
             head -n 1
         )"
 
-        # ----------------------------------------------------
-        # 普通 LuCI
-        # ----------------------------------------------------
-
-        if [ -z "$SMARTDNS_LUCI_URL" ]
-        then
+        if [ -z "$SMARTDNS_LUCI_URL" ]; then
             SMARTDNS_LUCI_URL="$(
                 grep -i 'luci-app-smartdns' "$SMARTDNS_ASSET_LIST" |
-                grep -E '\.ipk$' |
+                grep '\.ipk$' |
+                grep -vi 'lite' |
                 head -n 1
             )"
         fi
-
     else
-
         SMARTDNS_LUCI_URL="$(
             grep -i 'luci-app-smartdns' "$SMARTDNS_ASSET_LIST" |
-            grep -E '\.apk$' |
+            grep '\.apk$' |
+            grep -vi 'lite' |
             head -n 1
         )"
-
     fi
 
-    # ========================================================
-    # 验证主程序
-    # ========================================================
-
-    if [ -z "$SMARTDNS_MAIN_URL" ]
-    then
+    if [ -z "$SMARTDNS_MAIN_URL" ]; then
         {
             printf '\n===== SMARTDNS RELEASE DEBUG =====\n'
             printf 'CPU: %s\n' "$SMARTDNS_CPU"
@@ -575,9 +419,7 @@ smartdns_get_release()
             printf 'Release Arch: %s\n' "$SMARTDNS_ARCH"
             printf 'Package Manager: %s\n' "$SMARTDNS_PKG_MANAGER"
             printf 'Extension: %s\n\n' "$SMARTDNS_EXT"
-
             cat "$SMARTDNS_ASSET_LIST"
-
             printf '\n==================================\n'
         } >>"$SMARTDNS_LOG"
 
@@ -585,12 +427,7 @@ smartdns_get_release()
         return 1
     fi
 
-    # ========================================================
-    # 验证 LuCI
-    # ========================================================
-
-    if [ -z "$SMARTDNS_LUCI_URL" ]
-    then
+    if [ -z "$SMARTDNS_LUCI_URL" ]; then
         {
             printf '\n===== SMARTDNS LUCI DEBUG =====\n'
             cat "$SMARTDNS_ASSET_LIST"
@@ -604,31 +441,25 @@ smartdns_get_release()
     SMARTDNS_MAIN_FILE="$SMARTDNS_TMP/smartdns.$SMARTDNS_EXT"
     SMARTDNS_LUCI_FILE="$SMARTDNS_TMP/luci-app-smartdns.$SMARTDNS_EXT"
 
+    _sd_ok "SmartDNS Release 解析完成"
+    [ -n "$SMARTDNS_VERSION" ] && _sd_info "Release Version  : $SMARTDNS_VERSION"
+    _sd_info "SmartDNS Asset   : $(basename "$SMARTDNS_MAIN_URL")"
+    _sd_info "LuCI Asset       : $(basename "$SMARTDNS_LUCI_URL")"
+
     return 0
 }
-
-
-# ============================================================
-# URL
-# ============================================================
 
 smartdns_build_url()
 {
     PREFIX="$1"
     URL="$2"
 
-    if [ -z "$PREFIX" ]
-    then
+    if [ -z "$PREFIX" ]; then
         printf '%s' "$URL"
     else
         printf '%s%s' "$PREFIX" "$URL"
     fi
 }
-
-
-# ============================================================
-# 时间转换
-# ============================================================
 
 smartdns_seconds_ms()
 {
@@ -642,11 +473,6 @@ smartdns_seconds_ms()
     '
 }
 
-
-# ============================================================
-# 速度转换
-# ============================================================
-
 smartdns_speed_mb()
 {
     awk -v s="$1" '
@@ -658,11 +484,6 @@ smartdns_speed_mb()
         }
     '
 }
-
-
-# ============================================================
-# 单线路测速
-# ============================================================
 
 smartdns_test_route()
 {
@@ -688,8 +509,7 @@ smartdns_test_route()
     RC=$?
 
     if [ "$RC" -ne 0 ] &&
-       [ "$RC" -ne 28 ]
-    then
+       [ "$RC" -ne 28 ]; then
         printf '%s|FAIL\n' "$NAME" >"$RESULT"
         return
     fi
@@ -710,17 +530,17 @@ smartdns_test_route()
     TTFB_MS="$(smartdns_seconds_ms "$TTFB")"
 
     SPEED_INT="$(
-        awk -v s="$SPEED" \
-            'BEGIN {
+        awk -v s="$SPEED" '
+            BEGIN {
                 if (s > 0)
                     printf "%d", s
                 else
                     print 0
-            }'
+            }
+        '
     )"
 
-    if [ "$SPEED_INT" -le 0 ]
-    then
+    if [ "$SPEED_INT" -le 0 ]; then
         printf '%s|FAIL\n' "$NAME" >"$RESULT"
         return
     fi
@@ -728,17 +548,17 @@ smartdns_test_route()
     SCORE="$(
         awk \
             -v t="$TTFB_MS" \
-            -v s="$SPEED_INT" \
-            'BEGIN {
+            -v s="$SPEED_INT" '
+            BEGIN {
                 if (s <= 0)
                     print 999999999
                 else
                     printf "%d", t + (10485760 / s) * 1000
-            }'
+            }
+        '
     )"
 
-    printf \
-        '%s|OK|%s|%s|%s|%s\n' \
+    printf '%s|OK|%s|%s|%s|%s\n' \
         "$NAME" \
         "$PREFIX" \
         "$TTFB_MS" \
@@ -747,37 +567,23 @@ smartdns_test_route()
         >"$RESULT"
 }
 
-
-# ============================================================
-# 并行测速
-# ============================================================
-
 smartdns_prepare_routes()
 {
     ORIGINAL="$1"
 
     rm -rf "$SMARTDNS_TEST_DIR"
     mkdir -p "$SMARTDNS_TEST_DIR" || return 1
-
     rm -f "$SMARTDNS_ROUTE_FILE"
 
-    # 先结束进度条这一行
     printf '\n\n'
-
     _sd_info "正在并行测试 SmartDNS 下载线路..."
-
     printf '\n'
 
     for NAME in GH01 GH02 GH03 GH04 GH05 GH06 DIRECT
     do
         PREFIX="$(
             printf '%s\n' "$SMARTDNS_NODES" |
-            awk -F '|' \
-                -v n="$NAME" \
-                '$1 == n {
-                    print $2
-                    exit
-                }'
+            awk -F '|' -v n="$NAME" '$1 == n { print $2; exit }'
         )"
 
         smartdns_test_route \
@@ -800,10 +606,9 @@ smartdns_prepare_routes()
         FILE="$SMARTDNS_TEST_DIR/$NAME"
 
         if [ ! -s "$FILE" ] ||
-           [ "$(cut -d '|' -f2 "$FILE")" != "OK" ]
-        then
-            printf \
-                '%-8s %-12s %-14s \033[1;91m%s\033[0m\n' \
+           [ "$(cut -d '|' -f2 "$FILE")" != "OK" ]; then
+
+            printf '%-8s %-12s %-14s \033[1;91m%s\033[0m\n' \
                 "$NAME" \
                 "----" \
                 "----" \
@@ -817,15 +622,13 @@ smartdns_prepare_routes()
         SPEED="$(cut -d '|' -f5 "$FILE")"
         SCORE="$(cut -d '|' -f6 "$FILE")"
 
-        printf \
-            '%-8s %-12s %-14s \033[1;92m%s\033[0m\n' \
+        printf '%-8s %-12s %-14s \033[1;92m%s\033[0m\n' \
             "$NAME" \
             "${TTFB} ms" \
             "$(smartdns_speed_mb "$SPEED") MB/s" \
             "可用"
 
-        printf \
-            '%s|%s|%s|%s|%s\n' \
+        printf '%s|%s|%s|%s|%s\n' \
             "$SCORE" \
             "$NAME" \
             "$PREFIX" \
@@ -836,8 +639,7 @@ smartdns_prepare_routes()
 
     rm -rf "$SMARTDNS_TEST_DIR"
 
-    if [ ! -s "$SMARTDNS_ROUTE_FILE" ]
-    then
+    if [ ! -s "$SMARTDNS_ROUTE_FILE" ]; then
         _sd_warn "测速线路全部不可用，将尝试 GitHub 官方直连"
         printf '\n'
         return 1
@@ -849,89 +651,81 @@ smartdns_prepare_routes()
         "$SMARTDNS_ROUTE_FILE" \
         >"$SMARTDNS_ROUTE_FILE.sorted"
 
-    mv \
-        "$SMARTDNS_ROUTE_FILE.sorted" \
-        "$SMARTDNS_ROUTE_FILE"
+    mv "$SMARTDNS_ROUTE_FILE.sorted" "$SMARTDNS_ROUTE_FILE"
 
     BEST="$(head -n 1 "$SMARTDNS_ROUTE_FILE")"
-
     BEST_NAME="$(printf '%s' "$BEST" | cut -d '|' -f2)"
     BEST_TTFB="$(printf '%s' "$BEST" | cut -d '|' -f4)"
     BEST_SPEED="$(printf '%s' "$BEST" | cut -d '|' -f5)"
 
     printf '\n'
-
     _sd_ok "最佳线路：$BEST_NAME"
     _sd_info "首包时间：${BEST_TTFB} ms"
     _sd_info "下载速度：$(smartdns_speed_mb "$BEST_SPEED") MB/s"
-
     printf '\n'
 
     return 0
 }
 
-
-# ============================================================
-# 下载文件
-# ============================================================
-
 smartdns_download_file()
 {
     ORIGINAL="$1"
     OUTPUT="$2"
+    LABEL="$3"
+
+    [ -n "$LABEL" ] || LABEL="$(basename "$OUTPUT")"
 
     rm -f "$OUTPUT"
 
-    if [ -s "$SMARTDNS_ROUTE_FILE" ]
-    then
-        while IFS='|' read -r \
-            SCORE NAME PREFIX TTFB SPEED
+    _sd_info "正在下载：$LABEL"
+
+    if [ -s "$SMARTDNS_ROUTE_FILE" ]; then
+        while IFS='|' read -r SCORE NAME PREFIX TTFB SPEED
         do
             [ -n "$NAME" ] || continue
 
             URL="$(smartdns_build_url "$PREFIX" "$ORIGINAL")"
 
+            _sd_info "尝试下载线路：$NAME"
+
             if curl -4 \
                 -L \
                 -f \
-                -sS \
                 --connect-timeout 10 \
                 --max-time 300 \
                 --retry 1 \
                 --retry-delay 1 \
                 -o "$OUTPUT" \
-                "$URL" \
-                >>"$SMARTDNS_LOG" 2>&1
+                "$URL"
             then
-                if [ -s "$OUTPUT" ]
-                then
+                if [ -s "$OUTPUT" ]; then
+                    _sd_ok "$LABEL 下载完成（线路：$NAME）"
                     return 0
                 fi
             fi
 
+            _sd_warn "$NAME 下载失败，切换下一线路..."
             rm -f "$OUTPUT"
 
         done <"$SMARTDNS_ROUTE_FILE"
     fi
 
-    # ========================================================
-    # 官方直连兜底
-    # ========================================================
+    _sd_info "正在尝试 GitHub 官方直连..."
 
     if curl -4 \
         -L \
         -f \
-        -sS \
         --connect-timeout 10 \
         --max-time 300 \
         --retry 1 \
         --retry-delay 1 \
         -o "$OUTPUT" \
-        "$ORIGINAL" \
-        >>"$SMARTDNS_LOG" 2>&1
+        "$ORIGINAL"
     then
-        [ -s "$OUTPUT" ] &&
+        if [ -s "$OUTPUT" ]; then
+            _sd_ok "$LABEL 下载完成（DIRECT）"
             return 0
+        fi
     fi
 
     rm -f "$OUTPUT"
@@ -939,54 +733,35 @@ smartdns_download_file()
     return 1
 }
 
-
-# ============================================================
-# 软件包检测
-# ============================================================
-
 smartdns_package_installed()
 {
     case "$SMARTDNS_PKG_MANAGER" in
-
         opkg)
             opkg status "$1" 2>/dev/null |
                 grep -q 'Status:.*installed'
             ;;
-
         apk)
             apk info -e "$1" >/dev/null 2>&1
             ;;
-
         *)
             return 1
             ;;
-
     esac
 }
-
-
-# ============================================================
-# 安装 SmartDNS
-# ============================================================
 
 smartdns_install_main()
 {
     RC=1
 
+    _sd_info "正在安装 SmartDNS 主程序..."
+
     case "$SMARTDNS_PKG_MANAGER" in
-
         opkg)
-
-            cp \
-                "$SMARTDNS_MAIN_FILE" \
-                /tmp/smartdns.ipk \
-                >>"$SMARTDNS_LOG" 2>&1 ||
-                return 1
+            cp "$SMARTDNS_MAIN_FILE" /tmp/smartdns.ipk || return 1
 
             opkg install \
                 --force-downgrade \
-                /tmp/smartdns.ipk \
-                >>"$SMARTDNS_LOG" 2>&1
+                /tmp/smartdns.ipk
 
             RC=$?
 
@@ -994,49 +769,40 @@ smartdns_install_main()
             ;;
 
         apk)
-
             apk add \
                 --allow-untrusted \
-                "$SMARTDNS_MAIN_FILE" \
-                >>"$SMARTDNS_LOG" 2>&1
+                "$SMARTDNS_MAIN_FILE"
 
             RC=$?
             ;;
-
     esac
 
     if [ "$RC" -ne 0 ] &&
-       ! smartdns_package_installed smartdns
-    then
+       ! smartdns_package_installed smartdns; then
         return 1
     fi
 
-    smartdns_package_installed smartdns
+    if smartdns_package_installed smartdns; then
+        _sd_ok "SmartDNS 主程序安装完成"
+        return 0
+    fi
+
+    return 1
 }
-
-
-# ============================================================
-# 安装 LuCI
-# ============================================================
 
 smartdns_install_luci()
 {
     RC=1
 
+    _sd_info "正在安装 SmartDNS LuCI..."
+
     case "$SMARTDNS_PKG_MANAGER" in
-
         opkg)
-
-            cp \
-                "$SMARTDNS_LUCI_FILE" \
-                /tmp/smartdns_luci.ipk \
-                >>"$SMARTDNS_LOG" 2>&1 ||
-                return 1
+            cp "$SMARTDNS_LUCI_FILE" /tmp/smartdns_luci.ipk || return 1
 
             opkg install \
                 --force-downgrade \
-                /tmp/smartdns_luci.ipk \
-                >>"$SMARTDNS_LOG" 2>&1
+                /tmp/smartdns_luci.ipk
 
             RC=$?
 
@@ -1044,116 +810,98 @@ smartdns_install_luci()
             ;;
 
         apk)
-
             apk add \
                 --allow-untrusted \
-                "$SMARTDNS_LUCI_FILE" \
-                >>"$SMARTDNS_LOG" 2>&1
+                "$SMARTDNS_LUCI_FILE"
 
             RC=$?
             ;;
-
     esac
 
     if [ "$RC" -ne 0 ] &&
-       ! smartdns_package_installed luci-app-smartdns
-    then
+       ! smartdns_package_installed luci-app-smartdns; then
         return 1
     fi
 
-    smartdns_package_installed luci-app-smartdns
+    if smartdns_package_installed luci-app-smartdns; then
+        _sd_ok "SmartDNS LuCI 安装完成"
+        return 0
+    fi
+
+    return 1
 }
-
-
-# ============================================================
-# 检测服务
-# ============================================================
 
 smartdns_detect_running()
 {
     SMARTDNS_WAS_RUNNING=0
 
     if [ -x /etc/init.d/smartdns ] &&
-       /etc/init.d/smartdns status >/dev/null 2>&1
-    then
+       /etc/init.d/smartdns status >/dev/null 2>&1; then
         SMARTDNS_WAS_RUNNING=1
     fi
 }
 
-
-# ============================================================
-# LuCI 刷新
-# ============================================================
-
 smartdns_refresh_luci()
 {
+    _sd_info "正在刷新 LuCI..."
+
     rm -rf \
         /tmp/luci-indexcache \
         /tmp/luci-modulecache \
         /tmp/luci-*cache* \
         >/dev/null 2>&1
 
-    if [ -x /etc/init.d/rpcd ]
-    then
-        /etc/init.d/rpcd restart \
-            >>"$SMARTDNS_LOG" 2>&1
+    if [ -x /etc/init.d/rpcd ]; then
+        _sd_info "正在重启 rpcd..."
+        /etc/init.d/rpcd restart
     fi
 
-    if [ -x /etc/init.d/uhttpd ]
-    then
-        /etc/init.d/uhttpd reload \
-            >>"$SMARTDNS_LOG" 2>&1
+    if [ -x /etc/init.d/uhttpd ]; then
+        _sd_info "正在刷新 uhttpd..."
+        /etc/init.d/uhttpd reload
     fi
+
+    _sd_ok "LuCI 刷新完成"
 }
-
-
-# ============================================================
-# 最终验证
-# ============================================================
 
 smartdns_verify()
 {
-    smartdns_package_installed smartdns ||
-        return 1
+    _sd_info "正在验证 SmartDNS 安装结果..."
 
-    smartdns_package_installed luci-app-smartdns ||
+    smartdns_package_installed smartdns || {
+        _sd_error "未检测到 smartdns 软件包"
         return 1
+    }
 
-    command -v smartdns >/dev/null 2>&1 ||
+    smartdns_package_installed luci-app-smartdns || {
+        _sd_error "未检测到 luci-app-smartdns 软件包"
         return 1
+    }
 
-    [ -x /etc/init.d/smartdns ] ||
+    command -v smartdns >/dev/null 2>&1 || {
+        _sd_error "未检测到 smartdns 可执行文件"
         return 1
+    }
+
+    [ -x /etc/init.d/smartdns ] || {
+        _sd_error "未检测到 SmartDNS 服务脚本"
+        return 1
+    }
+
+    _sd_ok "SmartDNS 安装验证通过"
 
     return 0
 }
 
-
-# ============================================================
-# 主安装函数
-# ============================================================
-
 install_smartdns()
 {
     printf '\n'
-
-    printf '%b\n' \
-        '\033[1;94m╔══════════════════════════════════════╗\033[0m'
-
-    printf '%b\n' \
-        '\033[1;94m║\033[1;92m        SmartDNS 一键安装             \033[1;94m║\033[0m'
-
-    printf '%b\n' \
-        '\033[1;94m╚══════════════════════════════════════╝\033[0m'
-
+    printf '%b\n' '\033[1;94m╔══════════════════════════════════════╗\033[0m'
+    printf '%b\n' '\033[1;94m║\033[1;92m        SmartDNS 一键安装             \033[1;94m║\033[0m'
+    printf '%b\n' '\033[1;94m╚══════════════════════════════════════╝\033[0m'
     printf '\n'
 
-    # ========================================================
-    # ROOT
-    # ========================================================
-
-    if [ "$(id -u 2>/dev/null)" != "0" ]
-    then
+    if [ "$(id -u 2>/dev/null)" != "0" ]; then
         _sd_error "请使用 root 用户运行"
         return 1
     fi
@@ -1169,11 +917,7 @@ install_smartdns()
 
     trap 'smartdns_interrupt' INT TERM
 
-    # ========================================================
-    # 环境
-    # ========================================================
-
-    smartdns_progress 5
+    _sd_info "开始检测运行环境..."
 
     if ! smartdns_check_runtime ||
        ! smartdns_detect_system ||
@@ -1181,48 +925,31 @@ install_smartdns()
        ! smartdns_detect_arch ||
        ! smartdns_check_space
     then
-        printf '\n'
         smartdns_show_log
         smartdns_cleanup
         trap - INT TERM
         return 1
     fi
 
-    # ========================================================
-    # Release
-    # ========================================================
+    _sd_ok "运行环境检测完成"
+    printf '\n'
 
-    smartdns_progress 15
-
-    if ! smartdns_get_release
-    then
-        printf '\n'
+    if ! smartdns_get_release; then
         smartdns_show_log
         smartdns_cleanup
         trap - INT TERM
         return 1
     fi
 
-    # ========================================================
-    # 测速
-    # ========================================================
+    printf '\n'
 
-    smartdns_progress 25
-
-    smartdns_prepare_routes "$SMARTDNS_MAIN_URL" ||
-        true
-
-    # ========================================================
-    # 下载主程序
-    # ========================================================
-
-    smartdns_progress 35
+    smartdns_prepare_routes "$SMARTDNS_MAIN_URL" || true
 
     if ! smartdns_download_file \
         "$SMARTDNS_MAIN_URL" \
-        "$SMARTDNS_MAIN_FILE"
+        "$SMARTDNS_MAIN_FILE" \
+        "SmartDNS 主程序"
     then
-        printf '\n'
         _sd_error "SmartDNS 主程序下载失败"
         smartdns_show_log
         smartdns_cleanup
@@ -1230,17 +957,13 @@ install_smartdns()
         return 1
     fi
 
-    # ========================================================
-    # 下载 LuCI
-    # ========================================================
-
-    smartdns_progress 50
+    printf '\n'
 
     if ! smartdns_download_file \
         "$SMARTDNS_LUCI_URL" \
-        "$SMARTDNS_LUCI_FILE"
+        "$SMARTDNS_LUCI_FILE" \
+        "SmartDNS LuCI"
     then
-        printf '\n'
         _sd_error "SmartDNS LuCI 下载失败"
         smartdns_show_log
         smartdns_cleanup
@@ -1248,34 +971,25 @@ install_smartdns()
         return 1
     fi
 
-    # ========================================================
-    # 停止旧服务
-    # ========================================================
+    printf '\n'
 
     smartdns_detect_running
 
-    if [ -x /etc/init.d/smartdns ]
-    then
-        /etc/init.d/smartdns stop \
-            >/dev/null 2>&1
+    if [ -x /etc/init.d/smartdns ]; then
+        _sd_info "正在停止现有 SmartDNS 服务..."
+        /etc/init.d/smartdns stop
     fi
 
-    # ========================================================
-    # 安装主程序
-    # ========================================================
+    printf '\n'
 
-    smartdns_progress 65
-
-    if ! smartdns_install_main
-    then
-        printf '\n'
+    if ! smartdns_install_main; then
         _sd_error "SmartDNS 主程序安装失败"
         smartdns_show_log
 
         if [ "$SMARTDNS_WAS_RUNNING" -eq 1 ] &&
-           [ -x /etc/init.d/smartdns ]
-        then
-            /etc/init.d/smartdns start >/dev/null 2>&1
+           [ -x /etc/init.d/smartdns ]; then
+            _sd_info "正在恢复原 SmartDNS 服务..."
+            /etc/init.d/smartdns start
         fi
 
         smartdns_cleanup
@@ -1283,15 +997,9 @@ install_smartdns()
         return 1
     fi
 
-    # ========================================================
-    # 安装 LuCI
-    # ========================================================
+    printf '\n'
 
-    smartdns_progress 80
-
-    if ! smartdns_install_luci
-    then
-        printf '\n'
+    if ! smartdns_install_luci; then
         _sd_error "SmartDNS LuCI 安装失败"
         smartdns_show_log
         smartdns_cleanup
@@ -1299,66 +1007,55 @@ install_smartdns()
         return 1
     fi
 
-    # ========================================================
-    # 刷新 LuCI
-    # ========================================================
-
-    smartdns_progress 90
+    printf '\n'
 
     smartdns_refresh_luci
 
-    # ========================================================
-    # 启用 SmartDNS
-    #
-    # 不修改 DNS 53
-    # 不修改 dnsmasq
-    # 不修改 ADG
-    # 不修改 MosDNS
-    # 不修改 OpenClash
-    # ========================================================
+    if [ -x /etc/init.d/smartdns ]; then
+        _sd_info "正在启用 SmartDNS 开机启动..."
+        /etc/init.d/smartdns enable
 
-    if [ -x /etc/init.d/smartdns ]
-    then
-        /etc/init.d/smartdns enable \
-            >/dev/null 2>&1
+        _sd_info "正在重启 SmartDNS..."
+        /etc/init.d/smartdns restart
+        RESTART_RESULT=$?
 
-        /etc/init.d/smartdns restart \
-            >>"$SMARTDNS_LOG" 2>&1 ||
-            true
+        if [ "$RESTART_RESULT" -eq 0 ]; then
+            _sd_ok "SmartDNS 服务重启成功"
+        else
+            _sd_warn "SmartDNS 服务重启返回异常，继续执行安装验证"
+        fi
     fi
 
-    # ========================================================
-    # 验证
-    # ========================================================
+    printf '\n'
 
-    smartdns_progress 97
-
-    if ! smartdns_verify
-    then
-        printf '\n'
-        _sd_error "SmartDNS 最终验证失败"
+    if ! smartdns_verify; then
         smartdns_show_log
         smartdns_cleanup
         trap - INT TERM
         return 1
     fi
 
-    # ========================================================
-    # 完成
-    # ========================================================
+    printf '\n'
 
-    smartdns_progress 100
+    if command -v smartdns >/dev/null 2>&1; then
+        INSTALLED_VERSION="$(
+            smartdns -V 2>/dev/null |
+            head -n 1
+        )"
 
-    printf '\n\n'
+        [ -n "$INSTALLED_VERSION" ] &&
+            _sd_info "Installed Version : $INSTALLED_VERSION"
+    fi
 
     smartdns_cleanup
-    rm -f "$SMARTDNS_LOG" 2>/dev/null
 
     trap - INT TERM
 
     _sd_ok "SmartDNS 安装完成"
+    _sd_info "安装日志保留在：$SMARTDNS_LOG"
 
     printf '\n'
 
     return 0
 }
+
