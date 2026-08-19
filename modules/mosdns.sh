@@ -547,10 +547,10 @@ check_mosdns_package_installed() {
 # MosDNS 6 组件总进度条
 # ============================================================
 
-mosdns_install_progress() {
+mosdns_install_progress()
+{
     CURRENT="$1"
     TOTAL="$2"
-    PACKAGE_NAME="$3"
 
     WIDTH=30
 
@@ -575,12 +575,11 @@ mosdns_install_progress() {
         I=$((I + 1))
     done
 
-    printf '\r\033[2K\033[1;92m[INFO]\033[0m 总体进度: [\033[1;92m%s\033[0m] %3d%% (%d/%d)  当前: %s' \
+    printf '\r\033[2K\033[1;92m[INFO]\033[0m 总体进度: [\033[1;92m%s\033[0m] %3d%% (%d/%d)\033[K' \
         "$BAR" \
         "$PERCENT" \
         "$CURRENT" \
-        "$TOTAL" \
-        "$PACKAGE_NAME"
+        "$TOTAL"
 }
 
 install_single_mosdns_package() {
@@ -674,7 +673,7 @@ install_mosdns_packages() {
     _mos_info "正在安装 MosDNS 组件（共 6 个）..."
     printf '\n'
 
-    mosdns_install_progress "$CURRENT" "$TOTAL" "v2dat"
+    mosdns_install_progress "$CURRENT" "$TOTAL"
 
     install_single_mosdns_package \
         v2dat \
@@ -683,7 +682,7 @@ install_mosdns_packages() {
         "$TOTAL" || return 1
 
     CURRENT=1
-    mosdns_install_progress "$CURRENT" "$TOTAL" "v2ray-geoip"
+    mosdns_install_progress "$CURRENT" "$TOTAL"
 
     install_single_mosdns_package \
         v2ray-geoip \
@@ -692,7 +691,7 @@ install_mosdns_packages() {
         "$TOTAL" || return 1
 
     CURRENT=2
-    mosdns_install_progress "$CURRENT" "$TOTAL" "v2ray-geosite"
+    mosdns_install_progress "$CURRENT" "$TOTAL"
 
     install_single_mosdns_package \
         v2ray-geosite \
@@ -701,7 +700,7 @@ install_mosdns_packages() {
         "$TOTAL" || return 1
 
     CURRENT=3
-    mosdns_install_progress "$CURRENT" "$TOTAL" "mosdns"
+    mosdns_install_progress "$CURRENT" "$TOTAL"
 
     install_single_mosdns_package \
         mosdns \
@@ -710,7 +709,7 @@ install_mosdns_packages() {
         "$TOTAL" || return 1
 
     CURRENT=4
-    mosdns_install_progress "$CURRENT" "$TOTAL" "luci-app-mosdns"
+    mosdns_install_progress "$CURRENT" "$TOTAL"
 
     install_single_mosdns_package \
         luci-app-mosdns \
@@ -719,7 +718,7 @@ install_mosdns_packages() {
         "$TOTAL" || return 1
 
     CURRENT=5
-    mosdns_install_progress "$CURRENT" "$TOTAL" "luci-i18n-mosdns-zh-cn"
+    mosdns_install_progress "$CURRENT" "$TOTAL"
 
     install_single_mosdns_package \
         luci-i18n-mosdns-zh-cn \
@@ -728,7 +727,7 @@ install_mosdns_packages() {
         "$TOTAL" || return 1
 
     CURRENT=6
-    mosdns_install_progress "$CURRENT" "$TOTAL" "完成"
+    mosdns_install_progress "$CURRENT" "$TOTAL"
 
     printf '\n'
     _mos_ok "MosDNS 6 个组件安装完成"
