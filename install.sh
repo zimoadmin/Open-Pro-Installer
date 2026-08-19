@@ -522,6 +522,10 @@ proxy_menu()
         ;;
 
 
+        # ====================================================
+        # 输入错误
+        # ====================================================
+
         *)
 
             printf "%b\n" \
@@ -554,6 +558,7 @@ other_tools_menu()
         printf "%b\n" "${BLUE}║${GREEN}              其他工具                ${BLUE}║${RESET}"
         printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
         printf "%b\n" "${BLUE}║${CYAN}  [1] 安装 MosDNS                     ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [2] 安装 SmartDNS                   ${BLUE}║${RESET}"
         printf "%b\n" "${BLUE}║${CYAN}  [0] 返回主菜单                      ${BLUE}║${RESET}"
         printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
@@ -607,6 +612,54 @@ other_tools_menu()
 
                 printf "%b\n" \
                     "${YELLOW}缺少：modules/mosdns.sh${RESET}"
+
+            fi
+
+
+            pause
+
+        ;;
+
+
+        # ====================================================
+        # 2. SmartDNS
+        # ====================================================
+
+        2)
+
+            clear
+
+            printf "\n"
+
+            printf "%b\n" \
+                "${GREEN}===== SmartDNS =====${RESET}"
+
+            printf "\n"
+
+
+            if [ -f "$SCRIPT_DIR/modules/smartdns.sh" ]; then
+
+                . "$SCRIPT_DIR/modules/smartdns.sh"
+
+
+                if command -v install_smartdns >/dev/null 2>&1; then
+
+                    install_smartdns
+
+                else
+
+                    printf "%b\n" \
+                        "${RED}SmartDNS模块缺少 install_smartdns()${RESET}"
+
+                fi
+
+            else
+
+                printf "%b\n" \
+                    "${RED}SmartDNS模块不存在${RESET}"
+
+                printf "%b\n" \
+                    "${YELLOW}缺少：modules/smartdns.sh${RESET}"
 
             fi
 
