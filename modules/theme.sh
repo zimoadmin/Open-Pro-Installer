@@ -8,8 +8,9 @@
 # 1. 自动检测 OpenWrt / 设备 / CPU / OPKG 精确架构
 # 2. Argon 使用 jerrykuku 官方 GitHub Release
 # 3. GitHub API 永远 DIRECT，不经过 GH01-GH06
-# 4. 自动读取 latest Release，自动匹配真实 IPK Asset
-# 5. Argon Release 文件使用 GH01-GH06 + DIRECT 并行测速
+# 4. API 403/限流时自动改用普通 GitHub Release 页面
+# 5. 自动读取 latest Release，自动匹配真实 IPK Asset
+# 6. Argon Release 文件使用 GH01-GH06 + DIRECT 并行测速
 # 6. 最快线路失败后自动切换下一线路
 # 7. 自动安装 Argon Theme / Argon Config / 可选中文包
 # 8. 自动设置 Argon 为默认 LuCI 主题
@@ -46,6 +47,8 @@ THEME_LOG="/tmp/openpro-theme.log"
 ARGON_RELEASE_API="https://api.github.com/repos/jerrykuku/luci-theme-argon/releases/latest"
 ARGON_RELEASE_JSON="${THEME_TMP}/argon_release.json"
 ARGON_ASSET_LIST="${THEME_TMP}/argon_assets.list"
+ARGON_RELEASE_HEADERS="${THEME_TMP}/argon_release_headers.txt"
+ARGON_EXPANDED_ASSETS="${THEME_TMP}/argon_expanded_assets.html"
 
 ARGON_RELEASE_TAG=""
 ARGON_THEME_URL=""
@@ -417,59 +420,194 @@ get_package_version()
 
 fetch_argon_release()
 {
-    rm -f "$ARGON_RELEASE_JSON" "$ARGON_ASSET_LIST"
+    rm -f \
+        "$ARGON_RELEASE_JSON" \
+        "$ARGON_ASSET_LIST" \
+        "$ARGON_RELEASE_HEADERS" \
+        "$ARGON_EXPANDED_ASSETS"
+
+    ARGON_RELEASE_TAG=""
+    ARGON_THEME_URL=""
+    ARGON_CONFIG_URL=""
+    ARGON_LANG_URL=""
+
+    # ========================================================
+    # 第一层：GitHub API DIRECT
+    # ========================================================
 
     _theme_info "正在直连 GitHub API 获取 Argon 最新版本..."
 
-    if ! download_direct \
+    if download_direct \
         "$ARGON_RELEASE_API" \
         "$ARGON_RELEASE_JSON"
     then
-        _theme_error "Argon 官方 GitHub API 获取失败"
-        return 1
-    fi
 
-    # 优先 jsonfilter，老系统没有时使用 sed 兜底。
-    if command -v jsonfilter >/dev/null 2>&1; then
+        if command -v jsonfilter >/dev/null 2>&1; then
 
-        ARGON_RELEASE_TAG="$(
+            ARGON_RELEASE_TAG="$(
+                jsonfilter \
+                    -i "$ARGON_RELEASE_JSON" \
+                    -e '@.tag_name' \
+                    2>/dev/null
+            )"
+
             jsonfilter \
                 -i "$ARGON_RELEASE_JSON" \
-                -e '@.tag_name' \
-                2>/dev/null
-        )"
+                -e '@.assets[*].browser_download_url' \
+                2>/dev/null \
+                > "$ARGON_ASSET_LIST"
 
-        jsonfilter \
-            -i "$ARGON_RELEASE_JSON" \
-            -e '@.assets[*].browser_download_url' \
-            2>/dev/null \
-            > "$ARGON_ASSET_LIST"
+        else
+
+            ARGON_RELEASE_TAG="$(
+                tr ',' '\n' < "$ARGON_RELEASE_JSON" |
+                sed -n \
+                    's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' |
+                head -n 1
+            )"
+
+            tr ',' '\n' < "$ARGON_RELEASE_JSON" |
+                sed -n \
+                    's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p' \
+                > "$ARGON_ASSET_LIST"
+
+        fi
+
+        if [ -n "$ARGON_RELEASE_TAG" ] &&
+           [ -s "$ARGON_ASSET_LIST" ]
+        then
+            _theme_ok "GitHub API 获取成功"
+        else
+            _theme_warn "GitHub API 返回内容解析失败，切换普通 Release 页面..."
+            ARGON_RELEASE_TAG=""
+            rm -f "$ARGON_ASSET_LIST"
+        fi
 
     else
 
-        ARGON_RELEASE_TAG="$(
-            tr ',' '\n' < "$ARGON_RELEASE_JSON" |
-            sed -n \
-                's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' |
-            head -n 1
-        )"
-
-        tr ',' '\n' < "$ARGON_RELEASE_JSON" |
-            sed -n \
-                's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p' \
-            > "$ARGON_ASSET_LIST"
+        _theme_warn "GitHub API 不可用或触发限流，切换普通 Release 页面..."
 
     fi
 
-    [ -n "$ARGON_RELEASE_TAG" ] || {
-        _theme_error "无法解析 Argon Release 版本"
-        return 1
-    }
 
-    [ -s "$ARGON_ASSET_LIST" ] || {
-        _theme_error "无法解析 Argon Release Assets"
-        return 1
-    }
+    # ========================================================
+    # 第二层：不用 GitHub API
+    #
+    # 1. 普通 releases/latest 自动跳转到最新 tag
+    # 2. expanded_assets 页面获取真实 Asset 下载地址
+    #
+    # 这个流程不消耗 GitHub REST API 60次/小时额度。
+    # ========================================================
+
+    if [ -z "$ARGON_RELEASE_TAG" ] ||
+       [ ! -s "$ARGON_ASSET_LIST" ]
+    then
+
+        LATEST_PAGE="https://github.com/jerrykuku/luci-theme-argon/releases/latest"
+
+        if command -v curl >/dev/null 2>&1; then
+
+            EFFECTIVE_URL="$(
+                curl \
+                    -4 \
+                    -L \
+                    -sS \
+                    --connect-timeout 10 \
+                    --max-time 30 \
+                    -o /dev/null \
+                    -w '%{url_effective}' \
+                    "$LATEST_PAGE" \
+                    2>>"$THEME_LOG"
+            )"
+
+            CURL_RESULT=$?
+
+        else
+
+            # wget 兜底：从响应 Location 中提取 tag
+            rm -f "$ARGON_RELEASE_HEADERS"
+
+            wget \
+                -S \
+                --spider \
+                -T 30 \
+                "$LATEST_PAGE" \
+                2> "$ARGON_RELEASE_HEADERS"
+
+            CURL_RESULT=$?
+
+            EFFECTIVE_URL="$(
+                sed -n \
+                    's/^[[:space:]]*Location:[[:space:]]*//Ip' \
+                    "$ARGON_RELEASE_HEADERS" |
+                tail -n 1 |
+                tr -d '\r'
+            )"
+
+        fi
+
+        if [ "$CURL_RESULT" -ne 0 ] ||
+           [ -z "$EFFECTIVE_URL" ]
+        then
+            _theme_error "普通 GitHub Release 页面也无法访问"
+            return 1
+        fi
+
+        ARGON_RELEASE_TAG="$(
+            printf '%s\n' "$EFFECTIVE_URL" |
+            sed -n 's#^.*/releases/tag/\([^/?#]*\).*$#\1#p'
+        )"
+
+        if [ -z "$ARGON_RELEASE_TAG" ]; then
+            _theme_error "无法从 GitHub Release 跳转地址解析最新版本"
+            return 1
+        fi
+
+        _theme_ok "已从普通 Release 页面识别版本：$ARGON_RELEASE_TAG"
+
+        EXPANDED_URL="https://github.com/jerrykuku/luci-theme-argon/releases/expanded_assets/${ARGON_RELEASE_TAG}"
+
+        if ! download_direct \
+            "$EXPANDED_URL" \
+            "$ARGON_EXPANDED_ASSETS"
+        then
+            _theme_error "无法读取 GitHub Release Asset 页面"
+            return 1
+        fi
+
+        # expanded_assets 返回 HTML；提取其中所有官方 releases/download 链接。
+        grep -o \
+            '/jerrykuku/luci-theme-argon/releases/download/[^"]*' \
+            "$ARGON_EXPANDED_ASSETS" \
+            2>/dev/null |
+            sed 's/&amp;/\&/g' |
+            while IFS= read -r ASSET_PATH
+            do
+                printf 'https://github.com%s\n' "$ASSET_PATH"
+            done \
+            > "$ARGON_ASSET_LIST"
+
+        # 某些页面属性使用单引号/其它分隔格式，再做一次 href 兜底。
+        if [ ! -s "$ARGON_ASSET_LIST" ]; then
+
+            sed -n \
+                's#.*href="\(/jerrykuku/luci-theme-argon/releases/download/[^"]*\)".*#https://github.com\1#p' \
+                "$ARGON_EXPANDED_ASSETS" \
+                > "$ARGON_ASSET_LIST"
+
+        fi
+
+        if [ ! -s "$ARGON_ASSET_LIST" ]; then
+            _theme_error "普通 Release 页面中没有解析到 Argon Asset"
+            return 1
+        fi
+
+    fi
+
+
+    # ========================================================
+    # 真实 IPK 匹配
+    # ========================================================
 
     ARGON_THEME_URL="$(
         grep '/luci-theme-argon_[^/]*\.ipk$' \
@@ -490,12 +628,12 @@ fetch_argon_release()
     )"
 
     [ -n "$ARGON_THEME_URL" ] || {
-        _theme_error "官方 Release 中未找到 luci-theme-argon IPK"
+        _theme_error "Release 中未找到 luci-theme-argon IPK"
         return 1
     }
 
     [ -n "$ARGON_CONFIG_URL" ] || {
-        _theme_error "官方 Release 中未找到 luci-app-argon-config IPK"
+        _theme_error "Release 中未找到 luci-app-argon-config IPK"
         return 1
     }
 
@@ -944,6 +1082,7 @@ install_argon_official()
     fi
 
     theme_progress 28 "正在下载官方 Argon..."
+    printf "\n"
 
     if ! smart_download_release \
         "$ARGON_THEME_URL" \
@@ -955,6 +1094,7 @@ install_argon_official()
     fi
 
     theme_progress 42 "正在下载 Argon Config..."
+    printf "\n"
 
     if ! smart_download_release \
         "$ARGON_CONFIG_URL" \
@@ -970,6 +1110,7 @@ install_argon_official()
     if [ -n "$ARGON_LANG_URL" ]; then
 
         theme_progress 50 "正在下载 Argon 中文包..."
+        printf "\n"
 
         if ! smart_download_release \
             "$ARGON_LANG_URL" \
@@ -1343,6 +1484,7 @@ install_theme()
     # ========================================================
 
     theme_progress 15 "正在获取 Argon Release..."
+    printf "\n"
 
     if ! install_argon_official; then
 
