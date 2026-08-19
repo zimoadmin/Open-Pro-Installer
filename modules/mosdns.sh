@@ -484,12 +484,13 @@ case "$1" in
                     exit 0
                 fi
                 : > /var/log/mosdns_update.log 2>/dev/null
-                if [ -x /usr/share/mosdns/mosdns.uc ]; then
-                    /usr/share/mosdns/mosdns.uc update > /var/log/mosdns_update.log 2>&1 </dev/null &
-                    printf '%s\n' '{"success":true}'
-                elif command -v ucode >/dev/null 2>&1 && [ -f /usr/share/mosdns/mosdns.uc ]; then
-                    ucode /usr/share/mosdns/mosdns.uc update > /var/log/mosdns_update.log 2>&1 </dev/null &
-                    printf '%s\n' '{"success":true}'
+                if [ -f /usr/share/mosdns/mosdns.uc ]; then
+                    if command -v ucode >/dev/null 2>&1; then
+                        ucode /usr/share/mosdns/mosdns.uc update > /var/log/mosdns_update.log 2>&1 </dev/null &
+                        printf '%s\n' '{"success":true}'
+                    else
+                        printf '%s\n' '{"success":false,"error":"ucode not found"}'
+                    fi
                 else
                     json_reply_error "mosdns.uc not found."
                 fi
@@ -530,12 +531,23 @@ ensure_mosdns_rpc() {
     /etc/init.d/rpcd restart >/dev/null 2>&1
     sleep 2
 
-    if rpc_mosdns_exists; then
+    # 检测新版 ucode RPC 是否真的可运行
+    UCODE_RPC_OK=0
+    if [ -f /usr/share/rpcd/ucode/luci.mosdns ]; then
+        if ucode /usr/share/rpcd/ucode/luci.mosdns >/tmp/mosdns_ucode_test.log 2>&1; then
+            UCODE_RPC_OK=1
+        fi
+    fi
+
+    if rpc_mosdns_exists && [ "$UCODE_RPC_OK" -eq 1 ]; then
         _mos_ok "MosDNS RPC 原生注册成功"
         return 0
     fi
 
-    _mos_warn "当前 rpcd 未加载官方 ucode RPC，正在启用兼容模式..."
+    _mos_warn "检测到旧版 rpcd 或 ucode 模块不完整，切换兼容模式..."
+
+    # 删除不兼容的新版 ucode RPC，避免旧系统反复加载报错
+    rm -f /usr/share/rpcd/ucode/luci.mosdns 2>/dev/null
 
     if ! write_mosdns_rpc_compat; then
         _mos_error "MosDNS RPC 兼容桥创建失败"
