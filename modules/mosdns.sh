@@ -21,6 +21,7 @@
 # 14. ucode 模块缺失时阻止数据库更新假启动/无限转圈
 # 15. GitHub API 失败时自动改用普通 Release 页面
 # 16. 自动验证 RPC start_update / get_update_log 方法
+# 17. 正常环境检测信息静默显示，仅保留必要提示
 #
 # BusyBox / OpenWrt /bin/sh Compatible
 # ============================================================
@@ -122,17 +123,19 @@ check_mosdns_runtime() {
 }
 
 detect_mosdns_openwrt() {
-    [ -f /etc/openwrt_release ] || { _mos_error "当前系统不是受支持的 OpenWrt"; return 1; }
+    [ -f /etc/openwrt_release ] || {
+        _mos_error "当前系统不是受支持的 OpenWrt"
+        return 1
+    }
+
     . /etc/openwrt_release
-    _mos_info "OpenWrt Version : ${DISTRIB_RELEASE:-unknown}"
-    _mos_info "OpenWrt Target  : ${DISTRIB_TARGET:-unknown}"
+
     return 0
 }
 
 detect_mosdns_cpu() {
     MOSDNS_CPU_ARCH="$(uname -m 2>/dev/null)"
     [ -n "$MOSDNS_CPU_ARCH" ] || MOSDNS_CPU_ARCH="unknown"
-    _mos_info "CPU Architecture : $MOSDNS_CPU_ARCH"
 }
 
 detect_mosdns_package_manager() {
@@ -148,9 +151,8 @@ detect_mosdns_package_manager() {
         _mos_error "没有检测到 APK / OPKG 包管理器"
         return 1
     fi
-    _mos_info "Package Manager  : $MOSDNS_PKG_MANAGER"
-    _mos_info "Package Format   : $MOSDNS_PKG_EXT"
-    _mos_info "MosDNS SDK       : $MOSDNS_SDK"
+
+    return 0
 }
 
 normalize_mosdns_arch() {
@@ -175,13 +177,6 @@ normalize_mosdns_arch() {
         *)
             ;;
     esac
-
-    if [ "$MOSDNS_ARCH_RAW" != "$MOSDNS_ARCH" ]; then
-        _mos_info "Package Arch Raw : $MOSDNS_ARCH_RAW"
-        _mos_info "Release Arch     : $MOSDNS_ARCH"
-    else
-        _mos_info "Package Arch     : $MOSDNS_ARCH"
-    fi
 }
 
 detect_mosdns_arch() {
@@ -215,13 +210,21 @@ detect_mosdns_arch() {
 
 check_mosdns_disk_space() {
     FREE_KB="$(df -k /usr 2>/dev/null | awk 'END{print $4}')"
-    case "$FREE_KB" in ''|*[!0-9]*) FREE_KB=0;; esac
+
+    case "$FREE_KB" in
+        ''|*[!0-9]*)
+            FREE_KB=0
+            ;;
+    esac
+
     FREE_MB=$((FREE_KB / 1024))
-    _mos_info "可用空间        : ${FREE_MB} MB"
+
     if [ "$FREE_MB" -lt 35 ]; then
         _mos_error "可用存储空间不足，建议至少保留 35 MB"
         return 1
     fi
+
+    return 0
 }
 
 prepare_mosdns_download_info() {
@@ -236,7 +239,6 @@ prepare_mosdns_download_info() {
     EXPECTED_NAME="${MOSDNS_ARCH}-${MOSDNS_SDK}.tar.gz"
     MOSDNS_BASE_URL=""
 
-    _mos_info "正在获取 MosDNS 最新 Release 信息..."
 
     # ========================================================
     # 第一层：GitHub API DIRECT
@@ -366,14 +368,10 @@ prepare_mosdns_download_info() {
         _mos_warn "未解析到真实 Asset，尝试标准地址：$MOSDNS_ARCHIVE_NAME"
     else
         MOSDNS_ARCHIVE_NAME="$(basename "$MOSDNS_BASE_URL")"
-        _mos_ok "已匹配官方 Release Asset"
     fi
 
     MOSDNS_ARCHIVE_FILE="${MOSDNS_TMP_DIR}/${MOSDNS_ARCHIVE_NAME}"
 
-    _mos_info "Release Package  : $MOSDNS_ARCHIVE_NAME"
-    _mos_info "Release Arch     : $MOSDNS_ARCH"
-    _mos_info "Release SDK      : $MOSDNS_SDK"
 
     return 0
 }
@@ -534,12 +532,6 @@ locate_mosdns_packages() {
     [ "$MISSING" -eq 0 ] || { _mos_error "Release 压缩包缺少必要组件"; return 1; }
     _mos_ok "已识别全部 6 个 MosDNS 组件"
     printf '\n'
-    _mos_info "v2dat        : $(basename "$V2DAT_PKG")"
-    _mos_info "GeoIP        : $(basename "$V2RAY_GEOIP_PKG")"
-    _mos_info "GeoSite      : $(basename "$V2RAY_GEOSITE_PKG")"
-    _mos_info "MosDNS       : $(basename "$MOSDNS_MAIN_PKG")"
-    _mos_info "LuCI         : $(basename "$MOSDNS_LUCI_PKG")"
-    _mos_info "中文语言包   : $(basename "$MOSDNS_I18N_PKG")"
 }
 
 check_mosdns_package_installed() {
@@ -550,44 +542,200 @@ check_mosdns_package_installed() {
     esac
 }
 
+
+# ============================================================
+# MosDNS 6 组件总进度条
+# ============================================================
+
+mosdns_install_progress() {
+    CURRENT="$1"
+    TOTAL="$2"
+    PACKAGE_NAME="$3"
+
+    WIDTH=30
+
+    [ "$TOTAL" -gt 0 ] || TOTAL=1
+
+    PERCENT=$((CURRENT * 100 / TOTAL))
+    FILLED=$((PERCENT * WIDTH / 100))
+    EMPTY=$((WIDTH - FILLED))
+
+    BAR=""
+    I=0
+
+    while [ "$I" -lt "$FILLED" ]; do
+        BAR="${BAR}#"
+        I=$((I + 1))
+    done
+
+    I=0
+
+    while [ "$I" -lt "$EMPTY" ]; do
+        BAR="${BAR}-"
+        I=$((I + 1))
+    done
+
+    printf '\r\033[2K\033[1;92m[INFO]\033[0m 总体进度: [\033[1;92m%s\033[0m] %3d%% (%d/%d)  当前: %s' \
+        "$BAR" \
+        "$PERCENT" \
+        "$CURRENT" \
+        "$TOTAL" \
+        "$PACKAGE_NAME"
+}
+
 install_single_mosdns_package() {
-    PACKAGE_NAME="$1"; PACKAGE_FILE="$2"; INDEX="$3"; TOTAL="$4"; SAFE_PACKAGE_FILE=""
+    PACKAGE_NAME="$1"
+    PACKAGE_FILE="$2"
+    INDEX="$3"
+    TOTAL="$4"
+    SAFE_PACKAGE_FILE=""
+
     rm -f "$MOSDNS_INSTALL_LOG"
-    printf '\n'; _mos_info "[$INDEX/$TOTAL] 正在安装：$PACKAGE_NAME"
-    [ -f "$PACKAGE_FILE" ] || { _mos_error "安装文件不存在：$PACKAGE_NAME"; return 1; }
+
+    [ -f "$PACKAGE_FILE" ] || {
+        printf '\n'
+        _mos_error "安装文件不存在：$PACKAGE_NAME"
+        return 1
+    }
+
     case "$MOSDNS_PKG_MANAGER" in
         apk)
-            apk add --allow-untrusted "$PACKAGE_FILE" > "$MOSDNS_INSTALL_LOG" 2>&1
+            apk add \
+                --allow-untrusted \
+                "$PACKAGE_FILE" \
+                > "$MOSDNS_INSTALL_LOG" 2>&1
+
             RESULT=$?
             ;;
+
         opkg)
             SAFE_PACKAGE_FILE="/tmp/mos${INDEX}.ipk"
+
             rm -f "$SAFE_PACKAGE_FILE"
-            cp "$PACKAGE_FILE" "$SAFE_PACKAGE_FILE" >/dev/null 2>&1 || { _mos_error "无法创建 OPKG 临时安装文件"; return 1; }
-            [ -s "$SAFE_PACKAGE_FILE" ] || { rm -f "$SAFE_PACKAGE_FILE"; _mos_error "OPKG 临时安装文件无效"; return 1; }
-            opkg install --force-downgrade "$SAFE_PACKAGE_FILE" > "$MOSDNS_INSTALL_LOG" 2>&1
+
+            cp "$PACKAGE_FILE" "$SAFE_PACKAGE_FILE" \
+                >/dev/null 2>&1 || {
+                    printf '\n'
+                    _mos_error "无法创建 OPKG 临时安装文件"
+                    return 1
+                }
+
+            [ -s "$SAFE_PACKAGE_FILE" ] || {
+                rm -f "$SAFE_PACKAGE_FILE"
+                printf '\n'
+                _mos_error "OPKG 临时安装文件无效"
+                return 1
+            }
+
+            opkg install \
+                --force-downgrade \
+                "$SAFE_PACKAGE_FILE" \
+                > "$MOSDNS_INSTALL_LOG" 2>&1
+
             RESULT=$?
+
             rm -f "$SAFE_PACKAGE_FILE"
             ;;
-        *) _mos_error "未知包管理器：$MOSDNS_PKG_MANAGER"; return 1;;
+
+        *)
+            printf '\n'
+            _mos_error "未知包管理器：$MOSDNS_PKG_MANAGER"
+            return 1
+            ;;
     esac
+
     if [ "$RESULT" -ne 0 ]; then
+        printf '\n'
         _mos_error "$PACKAGE_NAME 安装失败"
-        [ -s "$MOSDNS_INSTALL_LOG" ] && { printf '\n========== %s INSTALL LOG ==========\n' "$PACKAGE_NAME"; cat "$MOSDNS_INSTALL_LOG"; printf '=====================================\n'; }
+
+        if [ -s "$MOSDNS_INSTALL_LOG" ]; then
+            printf '\n========== %s INSTALL LOG ==========\n' "$PACKAGE_NAME"
+            cat "$MOSDNS_INSTALL_LOG"
+            printf '=====================================\n'
+        fi
+
         return 1
     fi
-    check_mosdns_package_installed "$PACKAGE_NAME" || { _mos_error "$PACKAGE_NAME 安装后验证失败"; return 1; }
-    _mos_ok "$PACKAGE_NAME 安装成功"
+
+    if ! check_mosdns_package_installed "$PACKAGE_NAME"; then
+        printf '\n'
+        _mos_error "$PACKAGE_NAME 安装后验证失败"
+        return 1
+    fi
+
+    return 0
 }
 
 install_mosdns_packages() {
-    install_single_mosdns_package v2dat "$V2DAT_PKG" 1 6 || return 1
-    install_single_mosdns_package v2ray-geoip "$V2RAY_GEOIP_PKG" 2 6 || return 1
-    install_single_mosdns_package v2ray-geosite "$V2RAY_GEOSITE_PKG" 3 6 || return 1
-    install_single_mosdns_package mosdns "$MOSDNS_MAIN_PKG" 4 6 || return 1
-    install_single_mosdns_package luci-app-mosdns "$MOSDNS_LUCI_PKG" 5 6 || return 1
-    install_single_mosdns_package luci-i18n-mosdns-zh-cn "$MOSDNS_I18N_PKG" 6 6 || return 1
+    TOTAL=6
+    CURRENT=0
+
+    printf '\n'
+    _mos_info "正在安装 MosDNS 组件（共 6 个）..."
+    printf '\n'
+
+    mosdns_install_progress "$CURRENT" "$TOTAL" "v2dat"
+
+    install_single_mosdns_package \
+        v2dat \
+        "$V2DAT_PKG" \
+        1 \
+        "$TOTAL" || return 1
+
+    CURRENT=1
+    mosdns_install_progress "$CURRENT" "$TOTAL" "v2ray-geoip"
+
+    install_single_mosdns_package \
+        v2ray-geoip \
+        "$V2RAY_GEOIP_PKG" \
+        2 \
+        "$TOTAL" || return 1
+
+    CURRENT=2
+    mosdns_install_progress "$CURRENT" "$TOTAL" "v2ray-geosite"
+
+    install_single_mosdns_package \
+        v2ray-geosite \
+        "$V2RAY_GEOSITE_PKG" \
+        3 \
+        "$TOTAL" || return 1
+
+    CURRENT=3
+    mosdns_install_progress "$CURRENT" "$TOTAL" "mosdns"
+
+    install_single_mosdns_package \
+        mosdns \
+        "$MOSDNS_MAIN_PKG" \
+        4 \
+        "$TOTAL" || return 1
+
+    CURRENT=4
+    mosdns_install_progress "$CURRENT" "$TOTAL" "luci-app-mosdns"
+
+    install_single_mosdns_package \
+        luci-app-mosdns \
+        "$MOSDNS_LUCI_PKG" \
+        5 \
+        "$TOTAL" || return 1
+
+    CURRENT=5
+    mosdns_install_progress "$CURRENT" "$TOTAL" "luci-i18n-mosdns-zh-cn"
+
+    install_single_mosdns_package \
+        luci-i18n-mosdns-zh-cn \
+        "$MOSDNS_I18N_PKG" \
+        6 \
+        "$TOTAL" || return 1
+
+    CURRENT=6
+    mosdns_install_progress "$CURRENT" "$TOTAL" "完成"
+
+    printf '\n'
+    _mos_ok "MosDNS 6 个组件安装完成"
+
     cleanup_mosdns_safe_packages
+
+    return 0
 }
 
 detect_existing_mosdns_service() {
@@ -995,12 +1143,16 @@ install_mosdns() {
     printf '\n======================================\n          MosDNS Installer\n======================================\n\n'
 
     [ "$(id -u 2>/dev/null)" = "0" ] || { _mos_error "请使用 root 用户运行"; return 1; }
+    _mos_info "正在准备 MosDNS 安装环境..."
+
     check_mosdns_runtime || return 1
     detect_mosdns_openwrt || return 1
     detect_mosdns_cpu
     detect_mosdns_package_manager || return 1
     detect_mosdns_arch || return 1
     check_mosdns_disk_space || return 1
+
+    _mos_ok "环境检测完成"
 
     cleanup_mosdns_all
     mkdir -p "$MOSDNS_TMP_DIR" || return 1
@@ -1025,7 +1177,6 @@ install_mosdns() {
     detect_existing_mosdns_service
     stop_mosdns_service
 
-    printf '\n'; _mos_info "开始安装 MosDNS 组件..."
     if ! install_mosdns_packages; then
         _mos_error "MosDNS 组件安装失败"
         [ "$MOSDNS_WAS_RUNNING" -eq 1 ] && [ -x /etc/init.d/mosdns ] && /etc/init.d/mosdns start >/dev/null 2>&1
