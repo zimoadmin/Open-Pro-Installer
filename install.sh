@@ -3,6 +3,7 @@
 # ============================================================
 # Open-Pro-Installer
 # Main Installer
+# BusyBox / OpenWrt Compatible
 # ============================================================
 
 
@@ -31,13 +32,18 @@ clear
 
 # ============================================================
 # Color
+# 高亮 + 粗体
 # ============================================================
 
-GREEN="$(printf '\033[32m')"
-CYAN="$(printf '\033[36m')"
-BLUE="$(printf '\033[34m')"
-RED="$(printf '\033[31m')"
-YELLOW="$(printf '\033[33m')"
+BOLD="$(printf '\033[1m')"
+
+GREEN="$(printf '\033[1;92m')"
+CYAN="$(printf '\033[1;96m')"
+BLUE="$(printf '\033[1;94m')"
+RED="$(printf '\033[1;91m')"
+YELLOW="$(printf '\033[1;93m')"
+WHITE="$(printf '\033[1;97m')"
+
 RESET="$(printf '\033[0m')"
 
 
@@ -252,7 +258,8 @@ main_menu()
 
         0)
 
-            printf "%b\n" "${RED}Exit.${RESET}"
+            printf "%b\n" \
+                "${RED}Exit.${RESET}"
 
             exit 0
 
@@ -265,7 +272,8 @@ main_menu()
 
         *)
 
-            printf "%b\n" "${RED}输入错误${RESET}"
+            printf "%b\n" \
+                "${RED}输入错误${RESET}"
 
             sleep 1
 
@@ -303,7 +311,8 @@ proxy_menu()
 
         printf "\n"
 
-        printf "%b" "${YELLOW}选择序列 > ${RESET}"
+        printf "%b" \
+            "${YELLOW}选择序列 > ${RESET}"
 
         read PROXY_CHOOSE </dev/tty
 
@@ -316,6 +325,8 @@ proxy_menu()
         # ====================================================
 
         1)
+
+            printf "\n"
 
             printf "%b\n" \
                 "${GREEN}===== OpenClash =====${RESET}"
@@ -374,6 +385,8 @@ proxy_menu()
 
         2)
 
+            printf "\n"
+
             printf "%b\n" \
                 "${GREEN}===== SSR Plus+ =====${RESET}"
 
@@ -418,6 +431,8 @@ proxy_menu()
 
         3)
 
+            printf "\n"
+
             printf "%b\n" \
                 "${GREEN}===== PassWall =====${RESET}"
 
@@ -461,6 +476,8 @@ proxy_menu()
         # ====================================================
 
         4)
+
+            printf "\n"
 
             printf "%b\n" \
                 "${GREEN}===== PassWall2 =====${RESET}"
@@ -517,7 +534,8 @@ proxy_menu()
 
         *)
 
-            printf "%b\n" "${RED}输入错误${RESET}"
+            printf "%b\n" \
+                "${RED}输入错误${RESET}"
 
             sleep 1
 
