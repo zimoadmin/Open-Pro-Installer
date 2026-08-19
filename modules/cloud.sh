@@ -24,15 +24,18 @@
 
 
 # ============================================================
-# 颜色
+# 颜色 + 粗体
 # ============================================================
 
-GREEN="$(printf '\033[32m')"
-CYAN="$(printf '\033[36m')"
-BLUE="$(printf '\033[34m')"
-RED="$(printf '\033[31m')"
-YELLOW="$(printf '\033[33m')"
 BOLD="$(printf '\033[1m')"
+
+GREEN="$(printf '\033[1;32m')"
+CYAN="$(printf '\033[1;36m')"
+BLUE="$(printf '\033[1;34m')"
+RED="$(printf '\033[1;31m')"
+YELLOW="$(printf '\033[1;33m')"
+WHITE="$(printf '\033[1;37m')"
+
 RESET="$(printf '\033[0m')"
 
 
@@ -67,46 +70,34 @@ _cloud_pause()
 
 
 # ============================================================
-# INFO
+# 日志
 # ============================================================
 
 _cloud_info()
 {
     printf "%b\n" \
-        "${GREEN}[INFO]${RESET} $*"
+        "${GREEN}[INFO]${RESET} ${BOLD}$*${RESET}"
 }
 
-
-# ============================================================
-# OK
-# ============================================================
 
 _cloud_ok()
 {
     printf "%b\n" \
-        "${GREEN}[OK]${RESET} $*"
+        "${GREEN}[OK]${RESET} ${BOLD}$*${RESET}"
 }
 
-
-# ============================================================
-# WARN
-# ============================================================
 
 _cloud_warn()
 {
     printf "%b\n" \
-        "${YELLOW}[WARN]${RESET} $*"
+        "${YELLOW}[WARN] $*${RESET}"
 }
 
-
-# ============================================================
-# ERROR
-# ============================================================
 
 _cloud_error()
 {
     printf "%b\n" \
-        "${RED}[ERROR]${RESET} $*"
+        "${RED}[ERROR] $*${RESET}"
 }
 
 
@@ -168,24 +159,53 @@ check_cloud_environment()
 
 # ============================================================
 # 读取当前 Server
+#
+# 三种方式兼容不同 GL.iNet 固件
 # ============================================================
 
 get_cloud_server()
 {
+    CLOUD_SERVER=""
+
+
+    # ========================================================
+    # 方法 1
+    # ========================================================
+
     CLOUD_SERVER="$(
         uci -q get 'gl-cloud.@cloud[0].server' \
         2>/dev/null
     )"
 
 
-    # 某些固件可能不是匿名 section
+    # ========================================================
+    # 方法 2
+    # ========================================================
 
     if [ -z "$CLOUD_SERVER" ]; then
 
         CLOUD_SERVER="$(
             uci -q show gl-cloud 2>/dev/null |
+            grep '\.server=' |
+            head -n 1 |
+            cut -d= -f2- |
+            sed "s/^'//;s/'$//"
+        )"
+
+    fi
+
+
+    # ========================================================
+    # 方法 3
+    # ========================================================
+
+    if [ -z "$CLOUD_SERVER" ] &&
+       [ -f /etc/config/gl-cloud ]; then
+
+        CLOUD_SERVER="$(
             sed -n \
-                "s/^gl-cloud\..*\.server='\([^']*\)'.*/\1/p" |
+                "s/^[[:space:]]*option[[:space:]]*server[[:space:]]*['\"]\([^'\"]*\)['\"].*/\1/p" \
+                /etc/config/gl-cloud 2>/dev/null |
             head -n 1
         )"
 
@@ -257,7 +277,9 @@ get_cloud_url()
     fi
 
 
-    # 优先使用 jsonfilter
+    # ========================================================
+    # 优先 jsonfilter
+    # ========================================================
 
     if command -v jsonfilter >/dev/null 2>&1; then
 
@@ -270,7 +292,9 @@ get_cloud_url()
     fi
 
 
-    # jsonfilter 获取失败时使用 sed
+    # ========================================================
+    # jsonfilter 获取失败使用 sed
+    # ========================================================
 
     if [ -z "$CLOUD_URL" ]; then
 
@@ -296,7 +320,7 @@ get_cloud_url()
 
 
 # ============================================================
-# 刷新所有状态
+# 刷新状态
 # ============================================================
 
 refresh_cloud_status()
@@ -312,7 +336,7 @@ refresh_cloud_status()
 
 
 # ============================================================
-# 显示当前连接信息
+# 显示云服务连接信息
 # ============================================================
 
 show_cloud_status()
@@ -337,11 +361,14 @@ show_cloud_status()
     # Name
     # ========================================================
 
-    printf "%b" "${BLUE}║${RESET} "
+    printf "%b" \
+        "${BLUE}║${RESET} "
 
-    printf "%b" "${GREEN}Name   : ${RESET}"
+    printf "%b" \
+        "${GREEN}Name   : ${RESET}"
 
-    printf "%b" "${GREEN}${CLOUD_NAME}${RESET}"
+    printf "%b" \
+        "${WHITE}${CLOUD_NAME}${RESET}"
 
     printf "\n"
 
@@ -350,15 +377,17 @@ show_cloud_status()
     # Server
     # ========================================================
 
-    printf "%b" "${BLUE}║${RESET} "
+    printf "%b" \
+        "${BLUE}║${RESET} "
 
-    printf "%b" "${GREEN}Server : ${RESET}"
+    printf "%b" \
+        "${GREEN}Server : ${RESET}"
 
 
     if [ -n "$CLOUD_SERVER" ]; then
 
         printf "%b" \
-            "${BOLD}${GREEN}${CLOUD_SERVER}${RESET}"
+            "${GREEN}${CLOUD_SERVER}${RESET}"
 
     else
 
@@ -375,9 +404,11 @@ show_cloud_status()
     # URL
     # ========================================================
 
-    printf "%b" "${BLUE}║${RESET} "
+    printf "%b" \
+        "${BLUE}║${RESET} "
 
-    printf "%b" "${GREEN}URL    : ${RESET}"
+    printf "%b" \
+        "${GREEN}URL    : ${RESET}"
 
 
     if [ -n "$CLOUD_URL" ]; then
@@ -499,8 +530,9 @@ set_cloud_server()
 
     _cloud_info "目标：$TARGET_NAME"
 
+
     printf "%b\n" \
-        "${GREEN}[INFO]${RESET} Server：${BOLD}${GREEN}${TARGET_SERVER}${RESET}"
+        "${GREEN}[INFO] Server：${TARGET_SERVER}${RESET}"
 
 
     # ========================================================
@@ -519,7 +551,7 @@ set_cloud_server()
 
 
     # ========================================================
-    # 保存
+    # 保存配置
     # ========================================================
 
     if ! uci commit gl-cloud \
@@ -606,7 +638,7 @@ set_cloud_server()
         _cloud_error "云服务器切换验证失败"
 
         printf "%b\n" \
-            "${RED}[ERROR]${RESET} 当前 Server：${BOLD}${GREEN}${CLOUD_SERVER}${RESET}"
+            "${RED}[ERROR]${RESET} ${BOLD}当前 Server：${RESET}${GREEN}${CLOUD_SERVER}${RESET}"
 
         return 1
 
@@ -650,12 +682,12 @@ switch_cloud_global()
 
 cloud_menu()
 {
+    clear
+
+
     # ========================================================
     # 环境检测
     # ========================================================
-
-    clear
-
 
     if ! check_cloud_environment; then
 
@@ -724,20 +756,20 @@ cloud_menu()
             "${GREEN}[当前]${RESET} "
 
 
-        # 服务器类型使用默认白色
+        # 服务器类型：白色粗体
 
-        printf "%s" \
-            "$CLOUD_NAME"
+        printf "%b" \
+            "${WHITE}${CLOUD_NAME}${RESET}"
 
 
-        # Server 使用绿色 + 粗体高亮
+        # Server：绿色粗体
 
         if [ -n "$CLOUD_SERVER" ]; then
 
             printf "  "
 
             printf "%b" \
-                "${BOLD}${GREEN}${CLOUD_SERVER}${RESET}"
+                "${GREEN}${CLOUD_SERVER}${RESET}"
 
         fi
 
@@ -746,7 +778,7 @@ cloud_menu()
 
 
         # ====================================================
-        # 绿色分隔线
+        # 分隔线
         # ====================================================
 
         printf "%b\n" \
@@ -828,7 +860,7 @@ cloud_menu()
 
 
         # ====================================================
-        # 返回
+        # 返回主菜单
         # ====================================================
 
         0)
