@@ -1,15 +1,15 @@
 #!/bin/sh
 
-
 # ======================================
 # Open-Pro-Installer Bootstrap
 # BusyBox / OpenWrt Compatible
+#
+# 正常启动流程静默化版本
 # ======================================
 
 
 # ======================================
 # Color
-# 高亮 + 粗体
 # ======================================
 
 BOLD="$(printf '\033[1m')"
@@ -34,6 +34,8 @@ AUTH_SERVER="https://auth.12334123.xyz"
 
 ZIP_FILE="$WORKDIR/main.zip"
 
+BOOTSTRAP_LOG="/tmp/openpro_bootstrap.log"
+
 
 # ======================================
 # Header
@@ -44,7 +46,6 @@ printf "\n"
 
 # ======================================
 # Disclaimer
-# 高亮 + 粗体版本
 # ======================================
 
 printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
@@ -148,8 +149,8 @@ then
 fi
 
 
-if ! printf "%s" "$AUTH_RESPONSE" | grep -q \
-'"success"[[:space:]]*:[[:space:]]*true'
+if ! printf "%s" "$AUTH_RESPONSE" |
+    grep -q '"success"[[:space:]]*:[[:space:]]*true'
 then
 
     printf "%b\n" "${RED}[ERROR] 申请验证码失败${RESET}"
@@ -229,13 +230,20 @@ curl -4 \
 )"
 
 
-if printf '%s' "$VERIFY_RESPONSE" | grep -q \
-'"success"[[:space:]]*:[[:space:]]*true'
+if printf '%s' "$VERIFY_RESPONSE" |
+   grep -q '"success"[[:space:]]*:[[:space:]]*true'
 then
 
-    printf "%b\n" "${GREEN}[AUTH] 授权成功${RESET}"
+    # ==================================
+    # 授权成功
+    #
+    # 原来的：
+    # [AUTH] 授权成功
+    #
+    # 已隐藏
+    # ==================================
 
-    printf "\n"
+    :
 
 else
 
@@ -254,11 +262,21 @@ fi
 
 rm -rf "$WORKDIR"
 
-mkdir -p "$WORKDIR"
+mkdir -p "$WORKDIR" || {
+
+    printf "%b\n" "${RED}[ERROR] 无法创建临时目录${RESET}"
+
+    exit 1
+}
+
+
+rm -f "$BOOTSTRAP_LOG"
 
 
 # ======================================
 # Download Function
+#
+# 正常下载完全静默
 # ======================================
 
 download_repo()
@@ -266,30 +284,27 @@ download_repo()
 
     rm -f "$ZIP_FILE"
 
-    printf "%b\n" "${BLUE}[INFO] 正在下载最新版本...${RESET}"
-
 
     # ----------------------------------
-    # 方法1：curl IPv4
+    # 方法1：curl
+    # 完全隐藏进度和正常输出
     # ----------------------------------
-
-    printf "%b\n" "${CYAN}[INFO] 下载方式 1/2：curl${RESET}"
-
 
     if curl -4 \
         -L \
+        -f \
+        -sS \
         --connect-timeout 10 \
         --max-time 60 \
         --retry 2 \
-        -f \
+        --retry-delay 1 \
         -o "$ZIP_FILE" \
-        "$REPO"
+        "$REPO" \
+        >>"$BOOTSTRAP_LOG" 2>&1
     then
 
         if [ -s "$ZIP_FILE" ]
         then
-
-            printf "%b\n" "${GREEN}[SUCCESS] 下载完成${RESET}"
 
             return 0
 
@@ -302,25 +317,21 @@ download_repo()
 
 
     # ----------------------------------
-    # 方法2：BusyBox wget
+    # 方法2：wget
+    # 同样完全静默
     # ----------------------------------
-
-    printf "%b\n" "${YELLOW}[WARN] curl 下载失败，切换 wget...${RESET}"
-
-    printf "%b\n" "${CYAN}[INFO] 下载方式 2/2：wget${RESET}"
-
 
     if wget \
         -4 \
+        -q \
         -T 15 \
         -O "$ZIP_FILE" \
-        "$REPO"
+        "$REPO" \
+        >>"$BOOTSTRAP_LOG" 2>&1
     then
 
         if [ -s "$ZIP_FILE" ]
         then
-
-            printf "%b\n" "${GREEN}[SUCCESS] 下载完成${RESET}"
 
             return 0
 
@@ -346,9 +357,19 @@ then
 
     printf "%b\n" "${RED}[ERROR] 项目文件下载失败${RESET}"
 
-    printf "%b\n" "${YELLOW}[INFO] 当前设备无法正常连接 GitHub${RESET}"
+    printf "%b\n" "${YELLOW}[INFO] 请检查网络、DNS 或服务器连接${RESET}"
 
-    printf "%b\n" "${YELLOW}[INFO] 请检查 DNS、网络或代理后重新运行${RESET}"
+    if [ -s "$BOOTSTRAP_LOG" ]
+    then
+
+        printf "\n"
+        printf "%b\n" "${RED}========== DOWNLOAD ERROR ==========${RESET}"
+
+        tail -n 20 "$BOOTSTRAP_LOG"
+
+        printf "%b\n" "${RED}====================================${RESET}"
+
+    fi
 
     exit 1
 
@@ -369,26 +390,43 @@ then
 fi
 
 
-FILE_SIZE="$(du -h "$ZIP_FILE" 2>/dev/null | awk '{print $1}')"
+# ======================================
+# 文件大小
+#
+# 已隐藏
+# ======================================
 
-printf "%b\n" "${GREEN}[INFO] 文件大小: ${FILE_SIZE:-未知}${RESET}"
+# FILE_SIZE="$(du -h "$ZIP_FILE" 2>/dev/null | awk '{print $1}')"
+# printf "%b\n" "${GREEN}[INFO] 文件大小: ${FILE_SIZE:-未知}${RESET}"
 
 
 # ======================================
 # Extract
+#
+# "正在解压..." 已隐藏
 # ======================================
-
-printf "%b\n" "${BLUE}[INFO] 正在解压...${RESET}"
-
 
 if ! unzip -oq \
     "$ZIP_FILE" \
-    -d "$WORKDIR"
+    -d "$WORKDIR" \
+    >>"$BOOTSTRAP_LOG" 2>&1
 then
 
     printf "%b\n" "${RED}[ERROR] 解压失败${RESET}"
 
     printf "%b\n" "${YELLOW}[INFO] 下载文件可能不完整${RESET}"
+
+    if [ -s "$BOOTSTRAP_LOG" ]
+    then
+
+        printf "\n"
+        printf "%b\n" "${RED}========== EXTRACT ERROR ==========${RESET}"
+
+        tail -n 20 "$BOOTSTRAP_LOG"
+
+        printf "%b\n" "${RED}===================================${RESET}"
+
+    fi
 
     exit 1
 
@@ -426,10 +464,15 @@ fi
 # Permission
 # ======================================
 
-cd "$INSTALL_DIR" || exit 1
+cd "$INSTALL_DIR" || {
+
+    printf "%b\n" "${RED}[ERROR] 无法进入项目目录${RESET}"
+
+    exit 1
+}
 
 
-chmod +x install.sh
+chmod +x install.sh 2>/dev/null
 
 chmod +x lib/*.sh 2>/dev/null
 
@@ -445,17 +488,23 @@ rm -f "$ZIP_FILE"
 
 # ======================================
 # Check LuCI Dependencies
+#
+# 正常过程全部静默
+# 失败也不影响工具箱启动
 # ======================================
 
 check_luci_dependencies()
 {
+
     # ----------------------------------
-    # 仅 OPKG 系统执行
+    # 仅 OPKG 系统
     # ----------------------------------
 
     if ! command -v opkg >/dev/null 2>&1
     then
+
         return 0
+
     fi
 
 
@@ -463,7 +512,7 @@ check_luci_dependencies()
 
 
     # ----------------------------------
-    # 检测 luci-compat
+    # luci-compat
     # ----------------------------------
 
     if ! opkg status luci-compat 2>/dev/null |
@@ -476,7 +525,7 @@ check_luci_dependencies()
 
 
     # ----------------------------------
-    # 检测 luci-lib-ipkg
+    # luci-lib-ipkg
     # ----------------------------------
 
     if ! opkg status luci-lib-ipkg 2>/dev/null |
@@ -489,65 +538,44 @@ check_luci_dependencies()
 
 
     # ----------------------------------
-    # 两个都已安装则静默跳过
+    # 已满足
     # ----------------------------------
 
     if [ -z "$NEED_PACKAGES" ]
     then
+
         return 0
-    fi
-
-
-    printf "%b\n" "${BLUE}[INFO] 正在检查 LuCI 基础依赖...${RESET}"
-
-
-    # ==================================
-    # 更新软件源
-    # ==================================
-
-    printf "%b\n" "${BLUE}[INFO] 正在更新软件源...${RESET}"
-
-
-    LUCI_UPDATE_LOG="/tmp/zimo_luci_update.log"
-
-    rm -f "$LUCI_UPDATE_LOG"
-
-
-    if opkg update >"$LUCI_UPDATE_LOG" 2>&1
-    then
-
-        printf "%b\n" "${GREEN}[SUCCESS] 软件源更新完成${RESET}"
-
-    else
-
-        printf "%b\n" "${YELLOW}[WARN] 软件源更新存在异常，继续检测可用依赖${RESET}"
 
     fi
 
 
-    rm -f "$LUCI_UPDATE_LOG"
+    # ----------------------------------
+    # 静默更新
+    # ----------------------------------
+
+    opkg update \
+        >>"$BOOTSTRAP_LOG" 2>&1 ||
+        true
 
 
-    # ==================================
-    # 安装缺少的软件包
-    # ==================================
+    # ----------------------------------
+    # 安装缺失依赖
+    # ----------------------------------
 
     for PKG in $NEED_PACKAGES
     do
 
-        # --------------------------------
-        # 再次确认是否已经安装
-        # --------------------------------
-
         if opkg status "$PKG" 2>/dev/null |
            grep -q 'Status:.*installed'
         then
+
             continue
+
         fi
 
 
         # --------------------------------
-        # 检查软件源是否存在
+        # 软件源不存在就跳过
         # --------------------------------
 
         if ! opkg list "$PKG" 2>/dev/null |
@@ -555,57 +583,18 @@ check_luci_dependencies()
              '$1 == pkg {found=1} END {exit !found}'
         then
 
-            printf "%b\n" \
-                "${YELLOW}[SKIP] 软件源不存在 $PKG，已跳过${RESET}"
-
             continue
 
         fi
 
 
         # --------------------------------
-        # 安装
+        # 静默安装
         # --------------------------------
 
-        printf "%b\n" \
-            "${BLUE}[INFO] 正在安装 $PKG...${RESET}"
-
-
-        LUCI_INSTALL_LOG="/tmp/zimo_${PKG}_install.log"
-
-        rm -f "$LUCI_INSTALL_LOG"
-
-
-        if opkg install "$PKG" >"$LUCI_INSTALL_LOG" 2>&1
-        then
-
-            # ----------------------------
-            # 安装后验证
-            # ----------------------------
-
-            if opkg status "$PKG" 2>/dev/null |
-               grep -q 'Status:.*installed'
-            then
-
-                printf "%b\n" \
-                    "${GREEN}[SUCCESS] $PKG 安装完成${RESET}"
-
-            else
-
-                printf "%b\n" \
-                    "${YELLOW}[WARN] $PKG 安装状态无法确认，已继续${RESET}"
-
-            fi
-
-        else
-
-            printf "%b\n" \
-                "${YELLOW}[WARN] $PKG 安装失败，已跳过${RESET}"
-
-        fi
-
-
-        rm -f "$LUCI_INSTALL_LOG"
+        opkg install "$PKG" \
+            >>"$BOOTSTRAP_LOG" 2>&1 ||
+            true
 
     done
 
@@ -615,10 +604,12 @@ check_luci_dependencies()
 
 
 # ======================================
-# Start Installer
+# 项目准备完成
+#
+# 已隐藏
 # ======================================
 
-printf "%b\n" "${GREEN}[SUCCESS] 项目准备完成${RESET}"
+# printf "%b\n" "${GREEN}[SUCCESS] 项目准备完成${RESET}"
 
 
 # ======================================
@@ -629,12 +620,24 @@ check_luci_dependencies
 
 
 # ======================================
-# Start ZIMO
+# 清理 Bootstrap 日志
 # ======================================
 
-printf "%b\n" "${BLUE}[INFO] 正在启动 ZIMO--工具箱...${RESET}"
+rm -f "$BOOTSTRAP_LOG" 2>/dev/null
 
-printf "\n"
 
+# ======================================
+# Start ZIMO
+#
+# "正在启动 ZIMO--工具箱..."
+# 已隐藏
+# ======================================
+
+# printf "%b\n" "${BLUE}[INFO] 正在启动 ZIMO--工具箱...${RESET}"
+
+
+# ======================================
+# 直接进入主菜单
+# ======================================
 
 exec ./install.sh
