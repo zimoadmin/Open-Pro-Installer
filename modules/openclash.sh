@@ -25,6 +25,11 @@
 # 18. 调用 OpenClash 官方 openclash_core.sh
 # 19. 代理失败自动切换下一线路
 # 20. Meta Core 更新后再次验证版本
+# 21. 自动检查基础运行环境
+# 22. 自动检查 Meta Core 更新依赖
+# 23. 兼容旧版 linux-armv8 → linux-arm64
+# 24. Core 更新采用完整测速 URL
+# 25. Core 未真实验证前不显示 100%
 #
 # BusyBox / OpenWrt /bin/sh Compatible
 # ============================================================
@@ -181,6 +186,86 @@ cleanup_core_update()
 
 
 # ============================================================
+# 基础运行环境检查
+# ============================================================
+
+check_openclash_runtime()
+{
+    MISSING=""
+
+    for CMD in \
+        awk \
+        sed \
+        grep \
+        cut \
+        sort \
+        head \
+        tail \
+        wc \
+        du \
+        uci
+    do
+
+        if ! command -v "$CMD" >/dev/null 2>&1; then
+            MISSING="$MISSING $CMD"
+        fi
+
+    done
+
+
+    if [ -n "$MISSING" ]; then
+
+        _oc_error "系统缺少基础命令:$MISSING"
+
+        return 1
+    fi
+
+
+    return 0
+}
+
+
+# ============================================================
+# Meta Core 更新环境检查
+# ============================================================
+
+check_openclash_core_runtime()
+{
+    MISSING=""
+
+
+    for CMD in \
+        bash \
+        lua \
+        jsonfilter \
+        uci \
+        curl \
+        gzip \
+        tar \
+        flock \
+        tr
+    do
+
+        if ! command -v "$CMD" >/dev/null 2>&1; then
+            MISSING="$MISSING $CMD"
+        fi
+
+    done
+
+
+    if [ -n "$MISSING" ]; then
+
+        _oc_warn "Meta Core 更新缺少依赖:$MISSING"
+
+        return 1
+    fi
+
+
+    return 0
+}
+
+
+# ============================================================
 # 检查 OpenClash
 # ============================================================
 
@@ -231,8 +316,9 @@ get_installed_openclash_version()
     elif command -v apk >/dev/null 2>&1; then
 
         OPENCLASH_VERSION="$(
-            apk info luci-app-openclash 2>/dev/null |
-            sed -n '1p'
+            apk info -v luci-app-openclash 2>/dev/null |
+            sed -n '1p' |
+            sed 's/^luci-app-openclash-//'
         )"
 
     fi
@@ -636,6 +722,16 @@ prepare_openclash_routes()
     _oc_info "正在并行测试 OpenClash 下载线路..."
 
     printf "\n"
+
+
+    if ! command -v curl >/dev/null 2>&1; then
+
+        _oc_warn "系统未安装 curl，无法执行智能测速"
+
+        rm -rf "$OC_TEST_DIR"
+
+        return 1
+    fi
 
 
     for NODE_NAME in \
@@ -1357,16 +1453,38 @@ detect_openclash_arch()
 
 detect_openclash_core_cpu_model()
 {
-    OPENCLASH_CORE_CPU_MODEL="$(
+    CURRENT_CORE_MODEL="$(
         uci -q get openclash.config.core_version \
         2>/dev/null
     )"
 
 
+    OPENCLASH_CORE_CPU_MODEL="$CURRENT_CORE_MODEL"
+
+    NEED_SAVE_CORE_MODEL=0
+
+
     case "$OPENCLASH_CORE_CPU_MODEL" in
+
         ""|0)
+
             OPENCLASH_CORE_CPU_MODEL="$OPENCLASH_CORE_ARCH"
+
+            NEED_SAVE_CORE_MODEL=1
+
             ;;
+
+
+        linux-armv8)
+
+            OPENCLASH_CORE_CPU_MODEL="linux-arm64"
+
+            NEED_SAVE_CORE_MODEL=1
+
+            _oc_info "检测到旧 Core 架构：linux-armv8"
+
+            ;;
+
     esac
 
 
@@ -1380,27 +1498,27 @@ detect_openclash_core_cpu_model()
     fi
 
 
-    # 如果 OpenClash 尚未保存 Core 架构，自动写入
-    CURRENT_CORE_MODEL="$(
-        uci -q get openclash.config.core_version \
-        2>/dev/null
-    )"
+    if [ "$NEED_SAVE_CORE_MODEL" -eq 1 ]; then
+
+        uci -q set \
+            "openclash.config.core_version=$OPENCLASH_CORE_CPU_MODEL" \
+            >/dev/null 2>&1
+
+        uci commit openclash \
+            >/dev/null 2>&1
 
 
-    case "$CURRENT_CORE_MODEL" in
-        ""|0)
+        if [ "$CURRENT_CORE_MODEL" = "linux-armv8" ]; then
 
-            uci -q set \
-                "openclash.config.core_version=$OPENCLASH_CORE_CPU_MODEL" \
-                >/dev/null 2>&1
+            _oc_info "已修正 Core 架构：linux-armv8 → linux-arm64"
 
-            uci commit openclash \
-                >/dev/null 2>&1
+        else
 
             _oc_info "已自动设置 Core 架构：$OPENCLASH_CORE_CPU_MODEL"
 
-            ;;
-    esac
+        fi
+
+    fi
 
 
     OPENCLASH_RELEASE_BRANCH="$(
@@ -1620,16 +1738,22 @@ core_update_progress()
     I=0
 
     while [ "$I" -lt "$FILLED" ]; do
+
         BAR="${BAR}#"
+
         I=$((I + 1))
+
     done
 
 
     I=0
 
     while [ "$I" -lt "$EMPTY" ]; do
+
         BAR="${BAR}-"
+
         I=$((I + 1))
+
     done
 
 
@@ -1641,16 +1765,41 @@ core_update_progress()
 
 
 # ============================================================
+# Core 更新成功进度
+# ============================================================
+
+core_update_progress_success()
+{
+    ROUTE_NAME="$1"
+
+
+    core_update_progress \
+        100 \
+        "$ROUTE_NAME"
+
+
+    printf "\n"
+}
+
+
+# ============================================================
 # 调用 OpenClash 官方 Core 更新脚本
 #
+# 当前 OpenClash 官方行为：
+# 如果第 2 参数为 http(s) URL，
+# 则该参数会被当作完整 Core 下载 URL。
+#
+# 因此这里直接传入测速成功后的完整 ROUTE_URL，
+# 保证“测速 URL”和“实际 Core 下载 URL”完全一致。
+#
 # $1 = ROUTE_NAME
-# $2 = ROUTE_PREFIX
+# $2 = ROUTE_URL（完整 URL）
 # ============================================================
 
 run_official_meta_core_update()
 {
     ROUTE_NAME="$1"
-    ROUTE_PREFIX="$2"
+    ROUTE_URL="$2"
 
 
     CORE_UPDATE_SCRIPT="/usr/share/openclash/openclash_core.sh"
@@ -1680,20 +1829,18 @@ run_official_meta_core_update()
     _oc_info "下载线路：$ROUTE_NAME"
 
 
-    if [ "$ROUTE_NAME" = "DIRECT" ] ||
-       [ -z "$ROUTE_PREFIX" ]
-    then
+    if [ -n "$ROUTE_URL" ]; then
 
         "$CORE_UPDATE_SCRIPT" \
             Meta \
-            0 \
+            "$ROUTE_URL" \
             > "$OC_CORE_UPDATE_LOG" 2>&1 &
 
     else
 
         "$CORE_UPDATE_SCRIPT" \
             Meta \
-            "$ROUTE_PREFIX" \
+            0 \
             > "$OC_CORE_UPDATE_LOG" 2>&1 &
 
     fi
@@ -1714,14 +1861,26 @@ run_official_meta_core_update()
     do
 
         if grep -qi \
-            'Update Successful\|Download Successful' \
+            'Update Successful' \
             "$OC_CORE_UPDATE_LOG" \
             2>/dev/null
         then
 
-            if [ "$CORE_PERCENT" -lt 92 ]; then
+            if [ "$CORE_PERCENT" -lt 94 ]; then
                 CORE_PERCENT=$((CORE_PERCENT + 5))
             fi
+
+
+        elif grep -qi \
+            'Download Successful' \
+            "$OC_CORE_UPDATE_LOG" \
+            2>/dev/null
+        then
+
+            if [ "$CORE_PERCENT" -lt 88 ]; then
+                CORE_PERCENT=$((CORE_PERCENT + 4))
+            fi
+
 
         elif grep -qi \
             'Downloading\|Download' \
@@ -1732,6 +1891,7 @@ run_official_meta_core_update()
             if [ "$CORE_PERCENT" -lt 80 ]; then
                 CORE_PERCENT=$((CORE_PERCENT + 3))
             fi
+
 
         else
 
@@ -1763,10 +1923,13 @@ run_official_meta_core_update()
     CORE_UPDATE_PID=""
 
 
-    # 官方脚本部分错误路径也可能返回 0，
-    # 因此这里只作为参考，最终以实际 Core 版本验证为准。
+    # 官方脚本部分错误路径也可能返回 0。
+    # 因此这里最高只显示 95%。
+    # 只有实际执行 clash_meta -v 并验证版本成功后，
+    # 外层逻辑才显示真正的 100%。
+
     core_update_progress \
-        100 \
+        95 \
         "$ROUTE_NAME"
 
     printf "\n"
@@ -1804,6 +1967,18 @@ auto_update_openclash_core()
 
 
     # ========================================================
+    # Core 环境
+    # ========================================================
+
+    if ! check_openclash_core_runtime; then
+
+        _oc_warn "当前环境无法自动更新 Meta Core"
+
+        return 1
+    fi
+
+
+    # ========================================================
     # Core CPU 架构
     # ========================================================
 
@@ -1823,6 +1998,7 @@ auto_update_openclash_core()
 
     OLD_META_VERSION=""
 
+
     if get_meta_core_version; then
 
         OLD_META_VERSION="$META_CORE_VERSION"
@@ -1839,8 +2015,8 @@ auto_update_openclash_core()
     # ========================================================
     # 官方 Core 下载地址
     #
-    # 仅用于测速。
-    # 真正下载仍调用 OpenClash 官方脚本。
+    # 该地址既用于测速，
+    # 也会将测速生成的完整 URL 交给官方更新脚本。
     # ========================================================
 
     CORE_TEST_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/${OPENCLASH_RELEASE_BRANCH}/meta/clash-${OPENCLASH_CORE_CPU_MODEL}.tar.gz"
@@ -1883,9 +2059,13 @@ auto_update_openclash_core()
             if [ "$ROUTE_NAME" = "DIRECT" ] ||
                [ -z "$ROUTE_PREFIX" ]
             then
+
                 VERSION_PROXY="0"
+
             else
+
                 VERSION_PROXY="$ROUTE_PREFIX"
+
             fi
 
 
@@ -1903,7 +2083,9 @@ auto_update_openclash_core()
     fi
 
 
+    # ========================================================
     # 没拿到版本时尝试 DIRECT
+    # ========================================================
 
     if [ -z "$LATEST_META_VERSION" ]; then
 
@@ -1921,7 +2103,7 @@ auto_update_openclash_core()
 
 
     # ========================================================
-    # 已是最新版
+    # 已经是最新版
     # ========================================================
 
     if [ -n "$OLD_META_VERSION" ] &&
@@ -1988,6 +2170,9 @@ auto_update_openclash_core()
             [ -n "$ROUTE_NAME" ] ||
                 continue
 
+            [ -n "$ROUTE_URL" ] ||
+                continue
+
 
             if [ "$ROUTE_NAME" = "DIRECT" ]; then
                 DIRECT_CORE_TRIED=1
@@ -2006,7 +2191,7 @@ auto_update_openclash_core()
 
             run_official_meta_core_update \
                 "$ROUTE_NAME" \
-                "$ROUTE_PREFIX"
+                "$ROUTE_URL"
 
 
             # =================================================
@@ -2025,7 +2210,7 @@ auto_update_openclash_core()
 
 
                 # ---------------------------------------------
-                # 已知最新版本时必须一致
+                # 已知 latest：必须与最新版一致
                 # ---------------------------------------------
 
                 if [ -n "$LATEST_META_VERSION" ]; then
@@ -2033,6 +2218,11 @@ auto_update_openclash_core()
                     if [ "$NEW_META_VERSION" = "$LATEST_META_VERSION" ]; then
 
                         CORE_UPDATE_SUCCESS=1
+
+
+                        core_update_progress_success \
+                            "$ROUTE_NAME"
+
 
                         _oc_ok "Meta / Mihomo 内核更新成功"
 
@@ -2043,8 +2233,8 @@ auto_update_openclash_core()
 
 
                 # ---------------------------------------------
-                # 无法获取 latest 时：
-                # 新安装成功，或版本发生变化，也视为成功
+                # 无法获取 latest：
+                # 新安装成功或者版本发生变化即可
                 # ---------------------------------------------
 
                 else
@@ -2055,12 +2245,18 @@ auto_update_openclash_core()
 
                         CORE_UPDATE_SUCCESS=1
 
+
+                        core_update_progress_success \
+                            "$ROUTE_NAME"
+
+
                         _oc_ok "Meta / Mihomo 内核安装/更新成功"
 
                         _oc_info "当前版本：$NEW_META_VERSION"
 
                         break
                     fi
+
                 fi
 
             fi
@@ -2089,7 +2285,7 @@ auto_update_openclash_core()
 
         run_official_meta_core_update \
             "DIRECT" \
-            ""
+            "$CORE_TEST_URL"
 
 
         sleep 1
@@ -2100,10 +2296,18 @@ auto_update_openclash_core()
             NEW_META_VERSION="$META_CORE_VERSION"
 
 
+            _oc_info "验证版本：$NEW_META_VERSION"
+
+
             if [ -n "$LATEST_META_VERSION" ]; then
 
                 if [ "$NEW_META_VERSION" = "$LATEST_META_VERSION" ]; then
+
                     CORE_UPDATE_SUCCESS=1
+
+                    core_update_progress_success \
+                        "DIRECT"
+
                 fi
 
             else
@@ -2111,8 +2315,14 @@ auto_update_openclash_core()
                 if [ -z "$OLD_META_VERSION" ] ||
                    [ "$NEW_META_VERSION" != "$OLD_META_VERSION" ]
                 then
+
                     CORE_UPDATE_SUCCESS=1
+
+                    core_update_progress_success \
+                        "DIRECT"
+
                 fi
+
             fi
 
         fi
@@ -2153,6 +2363,16 @@ auto_update_openclash_core()
                 _oc_info "最新：$LATEST_META_VERSION"
 
             fi
+
+        elif [ -n "$META_CORE_VERSION" ]; then
+
+            # 无法获取 latest，但 Core 可以真实执行。
+            # 如果原本没有 Core，则视为安装成功。
+
+            if [ -z "$OLD_META_VERSION" ]; then
+                CORE_UPDATE_SUCCESS=1
+            fi
+
         fi
 
     else
@@ -2232,6 +2452,7 @@ interrupt_openclash()
 
         wait "$PROGRESS_PID" \
             >/dev/null 2>&1
+
     fi
 
 
@@ -2242,6 +2463,7 @@ interrupt_openclash()
 
         wait "$CORE_UPDATE_PID" \
             >/dev/null 2>&1
+
     fi
 
 
@@ -2285,7 +2507,18 @@ install_openclash()
 
 
     # ========================================================
-    # 工具
+    # 基础运行环境
+    # ========================================================
+
+    if ! check_openclash_runtime; then
+
+        return 1
+
+    fi
+
+
+    # ========================================================
+    # 下载工具
     # ========================================================
 
     if ! command -v curl >/dev/null 2>&1 &&
@@ -2295,6 +2528,17 @@ install_openclash()
         _oc_error "系统缺少 curl / wget"
 
         return 1
+    fi
+
+
+    if ! command -v curl >/dev/null 2>&1; then
+
+        _oc_warn "当前系统没有 curl"
+
+        _oc_warn "OpenClash 软件包仍可尝试使用 wget 下载"
+
+        _oc_warn "但多线路测速与 Meta Core 自动更新将受到限制"
+
     fi
 
 
@@ -2519,6 +2763,7 @@ install_openclash()
             printf "\n"
 
             cat "$INSTALL_LOG"
+
         fi
 
 
