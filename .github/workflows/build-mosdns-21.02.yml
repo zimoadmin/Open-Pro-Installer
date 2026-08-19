@@ -1,4 +1,4 @@
-name: Build MosDNS for GL-MT3600BE
+name: Build MosDNS Full Offline Bundle for GL-MT3600BE
 
 on:
   workflow_dispatch:
@@ -18,12 +18,11 @@ jobs:
         uses: actions/checkout@v4
 
       # ======================================================
-      # 2. Install dependencies
+      # 2. Host dependencies
       # ======================================================
       - name: Install build dependencies
         run: |
           sudo apt-get update
-
           sudo apt-get install -y \
             build-essential \
             clang \
@@ -44,16 +43,15 @@ jobs:
             curl \
             file \
             jq \
+            cmake \
             zlib1g-dev
 
       # ======================================================
-      # 3. Clone GL.iNet MT7981 SDK
+      # 3. Clone GL.iNet OpenWrt 21.02 SDK
       # ======================================================
       - name: Clone GL.iNet SDK
         run: |
-          echo "======================================"
-          echo "Clone GL.iNet MT7981 SDK"
-          echo "======================================"
+          set -e
 
           git clone \
             --depth=1 \
@@ -61,73 +59,49 @@ jobs:
             sdk
 
           cd sdk
-
-          echo
-          echo "SDK:"
+          echo "======================================"
+          echo "SDK"
+          echo "======================================"
           git log -1 --oneline || true
 
       # ======================================================
-      # 4. Fix feeds.conf
-      #
-      # 重点：
-      # MTK feed 在 GL.iNet SDK 中可能带固定 commit。
-      # MosDNS 编译不需要主动更新 MTK feed。
+      # 4. Disable broken MTK private feed
       # ======================================================
       - name: Prepare feeds
         working-directory: sdk
         run: |
+          set -e
+
           echo "======================================"
           echo "Original feeds"
           echo "======================================"
-
           cat feeds.conf.default || true
 
-          echo
-          echo "======================================"
-          echo "Disable problematic MTK feed"
-          echo "======================================"
-
-          # 注释 MTK 私有 feed
+          # MosDNS 离线包不需要主动更新 MTK 私有 feed
           sed -i \
             '/mtk[_-]openwrt[_-]feed/s/^/# DISABLED_FOR_MOSDNS /' \
             feeds.conf.default || true
 
           echo
           echo "======================================"
-          echo "MosDNS build feeds"
+          echo "Feeds after patch"
           echo "======================================"
-
           cat feeds.conf.default
 
       # ======================================================
-      # 5. Update feeds
+      # 5. Update public feeds
       # ======================================================
       - name: Update feeds
         working-directory: sdk
         run: |
           set -e
 
-          echo "======================================"
-          echo "Update feeds"
-          echo "======================================"
-
-          # 不再 update -a
-          # 只更新 MosDNS 所需要的公开 feeds
-
           ./scripts/feeds update packages
           ./scripts/feeds update luci
 
-          # routing 如果 SDK 有则更新
           if grep -q '^src-git.*routing' feeds.conf.default; then
             ./scripts/feeds update routing
           fi
-
-          echo
-          echo "======================================"
-          echo "Available feeds"
-          echo "======================================"
-
-          ls -lah feeds/
 
       # ======================================================
       # 6. Install feeds
@@ -137,26 +111,21 @@ jobs:
         run: |
           set -e
 
-          echo "======================================"
-          echo "Install feeds"
-          echo "======================================"
-
           ./scripts/feeds install -a
+
+          # 明确安装 curl 包定义
+          ./scripts/feeds install curl || true
 
       # ======================================================
       # 7. Replace Golang
       #
-      # OpenWrt 21.02 自带 Golang 太旧，
-      # MosDNS v5 需要较新的 Golang。
+      # OpenWrt 21.02 自带 Go 太旧。
+      # MosDNS / v2dat 使用 sbwml 的新版 Golang feed。
       # ======================================================
-      - name: Replace Golang feed
+      - name: Replace Golang
         working-directory: sdk
         run: |
           set -e
-
-          echo "======================================"
-          echo "Replace Golang"
-          echo "======================================"
 
           rm -rf feeds/packages/lang/golang
           rm -rf package/feeds/packages/golang
@@ -168,18 +137,32 @@ jobs:
 
           ./scripts/feeds install golang
 
-          echo
-          echo "Golang feed:"
-          git -C feeds/packages/lang/golang log -1 --oneline || true
-
       # ======================================================
-      # 8. Remove conflicting MosDNS
+      # 8. Prepare all MosDNS packages
+      #
+      # 自己编译：
+      # - mosdns
+      # - luci-app-mosdns
+      # - v2dat
+      # - v2ray-geoip
+      # - v2ray-geosite
+      # - curl
+      # - ucode
+      #
+      # 为了真正本地安装，还同时编译：
+      # - libcurl*
+      # - libucode*
+      # - ucode-mod-fs
+      # - ucode-mod-uci
+      # - ucode-mod-ubus
       # ======================================================
-      - name: Remove conflicting MosDNS packages
+      - name: Prepare MosDNS offline suite
         working-directory: sdk
         run: |
+          set -e
+
           echo "======================================"
-          echo "Remove old MosDNS packages"
+          echo "Remove conflicting packages"
           echo "======================================"
 
           rm -rf feeds/packages/net/mosdns
@@ -188,20 +171,15 @@ jobs:
           rm -rf package/feeds/packages/mosdns
           rm -rf package/feeds/luci/luci-app-mosdns
 
-          rm -rf package/mosdns
-          rm -rf package/luci-app-mosdns
+          rm -rf package/mosdns-suite
+          mkdir -p package/mosdns-suite
 
-      # ======================================================
-      # 9. Clone MosDNS v5
-      # ======================================================
-      - name: Clone MosDNS v5
-        working-directory: sdk
-        run: |
-          set -e
-
+          echo
           echo "======================================"
           echo "Clone luci-app-mosdns v5"
           echo "======================================"
+
+          rm -rf /tmp/luci-app-mosdns
 
           git clone \
             --depth=1 \
@@ -209,212 +187,400 @@ jobs:
             https://github.com/sbwml/luci-app-mosdns.git \
             /tmp/luci-app-mosdns
 
-          mkdir -p package/mosdns
-
-          # MosDNS core
           cp -a \
             /tmp/luci-app-mosdns/mosdns \
-            package/mosdns/
+            package/mosdns-suite/
 
-          # LuCI
+          cp -a \
+            /tmp/luci-app-mosdns/v2dat \
+            package/mosdns-suite/
+
           cp -a \
             /tmp/luci-app-mosdns/luci-app-mosdns \
-            package/mosdns/
+            package/mosdns-suite/
 
           echo
           echo "======================================"
-          echo "MosDNS package tree"
+          echo "Clone v2ray-geodata"
           echo "======================================"
 
-          find package/mosdns -maxdepth 2 -type f | head -100
+          git clone \
+            --depth=1 \
+            https://github.com/sbwml/v2ray-geodata.git \
+            package/mosdns-suite/v2ray-geodata
+
+          rm -rf package/mosdns-suite/v2ray-geodata/.git
+
+          echo
+          echo "======================================"
+          echo "Backport ucode from OpenWrt 22.03"
+          echo "======================================"
+
+          mkdir -p package/mosdns-suite/ucode
+
+          curl -fsSL \
+            https://raw.githubusercontent.com/openwrt/openwrt/openwrt-22.03/package/utils/ucode/Makefile \
+            -o package/mosdns-suite/ucode/Makefile
+
+          test -f package/mosdns-suite/mosdns/Makefile
+          test -f package/mosdns-suite/v2dat/Makefile
+          test -f package/mosdns-suite/luci-app-mosdns/Makefile
+          test -f package/mosdns-suite/v2ray-geodata/Makefile
+          test -f package/mosdns-suite/ucode/Makefile
+
+          echo
+          echo "======================================"
+          echo "Find curl package"
+          echo "======================================"
+
+          find -L package \
+            -type f \
+            -path '*/curl/Makefile' \
+            -print || true
 
       # ======================================================
-      # 10. Check package definitions
+      # 9. Generate build config
       # ======================================================
-      - name: Check MosDNS packages
+      - name: Generate config
         working-directory: sdk
         run: |
           set -e
 
-          echo "======================================"
-          echo "Check MosDNS"
-          echo "======================================"
+          cat >> .config <<'EOF'
 
-          test -f package/mosdns/mosdns/Makefile
-          test -f package/mosdns/luci-app-mosdns/Makefile
+          CONFIG_PACKAGE_mosdns=m
+          CONFIG_PACKAGE_luci-app-mosdns=m
+          CONFIG_PACKAGE_v2dat=m
+          CONFIG_PACKAGE_v2ray-geoip=m
+          CONFIG_PACKAGE_v2ray-geosite=m
 
-          echo "[OK] mosdns Makefile"
-          echo "[OK] luci-app-mosdns Makefile"
+          CONFIG_PACKAGE_curl=m
+          CONFIG_PACKAGE_libcurl=m
 
-      # ======================================================
-      # 11. Generate config
-      # ======================================================
-      - name: Generate build config
-        working-directory: sdk
-        run: |
-          set -e
-
-          echo "======================================"
-          echo "Generate config"
-          echo "======================================"
-
-          # 先使用 SDK 默认配置
-          if [ -f .config ]; then
-            cp .config /tmp/sdk.config
-          fi
-
-          # 选择 MosDNS
-          echo "CONFIG_PACKAGE_mosdns=m" >> .config
-          echo "CONFIG_PACKAGE_luci-app-mosdns=m" >> .config
+          CONFIG_PACKAGE_ucode=m
+          CONFIG_PACKAGE_libucode=m
+          CONFIG_PACKAGE_ucode-mod-fs=m
+          CONFIG_PACKAGE_ucode-mod-uci=m
+          CONFIG_PACKAGE_ucode-mod-ubus=m
+          EOF
 
           make defconfig
 
-          echo
           echo "======================================"
-          echo "MosDNS config"
+          echo "Selected packages"
           echo "======================================"
 
           grep -E \
-            'CONFIG_PACKAGE_(mosdns|luci-app-mosdns)' \
+            'CONFIG_PACKAGE_(mosdns|luci-app-mosdns|v2dat|v2ray-geoip|v2ray-geosite|curl|libcurl|ucode|libucode|ucode-mod-fs|ucode-mod-uci|ucode-mod-ubus)=' \
             .config || true
 
       # ======================================================
-      # 12. Download source
+      # 10. Locate curl package path
       # ======================================================
-      - name: Download MosDNS sources
+      - name: Locate curl package
         working-directory: sdk
         run: |
-          echo "======================================"
-          echo "Download sources"
-          echo "======================================"
+          set -e
 
-          make package/mosdns/mosdns/download \
-            V=s \
-            -j1 || true
+          CURL_MAKEFILE="$(
+            find -L package \
+              -type f \
+              -path '*/curl/Makefile' \
+              | head -1
+          )"
 
-          make package/mosdns/luci-app-mosdns/download \
-            V=s \
-            -j1 || true
+          if [ -z "$CURL_MAKEFILE" ]; then
+            echo "[ERROR] curl package Makefile not found"
+            exit 1
+          fi
+
+          CURL_DIR="$(dirname "$CURL_MAKEFILE")"
+
+          echo "CURL_DIR=$CURL_DIR" >> "$GITHUB_ENV"
+          echo "[OK] CURL_DIR=$CURL_DIR"
 
       # ======================================================
-      # 13. Build MosDNS core
+      # 11. Download sources
+      # ======================================================
+      - name: Download sources
+        working-directory: sdk
+        run: |
+          set -e
+
+          make package/mosdns-suite/ucode/download V=s -j1 || true
+          make "$CURL_DIR/download" V=s -j1 || true
+          make package/mosdns-suite/v2dat/download V=s -j1 || true
+          make package/mosdns-suite/mosdns/download V=s -j1 || true
+          make package/mosdns-suite/v2ray-geodata/download V=s -j1 || true
+          make package/mosdns-suite/luci-app-mosdns/download V=s -j1 || true
+
+      # ======================================================
+      # 12. Build ucode + required modules
+      # ======================================================
+      - name: Build ucode
+        working-directory: sdk
+        run: |
+          set -o pipefail
+
+          make package/mosdns-suite/ucode/compile \
+            V=s \
+            -j$(nproc) \
+            2>&1 | tee /tmp/ucode-build.log
+
+      # ======================================================
+      # 13. Build curl + libcurl
+      # ======================================================
+      - name: Build curl
+        working-directory: sdk
+        run: |
+          set -o pipefail
+
+          make "$CURL_DIR/compile" \
+            V=s \
+            -j$(nproc) \
+            2>&1 | tee /tmp/curl-build.log
+
+      # ======================================================
+      # 14. Build v2ray geodata
+      # ======================================================
+      - name: Build v2ray-geodata
+        working-directory: sdk
+        run: |
+          set -o pipefail
+
+          make package/mosdns-suite/v2ray-geodata/compile \
+            V=s \
+            -j1 \
+            2>&1 | tee /tmp/v2ray-geodata-build.log
+
+      # ======================================================
+      # 15. Build v2dat
+      # ======================================================
+      - name: Build v2dat
+        working-directory: sdk
+        run: |
+          set -o pipefail
+
+          make package/mosdns-suite/v2dat/compile \
+            V=s \
+            -j$(nproc) \
+            2>&1 | tee /tmp/v2dat-build.log
+
+      # ======================================================
+      # 16. Build MosDNS Core
       # ======================================================
       - name: Build MosDNS
         working-directory: sdk
         run: |
           set -o pipefail
 
-          echo "======================================"
-          echo "Build MosDNS Core"
-          echo "======================================"
-
-          make package/mosdns/mosdns/compile \
+          make package/mosdns-suite/mosdns/compile \
             V=s \
             -j$(nproc) \
             2>&1 | tee /tmp/mosdns-build.log
 
       # ======================================================
-      # 14. Build LuCI
+      # 17. Build LuCI
       # ======================================================
       - name: Build luci-app-mosdns
         working-directory: sdk
         run: |
           set -o pipefail
 
-          echo "======================================"
-          echo "Build luci-app-mosdns"
-          echo "======================================"
-
-          make package/mosdns/luci-app-mosdns/compile \
+          make package/mosdns-suite/luci-app-mosdns/compile \
             V=s \
             -j$(nproc) \
             2>&1 | tee /tmp/luci-mosdns-build.log
 
       # ======================================================
-      # 15. Collect packages
+      # 18. Collect offline packages
       # ======================================================
       - name: Collect packages
-        if: always()
         run: |
+          set -e
+
+          rm -rf output
           mkdir -p output
 
-          echo "======================================"
-          echo "Find MosDNS packages"
-          echo "======================================"
+          copy_packages() {
+            PATTERN="$1"
 
-          find sdk/bin/packages \
-            -type f \
-            \( \
-              -name 'mosdns_*.ipk' \
-              -o \
-              -name 'luci-app-mosdns_*.ipk' \
-            \) \
-            -print \
-            -exec cp -f {} output/ \; \
-            2>/dev/null || true
+            find sdk/bin/packages sdk/bin/targets \
+              -type f \
+              -name "$PATTERN" \
+              -print \
+              -exec cp -f {} output/ \; \
+              2>/dev/null || true
+          }
+
+          # 主包
+          copy_packages 'mosdns_*.ipk'
+          copy_packages 'luci-app-mosdns_*.ipk'
+          copy_packages 'v2dat_*.ipk'
+          copy_packages 'v2ray-geoip_*.ipk'
+          copy_packages 'v2ray-geosite_*.ipk'
+          copy_packages 'curl_*.ipk'
+          copy_packages 'ucode_*.ipk'
+
+          # 本地离线安装所需辅助包
+          copy_packages 'libcurl*.ipk'
+          copy_packages 'libucode*.ipk'
+          copy_packages 'ucode-mod-fs_*.ipk'
+          copy_packages 'ucode-mod-uci_*.ipk'
+          copy_packages 'ucode-mod-ubus_*.ipk'
+
+          # curl 常见运行依赖，如果本次 SDK 产生则一并带走
+          copy_packages 'ca-bundle_*.ipk'
+          copy_packages 'ca-certificates_*.ipk'
+
+          # 如果 LuCI 构建出了中文语言包，也一起带走
+          copy_packages 'luci-i18n-mosdns-zh-cn_*.ipk'
 
           echo
           echo "======================================"
-          echo "Output"
+          echo "Offline output"
           echo "======================================"
-
-          ls -lh output/ || true
+          ls -lh output/
 
       # ======================================================
-      # 16. Verify
+      # 19. Verify required packages
       # ======================================================
       - name: Verify packages
         run: |
+          set -e
+
+          require_pkg() {
+            PATTERN="$1"
+            NAME="$2"
+
+            FILE="$(
+              find output \
+                -maxdepth 1 \
+                -type f \
+                -name "$PATTERN" \
+                | head -1
+            )"
+
+            if [ -z "$FILE" ]; then
+              echo "[ERROR] Missing: $NAME ($PATTERN)"
+              exit 1
+            fi
+
+            echo "[OK] $NAME"
+            ls -lh "$FILE"
+          }
+
           echo "======================================"
-          echo "Verify build result"
+          echo "Verify main packages"
           echo "======================================"
 
-          MOSDNS="$(find output -maxdepth 1 -name 'mosdns_*.ipk' | head -1)"
-          LUCI="$(find output -maxdepth 1 -name 'luci-app-mosdns_*.ipk' | head -1)"
-
-          if [ -z "$MOSDNS" ]; then
-            echo "[ERROR] mosdns IPK not found"
-            exit 1
-          fi
-
-          if [ -z "$LUCI" ]; then
-            echo "[ERROR] luci-app-mosdns IPK not found"
-            exit 1
-          fi
+          require_pkg 'mosdns_*.ipk' 'mosdns'
+          require_pkg 'luci-app-mosdns_*.ipk' 'luci-app-mosdns'
+          require_pkg 'v2dat_*.ipk' 'v2dat'
+          require_pkg 'v2ray-geoip_*.ipk' 'v2ray-geoip'
+          require_pkg 'v2ray-geosite_*.ipk' 'v2ray-geosite'
+          require_pkg 'curl_*.ipk' 'curl'
+          require_pkg 'ucode_*.ipk' 'ucode'
 
           echo
-          echo "[OK] MosDNS:"
-          ls -lh "$MOSDNS"
-
-          echo
-          echo "[OK] LuCI:"
-          ls -lh "$LUCI"
-
-          echo
           echo "======================================"
-          echo "Build successful"
+          echo "Verify bundled runtime helpers"
           echo "======================================"
+
+          require_pkg 'libcurl*.ipk' 'libcurl'
+          require_pkg 'libucode*.ipk' 'libucode'
+          require_pkg 'ucode-mod-fs_*.ipk' 'ucode-mod-fs'
+          require_pkg 'ucode-mod-uci_*.ipk' 'ucode-mod-uci'
+          require_pkg 'ucode-mod-ubus_*.ipk' 'ucode-mod-ubus'
 
       # ======================================================
-      # 17. Upload
+      # 20. Create SHA256 + single offline archive
       # ======================================================
-      - name: Upload MosDNS packages
+      - name: Create offline bundle
+        run: |
+          set -e
+
+          cd output
+
+          sha256sum *.ipk > SHA256SUMS
+
+          tar -czf \
+            mosdns-offline-aarch64_cortex-a53-openwrt-21.02.tar.gz \
+            --exclude='mosdns-offline-aarch64_cortex-a53-openwrt-21.02.tar.gz' \
+            *.ipk \
+            SHA256SUMS
+
+          echo
+          echo "======================================"
+          echo "Final bundle"
+          echo "======================================"
+          ls -lh
+
+      # ======================================================
+      # 21. Upload GitHub Actions Artifact
+      # ======================================================
+      - name: Upload offline bundle
         uses: actions/upload-artifact@v4
         with:
-          name: mosdns-gl-mt3600be
-          path: output/*.ipk
+          name: mosdns-full-offline-gl-mt3600be
+          path: |
+            output/*.ipk
+            output/SHA256SUMS
+            output/*.tar.gz
           if-no-files-found: error
           retention-days: 30
 
       # ======================================================
-      # 18. Upload logs when failed
+      # 22. Publish/update Release automatically
+      #
+      # Release:
+      # mosdns-21.02
+      #
+      # 已存在则覆盖同名 Assets；
+      # 不存在则自动创建。
+      # ======================================================
+      - name: Publish Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          TAG="mosdns-21.02"
+          TITLE="MosDNS OpenWrt 21.02 Offline Bundle"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "[INFO] Release exists, updating assets..."
+
+            gh release upload "$TAG" \
+              output/*.ipk \
+              output/SHA256SUMS \
+              output/*.tar.gz \
+              --clobber
+          else
+            echo "[INFO] Release not found, creating..."
+
+            gh release create "$TAG" \
+              output/*.ipk \
+              output/SHA256SUMS \
+              output/*.tar.gz \
+              --target main \
+              --title "$TITLE" \
+              --notes "MosDNS offline packages for GL-MT3600BE / OpenWrt 21.02 / aarch64_cortex-a53."
+          fi
+
+      # ======================================================
+      # 23. Upload logs on failure
       # ======================================================
       - name: Upload build logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: mosdns-build-logs
+          name: mosdns-full-build-logs
           path: |
+            /tmp/ucode-build.log
+            /tmp/curl-build.log
+            /tmp/v2ray-geodata-build.log
+            /tmp/v2dat-build.log
             /tmp/mosdns-build.log
             /tmp/luci-mosdns-build.log
           if-no-files-found: ignore
