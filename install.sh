@@ -1,8 +1,21 @@
 #!/bin/sh
 
+# ============================================================
+# Open-Pro-Installer
+# Main Installer
+# ============================================================
+
+
+# ============================================================
+# 获取脚本目录
+# ============================================================
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
+
+# ============================================================
+# 加载基础库
+# ============================================================
 
 . "$SCRIPT_DIR/lib/logger.sh"
 . "$SCRIPT_DIR/lib/github.sh"
@@ -16,10 +29,9 @@ fi
 clear
 
 
-
-# ==============================
+# ============================================================
 # Color
-# ==============================
+# ============================================================
 
 GREEN="$(printf '\033[32m')"
 CYAN="$(printf '\033[36m')"
@@ -29,10 +41,9 @@ YELLOW="$(printf '\033[33m')"
 RESET="$(printf '\033[0m')"
 
 
-
-# ==============================
+# ============================================================
 # 返回提示
-# ==============================
+# ============================================================
 
 pause()
 {
@@ -42,472 +53,485 @@ pause()
 }
 
 
-
-# ==============================
+# ============================================================
 # 主菜单
-# ==============================
+# ============================================================
 
 main_menu()
 {
+    while true
+    do
 
-while true
-do
+        clear
 
+        printf "\n"
 
-clear
+        printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
+        printf "%b\n" "${BLUE}║${GREEN}             ZIMO--工具箱             ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${GREEN}                 v1.0.0               ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [1] 一键仿 iStoreOS 主题            ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [2] 安装 iStore 商店                ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [3] 安装代理工具                    ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [4] 解锁区域限制                    ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [5] 修改云服务                      ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [0] 退出                            ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
+        printf "\n"
 
-printf "\n"
+        printf "%b" "${YELLOW}选择序列 > ${RESET}"
 
-printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
-printf "%b\n" "${BLUE}║${GREEN}             ZIMO--工具箱             ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${GREEN}                 v1.0.0               ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
-printf "%b\n" "${BLUE}║${CYAN}  [1] 一键仿 iStoreOS 主题            ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${CYAN}  [2] 安装 iStore 商店                ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${CYAN}  [3] 安装代理工具                    ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${CYAN}  [4] 解锁区域限制                    ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${CYAN}  [0] 退出                            ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
+        read CHOOSE </dev/tty
 
 
-printf "\n"
+        case "$CHOOSE" in
 
-printf "%b" "${YELLOW}选择序列 > ${RESET}"
 
-read CHOOSE </dev/tty
+        # ====================================================
+        # 1. iStoreOS 主题
+        # ====================================================
 
+        1)
 
+            if [ -f "$SCRIPT_DIR/modules/theme.sh" ]
+            then
 
-case "$CHOOSE" in
+                . "$SCRIPT_DIR/modules/theme.sh"
 
+                if command -v install_theme >/dev/null 2>&1
+                then
 
-# ==============================
-# iStoreOS 主题
-# ==============================
+                    install_theme
 
-1)
+                else
 
-if [ -f "$SCRIPT_DIR/modules/theme.sh" ]
-then
+                    printf "%b\n" \
+                        "${RED}theme.sh 缺少 install_theme()${RESET}"
 
-    . "$SCRIPT_DIR/modules/theme.sh"
+                fi
 
-    if command -v install_theme >/dev/null 2>&1
-    then
+            else
 
-        install_theme
+                printf "%b\n" \
+                    "${RED}theme.sh 不存在${RESET}"
 
-    else
+            fi
 
-        printf "%b\n" "${RED}theme.sh 缺少 install_theme()${RESET}"
+            pause
 
-    fi
+        ;;
 
-else
 
-    printf "%b\n" "${RED}theme.sh 不存在${RESET}"
+        # ====================================================
+        # 2. iStore 商店
+        # ====================================================
 
-fi
+        2)
 
-pause
+            if [ -f "$SCRIPT_DIR/modules/istore.sh" ]
+            then
 
-;;
+                . "$SCRIPT_DIR/modules/istore.sh"
 
+                if command -v install_istore >/dev/null 2>&1
+                then
 
+                    install_istore
 
-# ==============================
-# iStore 商店
-# ==============================
+                else
 
-2)
+                    printf "%b\n" \
+                        "${RED}istore.sh 缺少 install_istore()${RESET}"
 
-if [ -f "$SCRIPT_DIR/modules/istore.sh" ]
-then
+                fi
 
-    . "$SCRIPT_DIR/modules/istore.sh"
+            else
 
-    if command -v install_istore >/dev/null 2>&1
-    then
+                printf "%b\n" \
+                    "${RED}istore.sh 不存在${RESET}"
 
-        install_istore
+            fi
 
-    else
+            pause
 
-        printf "%b\n" "${RED}istore.sh 缺少 install_istore()${RESET}"
+        ;;
 
-    fi
 
-else
+        # ====================================================
+        # 3. 代理工具
+        # ====================================================
 
-    printf "%b\n" "${RED}istore.sh 不存在${RESET}"
+        3)
 
-fi
+            proxy_menu
 
-pause
+        ;;
 
-;;
 
+        # ====================================================
+        # 4. 解锁区域限制
+        # ====================================================
 
+        4)
 
-# ==============================
-# 代理工具
-# ==============================
+            if [ -f "$SCRIPT_DIR/modules/unlock.sh" ]
+            then
 
-3)
+                . "$SCRIPT_DIR/modules/unlock.sh"
 
-proxy_menu
+                if command -v region_menu >/dev/null 2>&1
+                then
 
-;;
+                    region_menu
 
+                else
 
+                    printf "%b\n" \
+                        "${RED}unlock.sh 缺少 region_menu()${RESET}"
 
-# ==============================
-# 解锁区域限制
-# ==============================
+                    pause
 
-4)
+                fi
 
-if [ -f "$SCRIPT_DIR/modules/unlock.sh" ]
-then
+            else
 
-    . "$SCRIPT_DIR/modules/unlock.sh"
+                printf "%b\n" \
+                    "${RED}unlock.sh 不存在${RESET}"
 
-    if command -v region_menu >/dev/null 2>&1
-    then
+                pause
 
-        region_menu
+            fi
 
-    else
+        ;;
 
-        printf "%b\n" "${RED}unlock.sh 缺少 region_menu()${RESET}"
-        pause
 
-    fi
+        # ====================================================
+        # 5. 修改云服务
+        # ====================================================
 
-else
+        5)
 
-    printf "%b\n" "${RED}unlock.sh 不存在${RESET}"
+            if [ -f "$SCRIPT_DIR/modules/cloud.sh" ]
+            then
 
-    pause
+                . "$SCRIPT_DIR/modules/cloud.sh"
 
-fi
+                if command -v cloud_menu >/dev/null 2>&1
+                then
 
-;;
+                    cloud_menu
 
+                else
 
+                    printf "%b\n" \
+                        "${RED}cloud.sh 缺少 cloud_menu()${RESET}"
 
-# ==============================
-# 退出
-# ==============================
+                    pause
 
-0)
+                fi
 
-printf "%b\n" "${RED}Exit.${RESET}"
+            else
 
-exit 0
+                printf "%b\n" \
+                    "${RED}cloud.sh 不存在${RESET}"
 
-;;
+                printf "%b\n" \
+                    "${YELLOW}缺少：modules/cloud.sh${RESET}"
 
+                pause
 
+            fi
 
-# ==============================
-# 输入错误
-# ==============================
+        ;;
 
-*)
 
-printf "%b\n" "${RED}输入错误${RESET}"
+        # ====================================================
+        # 0. 退出
+        # ====================================================
 
-sleep 1
+        0)
 
-;;
+            printf "%b\n" "${RED}Exit.${RESET}"
 
+            exit 0
 
-esac
+        ;;
 
 
-done
+        # ====================================================
+        # 输入错误
+        # ====================================================
 
+        *)
+
+            printf "%b\n" "${RED}输入错误${RESET}"
+
+            sleep 1
+
+        ;;
+
+
+        esac
+
+    done
 }
 
 
-
-
-# ==============================
+# ============================================================
 # 代理工具菜单
-# ==============================
+# ============================================================
 
 proxy_menu()
 {
+    while true
+    do
 
+        clear
 
-while true
-do
+        printf "\n"
 
+        printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
+        printf "%b\n" "${BLUE}║${GREEN}              代理工具                ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [1] 安装 OpenClash                  ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [2] 安装 SSR Plus+                  ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [3] 安装 PassWall                   ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [4] 安装 PassWall2                  ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}║${CYAN}  [0] 返回主菜单                      ${BLUE}║${RESET}"
+        printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
-clear
+        printf "\n"
 
+        printf "%b" "${YELLOW}选择序列 > ${RESET}"
 
-printf "\n"
+        read PROXY_CHOOSE </dev/tty
 
 
-printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
-printf "%b\n" "${BLUE}║${GREEN}              代理工具                ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
-printf "%b\n" "${BLUE}║${CYAN}  [1] 安装 OpenClash                  ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${CYAN}  [2] 安装 SSR Plus+                  ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${CYAN}  [3] 安装 PassWall                   ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${CYAN}  [4] 安装 PassWall2                  ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}║${CYAN}  [0] 返回主菜单                      ${BLUE}║${RESET}"
-printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
+        case "$PROXY_CHOOSE" in
 
 
-printf "\n"
+        # ====================================================
+        # 1. OpenClash
+        # ====================================================
 
-printf "%b" "${YELLOW}选择序列 > ${RESET}"
+        1)
 
-read PROXY_CHOOSE </dev/tty
+            printf "%b\n" \
+                "${GREEN}===== OpenClash =====${RESET}"
 
 
+            if [ ! -f "$SCRIPT_DIR/modules/openclash.sh" ]
+            then
 
-case "$PROXY_CHOOSE" in
+                printf "%b\n" \
+                    "${RED}OpenClash模块不存在${RESET}"
 
+                printf "%b\n" \
+                    "${YELLOW}缺少：modules/openclash.sh${RESET}"
 
+                pause
 
-# ============================================================
-# 1. OpenClash
-# ============================================================
+                continue
 
-1)
+            fi
 
 
-printf "%b\n" "${GREEN}===== OpenClash =====${RESET}"
+            if get_latest_release
+            then
 
+                . "$SCRIPT_DIR/modules/openclash.sh"
 
-if [ ! -f "$SCRIPT_DIR/modules/openclash.sh" ]
-then
 
-    printf "%b\n" "${RED}OpenClash模块不存在${RESET}"
-    printf "%b\n" "${YELLOW}缺少：modules/openclash.sh${RESET}"
+                if command -v install_openclash >/dev/null 2>&1
+                then
 
-    pause
+                    install_openclash
 
-    continue
+                else
 
-fi
+                    printf "%b\n" \
+                        "${RED}OpenClash模块缺少 install_openclash()${RESET}"
 
+                fi
 
-if get_latest_release
-then
+            else
 
-    . "$SCRIPT_DIR/modules/openclash.sh"
+                printf "%b\n" \
+                    "${RED}OpenClash版本获取失败${RESET}"
 
+            fi
 
-    if command -v install_openclash >/dev/null 2>&1
-    then
 
-        install_openclash
+            pause
 
-    else
+        ;;
 
-        printf "%b\n" "${RED}OpenClash模块缺少 install_openclash()${RESET}"
 
-    fi
+        # ====================================================
+        # 2. SSR Plus+
+        # ====================================================
 
-else
+        2)
 
-    printf "%b\n" "${RED}OpenClash版本获取失败${RESET}"
+            printf "%b\n" \
+                "${GREEN}===== SSR Plus+ =====${RESET}"
 
-fi
 
+            if [ -f "$SCRIPT_DIR/modules/ssrplus.sh" ]
+            then
 
-pause
+                . "$SCRIPT_DIR/modules/ssrplus.sh"
 
 
-;;
+                if command -v install_ssrplus >/dev/null 2>&1
+                then
 
+                    install_ssrplus
 
+                else
 
-# ============================================================
-# 2. SSR Plus+
-# ============================================================
+                    printf "%b\n" \
+                        "${RED}SSR Plus模块缺少 install_ssrplus()${RESET}"
 
-2)
+                fi
 
+            else
 
-printf "%b\n" "${GREEN}===== SSR Plus+ =====${RESET}"
+                printf "%b\n" \
+                    "${RED}SSR Plus模块不存在${RESET}"
 
+                printf "%b\n" \
+                    "${YELLOW}缺少：modules/ssrplus.sh${RESET}"
 
-if [ -f "$SCRIPT_DIR/modules/ssrplus.sh" ]
-then
+            fi
 
 
-    . "$SCRIPT_DIR/modules/ssrplus.sh"
+            pause
 
+        ;;
 
-    if command -v install_ssrplus >/dev/null 2>&1
-    then
 
-        install_ssrplus
+        # ====================================================
+        # 3. PassWall
+        # ====================================================
 
-    else
+        3)
 
-        printf "%b\n" "${RED}SSR Plus模块缺少 install_ssrplus()${RESET}"
+            printf "%b\n" \
+                "${GREEN}===== PassWall =====${RESET}"
 
-    fi
 
+            if [ -f "$SCRIPT_DIR/modules/passwall.sh" ]
+            then
 
-else
+                . "$SCRIPT_DIR/modules/passwall.sh"
 
 
-    printf "%b\n" "${RED}SSR Plus模块不存在${RESET}"
-    printf "%b\n" "${YELLOW}缺少：modules/ssrplus.sh${RESET}"
+                if command -v install_passwall >/dev/null 2>&1
+                then
 
+                    install_passwall
 
-fi
+                else
 
+                    printf "%b\n" \
+                        "${RED}PassWall模块缺少 install_passwall()${RESET}"
 
-pause
+                fi
 
+            else
 
-;;
+                printf "%b\n" \
+                    "${RED}PassWall模块不存在${RESET}"
 
+                printf "%b\n" \
+                    "${YELLOW}缺少：modules/passwall.sh${RESET}"
 
+            fi
 
-# ============================================================
-# 3. PassWall
-# ============================================================
 
-3)
+            pause
 
+        ;;
 
-printf "%b\n" "${GREEN}===== PassWall =====${RESET}"
 
+        # ====================================================
+        # 4. PassWall2
+        # ====================================================
 
-if [ -f "$SCRIPT_DIR/modules/passwall.sh" ]
-then
+        4)
 
+            printf "%b\n" \
+                "${GREEN}===== PassWall2 =====${RESET}"
 
-    . "$SCRIPT_DIR/modules/passwall.sh"
 
+            if [ -f "$SCRIPT_DIR/modules/passwall2.sh" ]
+            then
 
-    if command -v install_passwall >/dev/null 2>&1
-    then
+                . "$SCRIPT_DIR/modules/passwall2.sh"
 
-        install_passwall
 
-    else
+                if command -v install_passwall2 >/dev/null 2>&1
+                then
 
-        printf "%b\n" "${RED}PassWall模块缺少 install_passwall()${RESET}"
+                    install_passwall2
 
-    fi
+                else
 
+                    printf "%b\n" \
+                        "${RED}PassWall2模块缺少 install_passwall2()${RESET}"
 
-else
+                fi
 
+            else
 
-    printf "%b\n" "${RED}PassWall模块不存在${RESET}"
-    printf "%b\n" "${YELLOW}缺少：modules/passwall.sh${RESET}"
+                printf "%b\n" \
+                    "${RED}PassWall2模块不存在${RESET}"
 
+                printf "%b\n" \
+                    "${YELLOW}缺少：modules/passwall2.sh${RESET}"
 
-fi
+            fi
 
 
-pause
+            pause
 
+        ;;
 
-;;
 
+        # ====================================================
+        # 0. 返回主菜单
+        # ====================================================
 
+        0)
 
-# ============================================================
-# 4. PassWall2
-# ============================================================
+            return
 
-4)
+        ;;
 
 
-printf "%b\n" "${GREEN}===== PassWall2 =====${RESET}"
+        # ====================================================
+        # 输入错误
+        # ====================================================
 
+        *)
 
-if [ -f "$SCRIPT_DIR/modules/passwall2.sh" ]
-then
+            printf "%b\n" "${RED}输入错误${RESET}"
 
+            sleep 1
 
-    . "$SCRIPT_DIR/modules/passwall2.sh"
+        ;;
 
 
-    if command -v install_passwall2 >/dev/null 2>&1
-    then
+        esac
 
-        install_passwall2
-
-    else
-
-        printf "%b\n" "${RED}PassWall2模块缺少 install_passwall2()${RESET}"
-
-    fi
-
-
-else
-
-
-    printf "%b\n" "${RED}PassWall2模块不存在${RESET}"
-    printf "%b\n" "${YELLOW}缺少：modules/passwall2.sh${RESET}"
-
-
-fi
-
-
-pause
-
-
-;;
-
-
-
-# ============================================================
-# 0. 返回主菜单
-# ============================================================
-
-0)
-
-
-return
-
-
-;;
-
-
-
-# ============================================================
-# 输入错误
-# ============================================================
-
-*)
-
-
-printf "%b\n" "${RED}输入错误${RESET}"
-
-sleep 1
-
-
-;;
-
-
-esac
-
-
-done
-
+    done
 }
 
 
-
-
-# ==============================
+# ============================================================
 # Start
-# ==============================
+# ============================================================
 
 main_menu
