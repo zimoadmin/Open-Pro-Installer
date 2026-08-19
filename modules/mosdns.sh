@@ -1205,16 +1205,7 @@ install_mosdns() {
     cleanup_mosdns_logs
     trap - INT TERM
 
-    printf '\n======================================\n          MosDNS Installed\n======================================\n\n'
     _mos_ok "MosDNS 安装完成"
-    _mos_info "CPU      : $MOSDNS_CPU_ARCH"
-    _mos_info "Arch     : $MOSDNS_ARCH"
-    _mos_info "SDK      : $MOSDNS_SDK"
-    _mos_info "Package  : $MOSDNS_PKG_EXT"
-    [ -n "$MOSDNS_VERSION" ] && _mos_info "Version  : $MOSDNS_VERSION"
-    if rpc_mosdns_exists; then _mos_ok "RPC      : luci.mosdns 正常"; else _mos_warn "RPC      : luci.mosdns 未注册"; fi
-    if verify_mosdns_rpc_methods; then _mos_ok "RPC API  : start_update / get_update_log 正常"; else _mos_warn "RPC API  : 更新方法验证失败"; fi
-    if check_mosdns_ucode_modules; then _mos_ok "Ucode    : fs / uci / ubus 正常"; else _mos_warn "Ucode    : 缺少 fs / uci / ubus 模块，数据库在线更新不可用"; fi
-    printf '\nLuCI：服务 → MosDNS\n\n'
+    printf '\n'
     return 0
 }
