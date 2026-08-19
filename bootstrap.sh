@@ -9,14 +9,17 @@
 
 # ======================================
 # Color
+# 高亮 + 粗体
 # ======================================
 
-GREEN="\033[32m"
-BLUE="\033[34m"
-CYAN="\033[36m"
-YELLOW="\033[33m"
-RED="\033[31m"
-RESET="\033[0m"
+BOLD="$(printf '\033[1m')"
+GREEN="$(printf '\033[1;92m')"
+BLUE="$(printf '\033[1;94m')"
+CYAN="$(printf '\033[1;96m')"
+YELLOW="$(printf '\033[1;93m')"
+RED="$(printf '\033[1;91m')"
+WHITE="$(printf '\033[1;97m')"
+RESET="$(printf '\033[0m')"
 
 
 # ======================================
@@ -36,24 +39,31 @@ ZIP_FILE="$WORKDIR/main.zip"
 # Header
 # ======================================
 
-echo ""
+printf "\n"
 
 
 # ======================================
 # Disclaimer
+# 高亮 + 粗体版本
 # ======================================
 
 printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
 printf "%b\n" "${BLUE}║${GREEN}              免责声明                ${BLUE}║${RESET}"
 printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
+
 printf "%b\n" "${BLUE}║${CYAN} 本工具仅用于学习交流和个人设备管理。 ${BLUE}║${RESET}"
 printf "%b\n" "${BLUE}║${CYAN} 使用本工具产生的风险由用户承担。     ${BLUE}║${RESET}"
 printf "%b\n" "${BLUE}║${CYAN} 请勿用于违反当地法律法规的用途。     ${BLUE}║${RESET}"
+
 printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
+
 printf "%b\n" "${BLUE}║${YELLOW} 是否同意以上免责声明？(Y/N)          ${BLUE}║${RESET}"
+
 printf "%b\n" "${BLUE}╚══════════════════════════════════════╝${RESET}"
 
-printf "%b" "${YELLOW} 输入 > ${RESET}"
+printf "\n"
+
+printf "%b" "${YELLOW}输入 > ${RESET}"
 
 read AGREE </dev/tty
 
@@ -479,8 +489,7 @@ check_luci_dependencies()
 
 
     # ----------------------------------
-    # 两个都已安装
-    # 静默跳过
+    # 两个都已安装则静默跳过
     # ----------------------------------
 
     if [ -z "$NEED_PACKAGES" ]
