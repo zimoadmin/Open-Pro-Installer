@@ -12,7 +12,7 @@
 # 5. OPKG 优先 luci-compat，回退普通 LuCI
 # 6. GH01-GH06 + DIRECT 并行测速
 # 7. 自动选择最快下载线路
-# 8. 完全非静默调试输出
+# 8. 简洁状态输出：原始命令输出统一写入日志
 # 9. 失败自动显示日志
 # 10. 安装后刷新 LuCI
 # 11. 不主动修改 DNS 53 / dnsmasq
@@ -764,12 +764,14 @@ smartdns_download_file()
             if curl -4 \
                 -L \
                 -f \
+                -sS \
                 --connect-timeout 10 \
                 --max-time 300 \
                 --retry 1 \
                 --retry-delay 1 \
                 -o "$OUTPUT" \
-                "$URL"
+                "$URL" \
+                >>"$SMARTDNS_LOG" 2>&1
             then
                 if [ -s "$OUTPUT" ]; then
                     _sd_ok "$LABEL 下载完成（线路：$NAME）"
@@ -788,15 +790,17 @@ smartdns_download_file()
     if curl -4 \
         -L \
         -f \
+        -sS \
         --connect-timeout 10 \
         --max-time 300 \
         --retry 1 \
         --retry-delay 1 \
         -o "$OUTPUT" \
-        "$ORIGINAL"
+        "$ORIGINAL" \
+        >>"$SMARTDNS_LOG" 2>&1
     then
         if [ -s "$OUTPUT" ]; then
-            _sd_ok "$LABEL 下载完成（DIRECT）"
+            _sd_ok "$LABEL 下载完成（线路：DIRECT）"
             return 0
         fi
     fi
@@ -855,7 +859,6 @@ smartdns_fix_uci_state()
 
     uci commit smartdns >/dev/null 2>&1 || return 1
 
-    _sd_ok "SmartDNS UCI 状态初始化完成"
     return 0
 }
 
@@ -867,34 +870,31 @@ smartdns_install_main()
 
     case "$SMARTDNS_PKG_MANAGER" in
         opkg)
-            cp "$SMARTDNS_MAIN_FILE" /tmp/smartdns.ipk || return 1
+            cp "$SMARTDNS_MAIN_FILE" /tmp/smartdns.ipk \
+                >>"$SMARTDNS_LOG" 2>&1 || return 1
 
-            OPKG_TMP_LOG="/tmp/openpro_smartdns_opkg_install.log"
-            rm -f "$OPKG_TMP_LOG"
+            {
+                printf '\n===== SMARTDNS MAIN INSTALL =====\n'
+            } >>"$SMARTDNS_LOG"
 
             opkg install \
                 --force-downgrade \
                 /tmp/smartdns.ipk \
-                >"$OPKG_TMP_LOG" 2>&1
+                >>"$SMARTDNS_LOG" 2>&1
 
             RC=$?
-
-            {
-                printf '\n===== SMARTDNS OPKG RAW LOG =====\n'
-                cat "$OPKG_TMP_LOG"
-                printf '===== END SMARTDNS OPKG RAW LOG =====\n'
-            } >>"$SMARTDNS_LOG"
-
-            sed '/^uci: Entry not found$/d' "$OPKG_TMP_LOG"
-
-            rm -f "$OPKG_TMP_LOG"
             rm -f /tmp/smartdns.ipk
             ;;
 
         apk)
+            {
+                printf '\n===== SMARTDNS MAIN INSTALL =====\n'
+            } >>"$SMARTDNS_LOG"
+
             apk add \
                 --allow-untrusted \
-                "$SMARTDNS_MAIN_FILE"
+                "$SMARTDNS_MAIN_FILE" \
+                >>"$SMARTDNS_LOG" 2>&1
 
             RC=$?
             ;;
@@ -905,13 +905,19 @@ smartdns_install_main()
         return 1
     fi
 
-    if smartdns_package_installed smartdns; then
-        _sd_ok "SmartDNS 主程序安装完成"
-        smartdns_fix_uci_state
-        return 0
+    if ! smartdns_package_installed smartdns; then
+        return 1
     fi
 
-    return 1
+    _sd_ok "SmartDNS 主程序安装完成"
+
+    if ! smartdns_fix_uci_state >>"$SMARTDNS_LOG" 2>&1; then
+        _sd_warn "SmartDNS UCI 状态初始化存在异常，详细信息已写入日志"
+    else
+        _sd_ok "SmartDNS UCI 状态初始化完成"
+    fi
+
+    return 0
 }
 
 smartdns_install_luci()
@@ -922,34 +928,31 @@ smartdns_install_luci()
 
     case "$SMARTDNS_PKG_MANAGER" in
         opkg)
-            cp "$SMARTDNS_LUCI_FILE" /tmp/smartdns_luci.ipk || return 1
+            cp "$SMARTDNS_LUCI_FILE" /tmp/smartdns_luci.ipk \
+                >>"$SMARTDNS_LOG" 2>&1 || return 1
 
-            LUCI_TMP_LOG="/tmp/openpro_smartdns_luci_install.log"
-            rm -f "$LUCI_TMP_LOG"
+            {
+                printf '\n===== SMARTDNS LUCI INSTALL =====\n'
+            } >>"$SMARTDNS_LOG"
 
             opkg install \
                 --force-downgrade \
                 /tmp/smartdns_luci.ipk \
-                >"$LUCI_TMP_LOG" 2>&1
+                >>"$SMARTDNS_LOG" 2>&1
 
             RC=$?
-
-            {
-                printf '\n===== SMARTDNS LUCI OPKG RAW LOG =====\n'
-                cat "$LUCI_TMP_LOG"
-                printf '===== END SMARTDNS LUCI OPKG RAW LOG =====\n'
-            } >>"$SMARTDNS_LOG"
-
-            cat "$LUCI_TMP_LOG"
-
-            rm -f "$LUCI_TMP_LOG"
             rm -f /tmp/smartdns_luci.ipk
             ;;
 
         apk)
+            {
+                printf '\n===== SMARTDNS LUCI INSTALL =====\n'
+            } >>"$SMARTDNS_LOG"
+
             apk add \
                 --allow-untrusted \
-                "$SMARTDNS_LUCI_FILE"
+                "$SMARTDNS_LUCI_FILE" \
+                >>"$SMARTDNS_LOG" 2>&1
 
             RC=$?
             ;;
@@ -960,12 +963,12 @@ smartdns_install_luci()
         return 1
     fi
 
-    if smartdns_package_installed luci-app-smartdns; then
-        _sd_ok "SmartDNS LuCI 安装完成"
-        return 0
+    if ! smartdns_package_installed luci-app-smartdns; then
+        return 1
     fi
 
-    return 1
+    _sd_ok "SmartDNS LuCI 安装完成"
+    return 0
 }
 
 smartdns_detect_running()
@@ -990,15 +993,20 @@ smartdns_refresh_luci()
 
     if [ -x /etc/init.d/rpcd ]; then
         _sd_info "正在重启 rpcd..."
-        /etc/init.d/rpcd restart
+        /etc/init.d/rpcd restart \
+            >>"$SMARTDNS_LOG" 2>&1 || \
+            _sd_warn "rpcd 重启返回异常，详细信息已写入日志"
     fi
 
     if [ -x /etc/init.d/uhttpd ]; then
         _sd_info "正在刷新 uhttpd..."
-        /etc/init.d/uhttpd reload
+        /etc/init.d/uhttpd reload \
+            >>"$SMARTDNS_LOG" 2>&1 || \
+            _sd_warn "uhttpd 刷新返回异常，详细信息已写入日志"
     fi
 
     _sd_ok "LuCI 刷新完成"
+    return 0
 }
 
 smartdns_verify()
@@ -1130,7 +1138,7 @@ install_smartdns()
 
     if [ -x /etc/init.d/smartdns ]; then
         _sd_info "正在停止现有 SmartDNS 服务..."
-        /etc/init.d/smartdns stop
+        /etc/init.d/smartdns stop >>"$SMARTDNS_LOG" 2>&1 || true
     fi
 
     if ! smartdns_install_main; then
@@ -1140,7 +1148,7 @@ install_smartdns()
         if [ "$SMARTDNS_WAS_RUNNING" -eq 1 ] &&
            [ -x /etc/init.d/smartdns ]; then
             _sd_info "正在恢复原 SmartDNS 服务..."
-            /etc/init.d/smartdns start
+            /etc/init.d/smartdns start >>"$SMARTDNS_LOG" 2>&1 || true
         fi
 
         smartdns_cleanup
@@ -1164,10 +1172,10 @@ install_smartdns()
 
     if [ -x /etc/init.d/smartdns ]; then
         _sd_info "正在启用 SmartDNS 开机启动..."
-        /etc/init.d/smartdns enable
+        /etc/init.d/smartdns enable >>"$SMARTDNS_LOG" 2>&1
 
         _sd_info "正在重启 SmartDNS..."
-        /etc/init.d/smartdns restart
+        /etc/init.d/smartdns restart >>"$SMARTDNS_LOG" 2>&1
         RESTART_RC=$?
 
         if [ "$RESTART_RC" -eq 0 ]; then
