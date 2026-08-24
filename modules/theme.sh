@@ -330,7 +330,10 @@ get_package_version()
                 sed -n 's/^Version:[[:space:]]*//p' | head -n 1
         ;;
         apk)
-            apk list --installed "$PACKAGE_NAME" 2>/dev/null | head -n 1
+            apk list --installed "$PACKAGE_NAME" 2>/dev/null |
+                head -n 1 |
+                sed "s/^${PACKAGE_NAME}-//" |
+                sed 's/[[:space:]].*$//'
         ;;
     esac
 }
