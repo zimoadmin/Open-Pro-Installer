@@ -59,6 +59,15 @@ QUICKSTART_CONFIG_URL="https://cafe.cpolar.cn/wkdaily/gl/raw/branch/main/config/
 QUICKSTART_CONFIG_TMP="${THEME_TMP}/quickstart.conf"
 QUICKSTART_CONFIG_BAK="/etc/config/quickstart.openpro.bak"
 
+QUICKSTART_ORIGIN_BASE=""
+QUICKSTART_MIRROR_BASE=""
+QUICKSTART_SELECTED_BASE=""
+QUICKSTART_FALLBACK_BASE=""
+QUICKSTART_INDEX_PATH=""
+QUICKSTART_SOURCE_DIR="${THEME_TMP}/quickstart-speedtest.d"
+QUICKSTART_SOURCE_FILE="${THEME_TMP}/quickstart-sources.list"
+QUICKSTART_PATCHED_IS_OPKG="${THEME_TMP}/is-opkg-selected"
+
 THEME_TEST_CONNECT_TIMEOUT=4
 THEME_TEST_MAX_TIME=6
 THEME_SCORE_FILE_KB=4096
@@ -1357,22 +1366,10 @@ ensure_is_opkg()
 {
     IS_OPKG_BIN=""
 
-    if command -v is-opkg >/dev/null 2>&1; then
-        IS_OPKG_BIN="$(command -v is-opkg)"
-        return 0
-    fi
-
-    if [ -x /bin/is-opkg ]; then
-        IS_OPKG_BIN="/bin/is-opkg"
-        return 0
-    fi
-
-    if [ -x /usr/bin/is-opkg ]; then
-        IS_OPKG_BIN="/usr/bin/is-opkg"
-        return 0
-    fi
-
+    # 始终优先使用 LinkEase 官方最新 is-opkg，
+    # 确保 OpenWrt 25.x / APK 能正确走 repo-apk。
     IS_OPKG_BIN="${THEME_TMP}/is-opkg"
+
     _theme_info "正在下载 LinkEase 官方 is-opkg..."
 
     if ! download_direct "$IS_OPKG_URL" "$IS_OPKG_BIN"; then
@@ -1381,8 +1378,223 @@ ensure_is_opkg()
         return 1
     fi
 
-    chmod 755 "$IS_OPKG_BIN" || return 1
+    chmod 755 "$IS_OPKG_BIN" >>"$THEME_LOG" 2>&1 || {
+        _theme_error "is-opkg 设置执行权限失败"
+        IS_OPKG_BIN=""
+        return 1
+    }
+
     return 0
+}
+
+select_quickstart_repo()
+{
+    case "$PKG_MANAGER" in
+        apk)
+            QUICKSTART_ORIGIN_BASE="https://istore.istoreos.com/repo-apk"
+            QUICKSTART_MIRROR_BASE="https://repo.istoreos.com/repo-apk"
+            QUICKSTART_INDEX_PATH="/all/store/packages.adb"
+        ;;
+        opkg)
+            QUICKSTART_ORIGIN_BASE="https://istore.istoreos.com/repo"
+            QUICKSTART_MIRROR_BASE="https://repo.istoreos.com/repo"
+            QUICKSTART_INDEX_PATH="/all/store/Packages.gz"
+        ;;
+        *)
+            _theme_error "无法为 QuickStart 选择软件源"
+            return 1
+        ;;
+    esac
+
+    _theme_info "QuickStart策略 : OpenWrt ${OPENWRT_MAJOR}.x / $PKG_MANAGER"
+    _theme_info "QuickStart格式 : .$ARGON_PACKAGE_TYPE"
+    return 0
+}
+
+test_quickstart_source_background()
+{
+    SOURCE_NAME="$1"
+    SOURCE_BASE="$2"
+    RESULT_FILE="$3"
+    TEST_FILE="$4"
+
+    TEST_URL="${SOURCE_BASE}${QUICKSTART_INDEX_PATH}"
+    TEST_DATA="$(test_theme_route "$TEST_URL" "$TEST_FILE")"
+
+    if [ $? -ne 0 ] || [ -z "$TEST_DATA" ]; then
+        printf '%s|FAIL\n' "$SOURCE_NAME" > "$RESULT_FILE"
+        return 1
+    fi
+
+    TTFB_MS="$(printf '%s' "$TEST_DATA" | cut -d '|' -f 1)"
+    SPEED_BPS="$(printf '%s' "$TEST_DATA" | cut -d '|' -f 2)"
+    SCORE="$(printf '%s' "$TEST_DATA" | cut -d '|' -f 3)"
+
+    printf '%s|OK|%s|%s|%s|%s\n' \
+        "$SOURCE_NAME" \
+        "$SOURCE_BASE" \
+        "$TTFB_MS" \
+        "$SPEED_BPS" \
+        "$SCORE" \
+        > "$RESULT_FILE"
+
+    return 0
+}
+
+prepare_quickstart_sources()
+{
+    if ! select_quickstart_repo; then
+        return 1
+    fi
+
+    rm -rf "$QUICKSTART_SOURCE_DIR"
+    rm -f "$QUICKSTART_SOURCE_FILE"
+    mkdir -p "$QUICKSTART_SOURCE_DIR" || return 1
+
+    printf "\n"
+    _theme_info "正在并行测试 QuickStart 软件源..."
+    printf "\n"
+
+    test_quickstart_source_background \
+        "MIRROR" \
+        "$QUICKSTART_MIRROR_BASE" \
+        "$QUICKSTART_SOURCE_DIR/result_MIRROR" \
+        "$QUICKSTART_SOURCE_DIR/download_MIRROR" &
+
+    test_quickstart_source_background \
+        "ORIGIN" \
+        "$QUICKSTART_ORIGIN_BASE" \
+        "$QUICKSTART_SOURCE_DIR/result_ORIGIN" \
+        "$QUICKSTART_SOURCE_DIR/download_ORIGIN" &
+
+    wait
+
+    printf '%-10s %-12s %-14s\n' "线路" "延迟" "下载速度"
+    printf '%-10s %-12s %-14s\n' "----------" "------------" "--------------"
+
+    for SOURCE_NAME in MIRROR ORIGIN
+    do
+        RESULT_FILE="$QUICKSTART_SOURCE_DIR/result_${SOURCE_NAME}"
+
+        if [ ! -s "$RESULT_FILE" ] ||
+           [ "$(cut -d '|' -f 2 "$RESULT_FILE")" != "OK" ]
+        then
+            printf '%-10s %-12s %-14s\n' "$SOURCE_NAME" "----" "----"
+            continue
+        fi
+
+        SOURCE_BASE="$(cut -d '|' -f 3 "$RESULT_FILE")"
+        TTFB_MS="$(cut -d '|' -f 4 "$RESULT_FILE")"
+        SPEED_BPS="$(cut -d '|' -f 5 "$RESULT_FILE")"
+        SCORE="$(cut -d '|' -f 6 "$RESULT_FILE")"
+        SPEED_MB="$(theme_speed_to_mb "$SPEED_BPS")"
+
+        printf '%-10s %-12s %-14s\n' \
+            "$SOURCE_NAME" \
+            "${TTFB_MS} ms" \
+            "${SPEED_MB} MB/s"
+
+        printf '%s|%s|%s|%s|%s\n' \
+            "$SCORE" \
+            "$SOURCE_NAME" \
+            "$SOURCE_BASE" \
+            "$TTFB_MS" \
+            "$SPEED_BPS" \
+            >> "$QUICKSTART_SOURCE_FILE"
+    done
+
+    rm -rf "$QUICKSTART_SOURCE_DIR"
+
+    if [ ! -s "$QUICKSTART_SOURCE_FILE" ]; then
+        _theme_warn "QuickStart 软件源测速全部失败，将使用官方默认镜像策略"
+        QUICKSTART_SELECTED_BASE=""
+        QUICKSTART_FALLBACK_BASE=""
+        return 0
+    fi
+
+    sort -n -t '|' -k 1,1 \
+        "$QUICKSTART_SOURCE_FILE" \
+        > "${QUICKSTART_SOURCE_FILE}.sorted"
+
+    if [ -s "${QUICKSTART_SOURCE_FILE}.sorted" ]; then
+        mv "${QUICKSTART_SOURCE_FILE}.sorted" "$QUICKSTART_SOURCE_FILE"
+    fi
+
+    BEST_LINE="$(sed -n '1p' "$QUICKSTART_SOURCE_FILE")"
+    BEST_NAME="$(printf '%s' "$BEST_LINE" | cut -d '|' -f 2)"
+    QUICKSTART_SELECTED_BASE="$(printf '%s' "$BEST_LINE" | cut -d '|' -f 3)"
+    BEST_TTFB="$(printf '%s' "$BEST_LINE" | cut -d '|' -f 4)"
+    BEST_SPEED="$(printf '%s' "$BEST_LINE" | cut -d '|' -f 5)"
+
+    if [ "$QUICKSTART_SELECTED_BASE" = "$QUICKSTART_MIRROR_BASE" ]; then
+        QUICKSTART_FALLBACK_BASE="$QUICKSTART_ORIGIN_BASE"
+    else
+        QUICKSTART_FALLBACK_BASE="$QUICKSTART_MIRROR_BASE"
+    fi
+
+    printf "\n"
+    _theme_ok "QuickStart 最佳线路：$BEST_NAME"
+    _theme_info "延迟：${BEST_TTFB} ms"
+    _theme_info "下载速度：$(theme_speed_to_mb "$BEST_SPEED") MB/s"
+    printf "\n"
+
+    return 0
+}
+
+patch_is_opkg_source()
+{
+    [ -n "$IS_OPKG_BIN" ] || return 1
+    [ -x "$IS_OPKG_BIN" ] || return 1
+
+    # 如果测速失败，则直接使用官方 is-opkg 自带的镜像/回源机制。
+    if [ -z "$QUICKSTART_SELECTED_BASE" ] ||
+       [ -z "$QUICKSTART_FALLBACK_BASE" ]
+    then
+        return 0
+    fi
+
+    cp -f "$IS_OPKG_BIN" "$QUICKSTART_PATCHED_IS_OPKG" \
+        >>"$THEME_LOG" 2>&1 || return 1
+
+    case "$PKG_MANAGER" in
+        apk)
+            sed \
+                -e "s#^FEEDS_SERVER=https://istore\\.istoreos\\.com/repo-apk\$#FEEDS_SERVER=${QUICKSTART_FALLBACK_BASE}#" \
+                -e "s#^FEEDS_SERVER_MIRRORS=\"https://repo\\.istoreos\\.com/repo-apk\"\$#FEEDS_SERVER_MIRRORS=\"${QUICKSTART_SELECTED_BASE}\"#" \
+                "$QUICKSTART_PATCHED_IS_OPKG" \
+                > "${QUICKSTART_PATCHED_IS_OPKG}.tmp" || return 1
+        ;;
+        opkg)
+            sed \
+                -e "s#^FEEDS_SERVER=https://istore\\.istoreos\\.com/repo\$#FEEDS_SERVER=${QUICKSTART_FALLBACK_BASE}#" \
+                -e "s#^FEEDS_SERVER_MIRRORS=\"https://repo\\.istoreos\\.com/repo\"\$#FEEDS_SERVER_MIRRORS=\"${QUICKSTART_SELECTED_BASE}\"#" \
+                "$QUICKSTART_PATCHED_IS_OPKG" \
+                > "${QUICKSTART_PATCHED_IS_OPKG}.tmp" || return 1
+        ;;
+        *)
+            return 1
+        ;;
+    esac
+
+    mv "${QUICKSTART_PATCHED_IS_OPKG}.tmp" "$QUICKSTART_PATCHED_IS_OPKG" || return 1
+    chmod 755 "$QUICKSTART_PATCHED_IS_OPKG" || return 1
+
+    IS_OPKG_BIN="$QUICKSTART_PATCHED_IS_OPKG"
+
+    _theme_info "QuickStart 下载源：$QUICKSTART_SELECTED_BASE"
+    _theme_info "QuickStart 备用源：$QUICKSTART_FALLBACK_BASE"
+
+    return 0
+}
+
+get_quickstart_online_version()
+{
+    [ -n "$IS_OPKG_BIN" ] || return 0
+    [ -x "$IS_OPKG_BIN" ] || return 0
+
+    "$IS_OPKG_BIN" info luci-app-quickstart 2>/dev/null |
+        sed -n 's/^Version:[[:space:]]*//p' |
+        head -n 1
 }
 
 apply_quickstart_config()
@@ -1394,18 +1606,24 @@ apply_quickstart_config()
         return 0
     fi
 
-    if [ -f /etc/config/quickstart ] && [ ! -f "$QUICKSTART_CONFIG_BAK" ]; then
-        cp -f /etc/config/quickstart "$QUICKSTART_CONFIG_BAK" >>"$THEME_LOG" 2>&1
+    if [ -f /etc/config/quickstart ] &&
+       [ ! -f "$QUICKSTART_CONFIG_BAK" ]
+    then
+        cp -f /etc/config/quickstart "$QUICKSTART_CONFIG_BAK" \
+            >>"$THEME_LOG" 2>&1
     fi
 
-    cp -f "$QUICKSTART_CONFIG_TMP" /etc/config/quickstart >>"$THEME_LOG" 2>&1 || return 0
+    cp -f "$QUICKSTART_CONFIG_TMP" /etc/config/quickstart \
+        >>"$THEME_LOG" 2>&1 || return 0
 
     if ! uci -q show quickstart >/dev/null 2>&1; then
         _theme_warn "QuickStart 配置与当前版本不兼容"
 
         if [ -f "$QUICKSTART_CONFIG_BAK" ]; then
-            cp -f "$QUICKSTART_CONFIG_BAK" /etc/config/quickstart
+            cp -f "$QUICKSTART_CONFIG_BAK" /etc/config/quickstart \
+                >>"$THEME_LOG" 2>&1
         fi
+
         return 0
     fi
 
@@ -1415,32 +1633,76 @@ apply_quickstart_config()
 
 install_quickstart()
 {
-    if [ "$PKG_MANAGER" != "opkg" ]; then
-        _theme_warn "当前为 APK 系统，跳过 OPKG QuickStart"
-        return 0
-    fi
-
-    if verify_quickstart_install; then
-        _theme_ok "首页 + 网络向导已安装"
-        apply_quickstart_config
-        return 0
-    fi
+    printf "\n===== QuickStart Install =====\n" >>"$THEME_LOG"
 
     if ! ensure_is_opkg; then
         return 1
     fi
 
-    printf "\n===== QuickStart Install =====\n" >>"$THEME_LOG"
+    if ! prepare_quickstart_sources; then
+        _theme_warn "QuickStart 软件源测速失败，继续使用官方默认策略"
+    fi
+
+    if ! patch_is_opkg_source; then
+        _theme_warn "QuickStart 最快源应用失败，继续使用官方默认策略"
+        IS_OPKG_BIN="${THEME_TMP}/is-opkg"
+    fi
+
+    if verify_quickstart_install; then
+        _theme_ok "首页 + 网络向导已安装"
+
+        QUICKSTART_ONLINE_VERSION="$(get_quickstart_online_version)"
+        [ -n "$QUICKSTART_ONLINE_VERSION" ] &&
+            _theme_info "QuickStart版本 : $QUICKSTART_ONLINE_VERSION"
+
+        theme_progress 86 "正在配置首页和网络向导..."
+        printf "\n"
+        apply_quickstart_config
+        return 0
+    fi
 
     theme_progress 70 "正在更新 QuickStart 索引..."
-    "$IS_OPKG_BIN" update >>"$THEME_LOG" 2>&1
+    printf "\n"
+
+    if ! "$IS_OPKG_BIN" update >>"$THEME_LOG" 2>&1; then
+        _theme_warn "QuickStart 索引更新失败，继续尝试安装"
+    fi
+
+    QUICKSTART_ONLINE_VERSION="$(get_quickstart_online_version)"
+    if [ -n "$QUICKSTART_ONLINE_VERSION" ]; then
+        _theme_info "QuickStart版本 : $QUICKSTART_ONLINE_VERSION"
+    fi
+
+    _theme_info "匹配软件包    : quickstart"
+    _theme_info "匹配软件包    : luci-app-quickstart"
+    _theme_info "匹配中文包    : luci-i18n-quickstart-zh-cn"
 
     theme_progress 78 "正在安装首页和网络向导..."
-    "$IS_OPKG_BIN" install luci-i18n-quickstart-zh-cn >>"$THEME_LOG" 2>&1
+    printf "\n"
 
-    if ! verify_quickstart_install; then
-        _theme_warn "普通安装失败，尝试 --force-depends"
-        "$IS_OPKG_BIN" install luci-i18n-quickstart-zh-cn --force-depends >>"$THEME_LOG" 2>&1
+    "$IS_OPKG_BIN" install luci-i18n-quickstart-zh-cn \
+        >>"$THEME_LOG" 2>&1
+    INSTALL_RESULT=$?
+
+    if [ "$INSTALL_RESULT" -ne 0 ] ||
+       ! verify_quickstart_install
+    then
+        if [ "$PKG_MANAGER" = "opkg" ]; then
+            _theme_warn "普通安装失败，尝试 OPKG 兼容模式"
+
+            "$IS_OPKG_BIN" install \
+                luci-i18n-quickstart-zh-cn \
+                --force-depends \
+                >>"$THEME_LOG" 2>&1
+        else
+            _theme_warn "首次安装未完成，APK 模式重新刷新索引后重试"
+
+            "$IS_OPKG_BIN" update >>"$THEME_LOG" 2>&1
+
+            "$IS_OPKG_BIN" install \
+                luci-i18n-quickstart-zh-cn \
+                >>"$THEME_LOG" 2>&1
+        fi
     fi
 
     if ! verify_quickstart_install; then
@@ -1450,7 +1712,16 @@ install_quickstart()
 
     theme_progress 86 "正在配置首页和网络向导..."
     printf "\n"
+
     apply_quickstart_config
+
+    rm -rf \
+        /tmp/luci-indexcache \
+        /tmp/luci-modulecache \
+        /tmp/luci-templatecache \
+        /tmp/luci-*cache* \
+        >/dev/null 2>&1
+
     _theme_ok "首页 + 网络向导安装成功"
     return 0
 }
