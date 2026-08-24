@@ -443,9 +443,28 @@ fetch_argon_release()
             ARGON_LANG_URL="$(grep '/luci-i18n-argon-config-zh-cn_[^/]*\.ipk$' "$ARGON_ASSET_LIST" | head -n 1)"
         ;;
         apk)
-            ARGON_THEME_URL="$(grep '/luci-theme-argon_[^/]*\.apk$' "$ARGON_ASSET_LIST" | head -n 1)"
-            ARGON_CONFIG_URL="$(grep '/luci-app-argon-config_[^/]*\.apk$' "$ARGON_ASSET_LIST" | head -n 1)"
-            ARGON_LANG_URL="$(grep '/luci-i18n-argon-config-zh-cn_[^/]*\.apk$' "$ARGON_ASSET_LIST" | head -n 1)"
+            # OpenWrt 25.x / APK：
+            # Argon 官方 APK 使用 "-" 命名，例如：
+            # luci-theme-argon-2.4.5-r1.apk
+            # luci-app-argon-config-2.4.5-r1.apk
+            # 同时兼容可能出现的 "_" 命名。
+            ARGON_THEME_URL="$(
+                grep -E '/luci-theme-argon[-_][^/]*\.apk$' \
+                    "$ARGON_ASSET_LIST" |
+                head -n 1
+            )"
+
+            ARGON_CONFIG_URL="$(
+                grep -E '/luci-app-argon-config[-_][^/]*\.apk$' \
+                    "$ARGON_ASSET_LIST" |
+                head -n 1
+            )"
+
+            ARGON_LANG_URL="$(
+                grep -E '/luci-i18n-argon-config-zh-cn[-_][^/]*\.apk$' \
+                    "$ARGON_ASSET_LIST" |
+                head -n 1
+            )"
         ;;
     esac
 
@@ -1531,7 +1550,10 @@ install_theme()
         trap - INT TERM
         return 1
     fi
+
+    # 结束 64% 进度条当前行，避免和菜单修复提示粘在一起
     printf "\n"
+
     apply_argon21_menu_fix
 
     theme_progress 67 "正在准备首页和网络向导..."
