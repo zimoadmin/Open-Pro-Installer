@@ -1531,7 +1531,7 @@ install_theme()
         trap - INT TERM
         return 1
     fi
-
+    printf "\n"
     apply_argon21_menu_fix
 
     theme_progress 67 "正在准备首页和网络向导..."
