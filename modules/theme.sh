@@ -7,33 +7,6 @@
 # 支持：
 #   OpenWrt 21.x / 22.x / 23.x / 24.x / 25.x
 #   OPKG / APK 自动识别
-#
-# 功能：
-# 1. 自动检测 OpenWrt / 设备 / CPU / 软件包架构
-# 2. 根据 OpenWrt 主版本选择兼容 Argon
-# 3. 21.x 优先使用兼容版 Argon v2.2.9
-# 4. 新版 OpenWrt 优先使用 Argon 最新 Release
-# 5. 自动识别 IPK / APK
-# 6. GitHub API DIRECT
-# 7. API 失败自动使用普通 Release 页面
-# 8. GH01-GH06 + DIRECT 七线路并行测速
-# 9. 显示首包延迟 + 下载速度
-# 10. 综合首包和下载速度选择最佳线路
-# 11. 最佳线路失败自动切换下一线路
-# 12. 所有代理失败自动 DIRECT
-# 13. 自动安装 Argon Theme / Config
-# 14. 自动设置 Argon 默认主题
-# 15. Argon 不兼容时自动恢复 Bootstrap
-# 16. QuickStart 使用 LinkEase 官方 is-opkg
-# 17. 自动安装 首页 + 网络向导
-# 18. 自动应用 iStoreOS QuickStart 配置
-# 19. 自动刷新 LuCI
-# 20. BusyBox / OpenWrt /bin/sh Compatible
-# ============================================================
-
-
-# ============================================================
-# 颜色
 # ============================================================
 
 GREEN="$(printf '\033[32m')"
@@ -43,22 +16,11 @@ YELLOW="$(printf '\033[33m')"
 CYAN="$(printf '\033[36m')"
 RESET="$(printf '\033[0m')"
 
-
-# ============================================================
-# 临时目录
-# ============================================================
-
 THEME_TMP="/tmp/openpro-theme"
 THEME_LOG="/tmp/openpro-theme.log"
-
 THEME_ROUTE_FILE="/tmp/openpro_theme_routes"
 THEME_SORTED_FILE="/tmp/openpro_theme_routes.sorted"
 THEME_TEST_DIR="/tmp/openpro_theme_speedtest.d"
-
-
-# ============================================================
-# 系统信息
-# ============================================================
 
 MODEL=""
 CPU_ARCH=""
@@ -68,55 +30,29 @@ OPENWRT_MAJOR=""
 PKG_MANAGER=""
 ARGON_PACKAGE_TYPE=""
 
-
-# ============================================================
-# Argon
-# ============================================================
-
 ARGON_REPO="jerrykuku/luci-theme-argon"
-
 ARGON_RELEASE_API="https://api.github.com/repos/${ARGON_REPO}/releases/latest"
-
 ARGON_RELEASE_JSON="${THEME_TMP}/argon_release.json"
 ARGON_ASSET_LIST="${THEME_TMP}/argon_assets.list"
-ARGON_RELEASE_HEADERS="${THEME_TMP}/argon_headers"
 ARGON_EXPANDED_ASSETS="${THEME_TMP}/argon_assets.html"
-
 ARGON_RELEASE_TAG=""
 ARGON_TARGET_TAG=""
-
 ARGON_THEME_URL=""
 ARGON_CONFIG_URL=""
 ARGON_LANG_URL=""
-
 ARGON_THEME_FILE=""
 ARGON_CONFIG_FILE=""
 ARGON_LANG_FILE=""
 
-
-# ============================================================
-# QuickStart
-# ============================================================
-
 IS_OPKG_URL="https://raw.githubusercontent.com/linkease/istore/main/luci/luci-app-store/root/bin/is-opkg"
-
 IS_OPKG_BIN=""
-
 QUICKSTART_CONFIG_URL="https://cafe.cpolar.cn/wkdaily/gl/raw/branch/main/config/quickstart"
-
 QUICKSTART_CONFIG_TMP="${THEME_TMP}/quickstart.conf"
-
 QUICKSTART_CONFIG_BAK="/etc/config/quickstart.openpro.bak"
-
-
-# ============================================================
-# 测速
-# ============================================================
 
 THEME_TEST_CONNECT_TIMEOUT=4
 THEME_TEST_MAX_TIME=6
 THEME_SCORE_FILE_KB=4096
-
 THEME_DOWNLOAD_NODES="
 GH01|https://ghproxy.net/
 GH02|https://gh-proxy.org/
@@ -127,2671 +63,386 @@ GH06|https://gh.07150721.xyz/
 DIRECT|
 "
 
-
-# ============================================================
-# 日志
-# ============================================================
-
-_theme_info()
-{
-    printf "%b\n" "${GREEN}[INFO]${RESET} $*"
-}
-
-_theme_ok()
-{
-    printf "%b\n" "${GREEN}[OK]${RESET} $*"
-}
-
-_theme_warn()
-{
-    printf "%b\n" "${YELLOW}[WARN]${RESET} $*"
-}
-
-_theme_error()
-{
-    printf "%b\n" "${RED}[ERROR]${RESET} $*"
-}
-
-
-# ============================================================
-# 进度条
-# ============================================================
+_theme_info() { printf "%b\n" "${GREEN}[INFO]${RESET} $*"; }
+_theme_ok() { printf "%b\n" "${GREEN}[OK]${RESET} $*"; }
+_theme_warn() { printf "%b\n" "${YELLOW}[WARN]${RESET} $*"; }
+_theme_error() { printf "%b\n" "${RED}[ERROR]${RESET} $*"; }
 
 theme_progress()
 {
     PERCENT="$1"
     TEXT="$2"
-
     WIDTH=30
-
     FILLED=$((PERCENT * WIDTH / 100))
     EMPTY=$((WIDTH - FILLED))
-
     BAR=""
-
     I=0
-
-    while [ "$I" -lt "$FILLED" ]; do
-        BAR="${BAR}#"
-        I=$((I + 1))
-    done
-
+    while [ "$I" -lt "$FILLED" ]; do BAR="${BAR}#"; I=$((I + 1)); done
     I=0
-
-    while [ "$I" -lt "$EMPTY" ]; do
-        BAR="${BAR}-"
-        I=$((I + 1))
-    done
-
-    printf \
-        "\r\033[2K${GREEN}[INFO]${RESET} %-28s [${GREEN}%s${RESET}] %3d%%" \
-        "$TEXT" \
-        "$BAR" \
-        "$PERCENT"
+    while [ "$I" -lt "$EMPTY" ]; do BAR="${BAR}-"; I=$((I + 1)); done
+    printf "\r\033[2K${GREEN}[INFO]${RESET} %-28s [${GREEN}%s${RESET}] %3d%%" "$TEXT" "$BAR" "$PERCENT"
 }
-
-
-# ============================================================
-# ERROR LOG
-# ============================================================
 
 show_theme_error_log()
 {
-    printf "\n"
-
-    printf "%b\n" \
-        "${RED}========== ERROR LOG ==========${RESET}"
-
-    if [ -s "$THEME_LOG" ]; then
-        tail -n 120 "$THEME_LOG"
-    else
-        printf "没有可用错误日志\n"
-    fi
-
-    printf "%b\n" \
-        "${RED}===============================${RESET}"
-
-    printf "\n"
+    printf "\n%b\n" "${RED}========== ERROR LOG ==========${RESET}"
+    if [ -s "$THEME_LOG" ]; then tail -n 120 "$THEME_LOG"; else printf "没有可用错误日志\n"; fi
+    printf "%b\n\n" "${RED}===============================${RESET}"
 }
-
-
-# ============================================================
-# 清理
-# ============================================================
 
 cleanup_theme_temp()
 {
-    rm -rf \
-        "$THEME_TMP" \
-        "$THEME_TEST_DIR" \
-        2>/dev/null
-
-    rm -f \
-        "$THEME_ROUTE_FILE" \
-        "$THEME_SORTED_FILE" \
-        2>/dev/null
-
-    return 0
+    rm -rf "$THEME_TMP" "$THEME_TEST_DIR" 2>/dev/null
+    rm -f "$THEME_ROUTE_FILE" "$THEME_SORTED_FILE" 2>/dev/null
 }
-
-
-cleanup_theme_all()
-{
-    cleanup_theme_temp
-
-    rm -f "$THEME_LOG" 2>/dev/null
-
-    return 0
-}
-
-
-# ============================================================
-# Ctrl+C
-# ============================================================
 
 theme_interrupt()
 {
     printf "\n"
-
     _theme_warn "iStoreOS 风格安装已中断"
-
     _theme_info "安装日志保留：$THEME_LOG"
-
     cleanup_theme_temp
-
     trap - INT TERM
-
     return 130
 }
-
-
-# ============================================================
-# 系统检测
-# ============================================================
 
 check_theme_runtime()
 {
     MISSING=""
-
-    for CMD in \
-        grep \
-        sed \
-        awk \
-        head \
-        tail \
-        cut \
-        tr \
-        sort \
-        basename \
-        cp \
-        rm \
-        mkdir \
-        chmod \
-        df \
-        uci \
-        uname \
-        id
+    for CMD in grep sed awk head tail cut tr sort basename cp rm mkdir chmod df uci uname id
     do
-
-        command -v "$CMD" >/dev/null 2>&1 ||
-            MISSING="$MISSING $CMD"
-
+        command -v "$CMD" >/dev/null 2>&1 || MISSING="$MISSING $CMD"
     done
-
-    if [ -n "$MISSING" ]; then
-
-        _theme_error "系统缺少必要命令:$MISSING"
-
-        return 1
-
-    fi
-
-    if ! command -v curl >/dev/null 2>&1 &&
-       ! command -v wget >/dev/null 2>&1
-    then
-
-        _theme_error "系统缺少 curl / wget"
-
-        return 1
-
-    fi
-
-    return 0
+    [ -z "$MISSING" ] || { _theme_error "系统缺少必要命令:$MISSING"; return 1; }
+    command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || {
+        _theme_error "系统缺少 curl / wget"; return 1;
+    }
 }
-
-
-# ============================================================
-# 包管理器
-# ============================================================
 
 detect_package_manager()
 {
-    if command -v opkg >/dev/null 2>&1; then
-
-        PKG_MANAGER="opkg"
-        ARGON_PACKAGE_TYPE="ipk"
-
-        return 0
-
-    fi
-
-    if command -v apk >/dev/null 2>&1; then
-
-        PKG_MANAGER="apk"
-        ARGON_PACKAGE_TYPE="apk"
-
-        return 0
-
-    fi
-
+    if command -v opkg >/dev/null 2>&1; then PKG_MANAGER="opkg"; ARGON_PACKAGE_TYPE="ipk"; return 0; fi
+    if command -v apk >/dev/null 2>&1; then PKG_MANAGER="apk"; ARGON_PACKAGE_TYPE="apk"; return 0; fi
     return 1
 }
 
-
-# ============================================================
-# OpenWrt 主版本
-# ============================================================
-
 detect_openwrt_major()
 {
-    OPENWRT_MAJOR="$(
-        printf '%s\n' "$OPENWRT_VERSION" |
-        sed -n 's/^\([0-9][0-9]*\).*/\1/p'
-    )"
-
-    case "$OPENWRT_MAJOR" in
-        ''|*[!0-9]*)
-            OPENWRT_MAJOR="0"
-        ;;
-    esac
+    OPENWRT_MAJOR="$(printf '%s\n' "$OPENWRT_VERSION" | sed -n 's/^\([0-9][0-9]*\).*/\1/p')"
+    case "$OPENWRT_MAJOR" in ''|*[!0-9]*) OPENWRT_MAJOR=0 ;; esac
 }
-
-
-# ============================================================
-# 系统信息
-# ============================================================
 
 detect_theme_system()
 {
-    if [ -f /etc/openwrt_release ]; then
-
-        . /etc/openwrt_release
-
-        OPENWRT_VERSION="${DISTRIB_RELEASE:-unknown}"
-
-    else
-
-        OPENWRT_VERSION="unknown"
-
-    fi
-
+    if [ -f /etc/openwrt_release ]; then . /etc/openwrt_release; OPENWRT_VERSION="${DISTRIB_RELEASE:-unknown}"; else OPENWRT_VERSION="unknown"; fi
     detect_openwrt_major
-
-    MODEL="$(cat /tmp/sysinfo/model 2>/dev/null)"
-
-    [ -n "$MODEL" ] ||
-        MODEL="Unknown"
-
-    CPU_ARCH="$(uname -m 2>/dev/null)"
-
-    [ -n "$CPU_ARCH" ] ||
-        CPU_ARCH="Unknown"
-
-
+    MODEL="$(cat /tmp/sysinfo/model 2>/dev/null)"; [ -n "$MODEL" ] || MODEL="Unknown"
+    CPU_ARCH="$(uname -m 2>/dev/null)"; [ -n "$CPU_ARCH" ] || CPU_ARCH="Unknown"
     if [ "$PKG_MANAGER" = "opkg" ]; then
-
-        PKG_ARCH="$(
-            opkg print-architecture 2>/dev/null |
-            awk '
-                $1 == "arch" &&
-                $2 != "all" &&
-                $2 != "noarch"
-                {
-                    if ($3 > p)
-                    {
-                        p=$3
-                        a=$2
-                    }
-                }
-
-                END
-                {
-                    print a
-                }
-            '
-        )"
-
+        PKG_ARCH="$(opkg print-architecture 2>/dev/null | awk '$1=="arch" && $2!="all" && $2!="noarch" {if ($3>p){p=$3;a=$2}} END{print a}')"
     else
-
         PKG_ARCH="$CPU_ARCH"
-
     fi
-
-    [ -n "$PKG_ARCH" ] ||
-        PKG_ARCH="Unknown"
-
-
+    [ -n "$PKG_ARCH" ] || PKG_ARCH="Unknown"
     _theme_info "OpenWrt版本 : $OPENWRT_VERSION"
     _theme_info "OpenWrt主版本: $OPENWRT_MAJOR"
     _theme_info "设备型号    : $MODEL"
     _theme_info "CPU架构     : $CPU_ARCH"
     _theme_info "软件包架构  : $PKG_ARCH"
     _theme_info "包管理器    : $PKG_MANAGER"
-
-    return 0
 }
-
-
-# ============================================================
-# 空间
-# ============================================================
 
 check_theme_disk_space()
 {
-    FREE_KB="$(
-        df -k / 2>/dev/null |
-        awk 'END {print $4}'
-    )"
-
-    case "$FREE_KB" in
-        ''|*[!0-9]*)
-            FREE_KB=0
-        ;;
-    esac
-
+    FREE_KB="$(df -k / 2>/dev/null | awk 'END {print $4}')"
+    case "$FREE_KB" in ''|*[!0-9]*) FREE_KB=0 ;; esac
     FREE_MB=$((FREE_KB / 1024))
-
     _theme_info "可用空间    : ${FREE_MB} MB"
-
-    if [ "$FREE_MB" -lt 15 ]; then
-
-        _theme_error "可用空间不足，至少需要 15 MB"
-
-        return 1
-
-    fi
-
-    return 0
+    [ "$FREE_MB" -ge 15 ] || { _theme_error "可用空间不足，至少需要 15 MB"; return 1; }
 }
-
-
-# ============================================================
-# Argon 兼容策略
-# ============================================================
 
 select_argon_compat()
 {
     case "$OPENWRT_MAJOR" in
-
-        21)
-            ARGON_TARGET_TAG="v2.2.9"
-            _theme_info "兼容策略    : OpenWrt 21.x"
-            _theme_info "Argon版本   : v2.2.9"
-        ;;
-
-        22)
-            ARGON_TARGET_TAG=""
-            _theme_info "兼容策略    : OpenWrt 22.x"
-            _theme_info "Argon版本   : 自动获取最新兼容版本"
-        ;;
-
-        23)
-            ARGON_TARGET_TAG=""
-            _theme_info "兼容策略    : OpenWrt 23.x"
-            _theme_info "Argon版本   : 自动获取最新兼容版本"
-        ;;
-
-        24)
-            ARGON_TARGET_TAG=""
-            _theme_info "兼容策略    : OpenWrt 24.x"
-            _theme_info "Argon版本   : 自动获取最新兼容版本"
-        ;;
-
-        25)
-            ARGON_TARGET_TAG=""
-            _theme_info "兼容策略    : OpenWrt 25.x"
-            _theme_info "Argon版本   : 自动获取最新兼容版本"
-        ;;
-
-        *)
-            ARGON_TARGET_TAG=""
-
-            _theme_warn \
-                "未知 OpenWrt 主版本，使用最新 Argon"
-        ;;
-
+        21) ARGON_TARGET_TAG="v2.2.9" ;;
+        22|23|24|25) ARGON_TARGET_TAG="" ;;
+        *) ARGON_TARGET_TAG=""; _theme_warn "未知 OpenWrt 主版本，使用最新 Argon" ;;
     esac
-
-
+    _theme_info "兼容策略    : OpenWrt ${OPENWRT_MAJOR}.x"
+    if [ -n "$ARGON_TARGET_TAG" ]; then _theme_info "Argon版本   : $ARGON_TARGET_TAG"; else _theme_info "Argon版本   : 自动获取最新兼容版本"; fi
     case "$ARGON_PACKAGE_TYPE" in
-
-        ipk)
-
-            ARGON_THEME_FILE="${THEME_TMP}/argon-theme.ipk"
-            ARGON_CONFIG_FILE="${THEME_TMP}/argon-config.ipk"
-            ARGON_LANG_FILE="${THEME_TMP}/argon-lang.ipk"
-
-        ;;
-
-        apk)
-
-            ARGON_THEME_FILE="${THEME_TMP}/argon-theme.apk"
-            ARGON_CONFIG_FILE="${THEME_TMP}/argon-config.apk"
-            ARGON_LANG_FILE="${THEME_TMP}/argon-lang.apk"
-
-        ;;
-
-        *)
-
-            _theme_error \
-                "未知软件包格式：$ARGON_PACKAGE_TYPE"
-
-            return 1
-
-        ;;
-
+        ipk) ARGON_THEME_FILE="${THEME_TMP}/argon-theme.ipk"; ARGON_CONFIG_FILE="${THEME_TMP}/argon-config.ipk"; ARGON_LANG_FILE="${THEME_TMP}/argon-lang.ipk" ;;
+        apk) ARGON_THEME_FILE="${THEME_TMP}/argon-theme.apk"; ARGON_CONFIG_FILE="${THEME_TMP}/argon-config.apk"; ARGON_LANG_FILE="${THEME_TMP}/argon-lang.apk" ;;
+        *) _theme_error "未知软件包格式：$ARGON_PACKAGE_TYPE"; return 1 ;;
     esac
-
-
-    _theme_info \
-        "软件包格式  : .$ARGON_PACKAGE_TYPE"
-
-    return 0
+    _theme_info "软件包格式  : .$ARGON_PACKAGE_TYPE"
 }
-
-
-# ============================================================
-# DIRECT 下载
-# ============================================================
 
 download_direct()
 {
-    URL="$1"
-    OUTPUT="$2"
-
-    rm -f "$OUTPUT"
-
+    URL="$1"; OUTPUT="$2"; rm -f "$OUTPUT"
     if command -v curl >/dev/null 2>&1; then
-
-        curl \
-            -4 \
-            -L \
-            -f \
-            -sS \
-            --connect-timeout 10 \
-            --max-time 180 \
-            --retry 2 \
-            --retry-delay 1 \
-            -H "User-Agent: Open-Pro-Installer" \
-            -o "$OUTPUT" \
-            "$URL" \
-            >>"$THEME_LOG" 2>&1
-
-        RESULT=$?
-
+        curl -4 -L -f -sS --connect-timeout 10 --max-time 180 --retry 2 --retry-delay 1 -H "User-Agent: Open-Pro-Installer" -o "$OUTPUT" "$URL" >>"$THEME_LOG" 2>&1
     else
-
-        wget \
-            -T 30 \
-            --header="User-Agent: Open-Pro-Installer" \
-            -O "$OUTPUT" \
-            "$URL" \
-            >>"$THEME_LOG" 2>&1
-
-        RESULT=$?
-
+        wget -T 30 --header="User-Agent: Open-Pro-Installer" -O "$OUTPUT" "$URL" >>"$THEME_LOG" 2>&1
     fi
-
-
-    if [ "$RESULT" -ne 0 ] ||
-       [ ! -s "$OUTPUT" ]
-    then
-
-        rm -f "$OUTPUT"
-
-        return 1
-
+    RESULT=$?
+    [ "$RESULT" -eq 0 ] && [ -s "$OUTPUT" ] || { rm -f "$OUTPUT"; return 1; }
+    if head -c 512 "$OUTPUT" 2>/dev/null | grep -Eqi '<html|<!doctype|404 not found|bad gateway|502 bad gateway|403 forbidden|cloudflare'; then
+        printf "Invalid response: %s\n" "$URL" >>"$THEME_LOG"; rm -f "$OUTPUT"; return 1
     fi
-
-
-    if head -c 512 "$OUTPUT" 2>/dev/null |
-       grep -Eqi \
-       '<html|<!doctype|404 not found|bad gateway|502 bad gateway|403 forbidden|cloudflare'
-    then
-
-        printf \
-            "Invalid response: %s\n" \
-            "$URL" \
-            >>"$THEME_LOG"
-
-        rm -f "$OUTPUT"
-
-        return 1
-
-    fi
-
-    return 0
 }
-
-
-# ============================================================
-# 软件包检测
-# ============================================================
 
 package_installed()
 {
-    PACKAGE_NAME="$1"
-
     case "$PKG_MANAGER" in
-
-        opkg)
-
-            opkg status "$PACKAGE_NAME" 2>/dev/null |
-                grep -q 'Status:.*installed'
-
-        ;;
-
-        apk)
-
-            apk list --installed "$PACKAGE_NAME" \
-                >/dev/null 2>&1
-
-        ;;
-
-        *)
-
-            return 1
-
-        ;;
-
+        opkg) opkg status "$1" 2>/dev/null | grep -q 'Status:.*installed' ;;
+        apk) apk list --installed "$1" >/dev/null 2>&1 ;;
+        *) return 1 ;;
     esac
 }
-
-
-get_package_version()
-{
-    PACKAGE_NAME="$1"
-
-    case "$PKG_MANAGER" in
-
-        opkg)
-
-            opkg status "$PACKAGE_NAME" 2>/dev/null |
-                sed -n \
-                's/^Version:[[:space:]]*//p' |
-                head -n 1
-
-        ;;
-
-        apk)
-
-            apk list --installed "$PACKAGE_NAME" \
-                2>/dev/null |
-                head -n 1
-
-        ;;
-
-    esac
-}
-
-
-# ============================================================
-# 获取 Release 页面
-# ============================================================
-
-get_release_tag_url()
-{
-    TAG="$1"
-
-    if [ -n "$TAG" ]; then
-
-        printf \
-            'https://github.com/%s/releases/expanded_assets/%s' \
-            "$ARGON_REPO" \
-            "$TAG"
-
-    else
-
-        return 1
-
-    fi
-}
-
-
-# ============================================================
-# 普通 Release 页面解析
-# ============================================================
 
 fetch_argon_release_page()
 {
     TAG="$1"
-
-    EXPANDED_URL="$(
-        get_release_tag_url "$TAG"
-    )"
-
-    [ -n "$EXPANDED_URL" ] ||
-        return 1
-
-
-    rm -f "$ARGON_EXPANDED_ASSETS"
-
-
-    if ! download_direct \
-        "$EXPANDED_URL" \
-        "$ARGON_EXPANDED_ASSETS"
-    then
-
-        return 1
-
-    fi
-
-
-    grep -o \
-        "/${ARGON_REPO}/releases/download/[^\"]*" \
-        "$ARGON_EXPANDED_ASSETS" \
-        2>/dev/null |
-        sed 's/&amp;/\&/g' |
-        while IFS= read -r ASSET_PATH
-        do
-            printf \
-                'https://github.com%s\n' \
-                "$ASSET_PATH"
-        done \
-        > "$ARGON_ASSET_LIST"
-
-
+    [ -n "$TAG" ] || return 1
+    download_direct "https://github.com/${ARGON_REPO}/releases/expanded_assets/${TAG}" "$ARGON_EXPANDED_ASSETS" || return 1
+    grep -o "/${ARGON_REPO}/releases/download/[^\"]*" "$ARGON_EXPANDED_ASSETS" 2>/dev/null |
+        sed 's/&amp;/\&/g' | while IFS= read -r ASSET_PATH; do printf 'https://github.com%s\n' "$ASSET_PATH"; done >"$ARGON_ASSET_LIST"
     [ -s "$ARGON_ASSET_LIST" ]
 }
 
-
-# ============================================================
-# Argon Release
-# ============================================================
-
 fetch_argon_release()
 {
-    rm -f \
-        "$ARGON_RELEASE_JSON" \
-        "$ARGON_ASSET_LIST" \
-        "$ARGON_EXPANDED_ASSETS"
-
-
-    ARGON_RELEASE_TAG=""
-    ARGON_THEME_URL=""
-    ARGON_CONFIG_URL=""
-    ARGON_LANG_URL=""
-
-
+    rm -f "$ARGON_RELEASE_JSON" "$ARGON_ASSET_LIST" "$ARGON_EXPANDED_ASSETS"
+    ARGON_RELEASE_TAG=""; ARGON_THEME_URL=""; ARGON_CONFIG_URL=""; ARGON_LANG_URL=""
     if [ -n "$ARGON_TARGET_TAG" ]; then
-
         ARGON_RELEASE_TAG="$ARGON_TARGET_TAG"
-
-        _theme_info \
-            "正在读取 Argon Release：$ARGON_RELEASE_TAG"
-
-
-        if ! fetch_argon_release_page \
-            "$ARGON_RELEASE_TAG"
-        then
-
-            _theme_error \
-                "无法读取 Argon $ARGON_RELEASE_TAG Release"
-
-            return 1
-
-        fi
-
+        _theme_info "正在读取 Argon Release：$ARGON_RELEASE_TAG"
+        fetch_argon_release_page "$ARGON_RELEASE_TAG" || { _theme_error "无法读取 Argon $ARGON_RELEASE_TAG Release"; return 1; }
     else
-
-        _theme_info \
-            "正在直连 GitHub API 获取 Argon 最新版本..."
-
-
-        if download_direct \
-            "$ARGON_RELEASE_API" \
-            "$ARGON_RELEASE_JSON"
-        then
-
+        _theme_info "正在直连 GitHub API 获取 Argon 最新版本..."
+        if download_direct "$ARGON_RELEASE_API" "$ARGON_RELEASE_JSON"; then
             if command -v jsonfilter >/dev/null 2>&1; then
-
-                ARGON_RELEASE_TAG="$(
-                    jsonfilter \
-                        -i "$ARGON_RELEASE_JSON" \
-                        -e '@.tag_name' \
-                        2>/dev/null
-                )"
-
-
-                jsonfilter \
-                    -i "$ARGON_RELEASE_JSON" \
-                    -e '@.assets[*].browser_download_url' \
-                    2>/dev/null \
-                    > "$ARGON_ASSET_LIST"
-
+                ARGON_RELEASE_TAG="$(jsonfilter -i "$ARGON_RELEASE_JSON" -e '@.tag_name' 2>/dev/null)"
+                jsonfilter -i "$ARGON_RELEASE_JSON" -e '@.assets[*].browser_download_url' 2>/dev/null >"$ARGON_ASSET_LIST"
             else
-
-                ARGON_RELEASE_TAG="$(
-                    tr ',' '\n' \
-                    < "$ARGON_RELEASE_JSON" |
-                    sed -n \
-                    's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' |
-                    head -n 1
-                )"
-
-
-                tr ',' '\n' \
-                    < "$ARGON_RELEASE_JSON" |
-                    sed -n \
-                    's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p' \
-                    > "$ARGON_ASSET_LIST"
-
+                ARGON_RELEASE_TAG="$(tr ',' '\n' <"$ARGON_RELEASE_JSON" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+                tr ',' '\n' <"$ARGON_RELEASE_JSON" | sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p' >"$ARGON_ASSET_LIST"
             fi
-
         fi
-
-
-        if [ -z "$ARGON_RELEASE_TAG" ] ||
-           [ ! -s "$ARGON_ASSET_LIST" ]
-        then
-
-            _theme_warn \
-                "GitHub API 不可用，切换普通 Release 页面..."
-
-
-            LATEST_PAGE="https://github.com/${ARGON_REPO}/releases/latest"
-
-
+        if [ -z "$ARGON_RELEASE_TAG" ] || [ ! -s "$ARGON_ASSET_LIST" ]; then
+            _theme_warn "GitHub API 不可用，切换普通 Release 页面..."
             if command -v curl >/dev/null 2>&1; then
-
-                EFFECTIVE_URL="$(
-                    curl \
-                        -4 \
-                        -L \
-                        -sS \
-                        --connect-timeout 10 \
-                        --max-time 30 \
-                        -o /dev/null \
-                        -w '%{url_effective}' \
-                        "$LATEST_PAGE" \
-                        2>>"$THEME_LOG"
-                )"
-
-            else
-
-                EFFECTIVE_URL=""
-
+                EFFECTIVE_URL="$(curl -4 -L -sS --connect-timeout 10 --max-time 30 -o /dev/null -w '%{url_effective}' "https://github.com/${ARGON_REPO}/releases/latest" 2>>"$THEME_LOG")"
+                ARGON_RELEASE_TAG="$(printf '%s\n' "$EFFECTIVE_URL" | sed -n 's#^.*/releases/tag/\([^/?#]*\).*$#\1#p')"
             fi
-
-
-            ARGON_RELEASE_TAG="$(
-                printf '%s\n' \
-                    "$EFFECTIVE_URL" |
-                sed -n \
-                    's#^.*/releases/tag/\([^/?#]*\).*$#\1#p'
-            )"
-
-
-            if [ -z "$ARGON_RELEASE_TAG" ]; then
-
-                _theme_error \
-                    "无法识别 Argon 最新版本"
-
-                return 1
-
-            fi
-
-
-            if ! fetch_argon_release_page \
-                "$ARGON_RELEASE_TAG"
-            then
-
-                _theme_error \
-                    "无法读取 Argon Release Asset"
-
-                return 1
-
-            fi
-
+            [ -n "$ARGON_RELEASE_TAG" ] || { _theme_error "无法识别 Argon 最新版本"; return 1; }
+            fetch_argon_release_page "$ARGON_RELEASE_TAG" || { _theme_error "无法读取 Argon Release Asset"; return 1; }
         fi
-
     fi
-
 
     case "$ARGON_PACKAGE_TYPE" in
-
         ipk)
-
-            ARGON_THEME_URL="$(
-                grep \
-                    '/luci-theme-argon_[^/]*\.ipk$' \
-                    "$ARGON_ASSET_LIST" |
-                head -n 1
-            )"
-
-
-            ARGON_CONFIG_URL="$(
-                grep \
-                    '/luci-app-argon-config_[^/]*\.ipk$' \
-                    "$ARGON_ASSET_LIST" |
-                head -n 1
-            )"
-
-
-            ARGON_LANG_URL="$(
-                grep \
-                    '/luci-i18n-argon-config-zh-cn_[^/]*\.ipk$' \
-                    "$ARGON_ASSET_LIST" |
-                head -n 1
-            )
-
-        ;;
-
-
+            ARGON_THEME_URL="$(grep '/luci-theme-argon_[^/]*\.ipk$' "$ARGON_ASSET_LIST" | head -n 1)"
+            ARGON_CONFIG_URL="$(grep '/luci-app-argon-config_[^/]*\.ipk$' "$ARGON_ASSET_LIST" | head -n 1)"
+            ARGON_LANG_URL="$(grep '/luci-i18n-argon-config-zh-cn_[^/]*\.ipk$' "$ARGON_ASSET_LIST" | head -n 1)"
+            ;;
         apk)
-
-            ARGON_THEME_URL="$(
-                grep \
-                    '/luci-theme-argon_[^/]*\.apk$' \
-                    "$ARGON_ASSET_LIST" |
-                head -n 1
-            )"
-
-
-            ARGON_CONFIG_URL="$(
-                grep \
-                    '/luci-app-argon-config_[^/]*\.apk$' \
-                    "$ARGON_ASSET_LIST" |
-                head -n 1
-            )"
-
-
-            ARGON_LANG_URL="$(
-                grep \
-                    '/luci-i18n-argon-config-zh-cn_[^/]*\.apk$' \
-                    "$ARGON_ASSET_LIST" |
-                head -n 1
-            )
-
-        ;;
-
+            ARGON_THEME_URL="$(grep '/luci-theme-argon[^/]*\.apk$' "$ARGON_ASSET_LIST" | head -n 1)"
+            ARGON_CONFIG_URL="$(grep '/luci-app-argon-config[^/]*\.apk$' "$ARGON_ASSET_LIST" | head -n 1)"
+            ARGON_LANG_URL="$(grep '/luci-i18n-argon-config-zh-cn[^/]*\.apk$' "$ARGON_ASSET_LIST" | head -n 1)"
+            ;;
     esac
 
+    case "$ARGON_THEME_URL" in https://github.com/*) ;; *) ARGON_THEME_URL="" ;; esac
+    case "$ARGON_CONFIG_URL" in https://github.com/*) ;; *) ARGON_CONFIG_URL="" ;; esac
+    case "$ARGON_LANG_URL" in https://github.com/*) ;; *) ARGON_LANG_URL="" ;; esac
 
-    # ========================================================
-    # 修复 3：
-    # 严格校验 Asset URL
-    # 防止异常文本进入中文包等变量
-    # ========================================================
-
-    case "$ARGON_THEME_URL" in
-        https://github.com/*)
-        ;;
-        *)
-            ARGON_THEME_URL=""
-        ;;
-    esac
-
-    case "$ARGON_CONFIG_URL" in
-        https://github.com/*)
-        ;;
-        *)
-            ARGON_CONFIG_URL=""
-        ;;
-    esac
-
-    case "$ARGON_LANG_URL" in
-        https://github.com/*)
-        ;;
-        *)
-            ARGON_LANG_URL=""
-        ;;
-    esac
-
-
-    if [ -z "$ARGON_THEME_URL" ]; then
-
-        _theme_error \
-            "Release 中没有 .$ARGON_PACKAGE_TYPE 格式的 Argon Theme"
-
-        return 1
-
-    fi
-
-
-    if [ -z "$ARGON_CONFIG_URL" ]; then
-
-        _theme_warn \
-            "Release 中没有 Argon Config，将仅安装 Theme"
-
-    fi
-
-
-    _theme_ok \
-        "Argon Release：$ARGON_RELEASE_TAG"
-
-
-    _theme_info \
-        "Theme  : $(basename "$ARGON_THEME_URL")"
-
-
-    if [ -n "$ARGON_CONFIG_URL" ]; then
-
-        _theme_info \
-            "Config : $(basename "$ARGON_CONFIG_URL")"
-
-    fi
-
-
-    # ========================================================
-    # 修复 3：
-    # 没有中文包时明确显示
-    # ========================================================
-
-    if [ -n "$ARGON_LANG_URL" ]; then
-
-        _theme_info \
-            "中文包 : $(basename "$ARGON_LANG_URL")"
-
-    else
-
-        _theme_info \
-            "中文包 : 无独立中文包"
-
-    fi
-
-
-    return 0
+    [ -n "$ARGON_THEME_URL" ] || { _theme_error "Release 中没有 .$ARGON_PACKAGE_TYPE 格式的 Argon Theme"; return 1; }
+    [ -n "$ARGON_CONFIG_URL" ] || _theme_warn "Release 中没有 Argon Config，将仅安装 Theme"
+    _theme_ok "Argon Release：$ARGON_RELEASE_TAG"
+    _theme_info "Theme  : $(basename "$ARGON_THEME_URL")"
+    if [ -n "$ARGON_CONFIG_URL" ]; then _theme_info "Config : $(basename "$ARGON_CONFIG_URL")"; else _theme_info "Config : 无"; fi
+    if [ -n "$ARGON_LANG_URL" ]; then _theme_info "中文包 : $(basename "$ARGON_LANG_URL")"; else _theme_info "中文包 : 无独立中文包"; fi
 }
-
-
-# ============================================================
-# GitHub 代理
-# ============================================================
-
-build_theme_url()
-{
-    PREFIX="$1"
-    ORIGINAL_URL="$2"
-
-    if [ -z "$PREFIX" ]; then
-
-        printf '%s' "$ORIGINAL_URL"
-
-    else
-
-        printf '%s%s' \
-            "$PREFIX" \
-            "$ORIGINAL_URL"
-
-    fi
-}
-
-
-# ============================================================
-# 秒 → ms
-#
-# 修复 2 + 4：
-# 不再使用复杂 awk
-# ============================================================
 
 theme_seconds_to_ms()
 {
     T="$1"
-
-    case "$T" in
-        ''|*[!0-9.]*)
-            printf '%s' "999999"
-            return 0
-        ;;
-    esac
-
-    SEC="${T%%.*}"
-
-    if [ "$SEC" = "$T" ]; then
-        FRAC="0"
-    else
-        FRAC="${T#*.}"
-    fi
-
-    [ -n "$SEC" ] || SEC="0"
-
-    FRAC="${FRAC}000"
-    FRAC="$(printf '%s' "$FRAC" | cut -c 1-3)"
-
-    SEC="$(printf '%s' "$SEC" | sed 's/^0*//')"
-    FRAC="$(printf '%s' "$FRAC" | sed 's/^0*//')"
-
+    case "$T" in ''|*[!0-9.]*) printf '%s' 999999; return 0 ;; esac
+    SEC="${T%%.*}"; FRAC="${T#*.}"; [ "$SEC" = "$T" ] && FRAC=0
     [ -n "$SEC" ] || SEC=0
-    [ -n "$FRAC" ] || FRAC=0
-
-    case "$SEC" in
-        *[!0-9]*) SEC=0 ;;
-    esac
-
-    case "$FRAC" in
-        *[!0-9]*) FRAC=0 ;;
-    esac
-
-    printf '%s' \
-        $((SEC * 1000 + FRAC))
-
-    return 0
+    FRAC="${FRAC}000"; FRAC="$(printf '%.3s' "$FRAC")"
+    SEC="$(printf '%s' "$SEC" | sed 's/^0*//')"; FRAC="$(printf '%s' "$FRAC" | sed 's/^0*//')"
+    [ -n "$SEC" ] || SEC=0; [ -n "$FRAC" ] || FRAC=0
+    printf '%s' $((SEC * 1000 + FRAC))
 }
-
-
-# ============================================================
-# B/s → MB/s
-#
-# 修复 2 + 4：
-# 不再使用 awk 浮点计算
-# ============================================================
 
 theme_speed_to_mb()
 {
     S="$1"
-
-    case "$S" in
-        ''|*[!0-9.]*)
-            printf '%s' "0.00"
-            return 0
-        ;;
-    esac
-
-    S="${S%%.*}"
-
-    S="$(printf '%s' "$S" | sed 's/^0*//')"
-
-    [ -n "$S" ] || S=0
-
-    case "$S" in
-        *[!0-9]*)
-            printf '%s' "0.00"
-            return 0
-        ;;
-    esac
-
-    WHOLE=$((S / 1048576))
-    REM=$((S % 1048576))
-    DEC=$((REM * 100 / 1048576))
-
-    printf '%d.%02d' \
-        "$WHOLE" \
-        "$DEC"
-
-    return 0
+    case "$S" in ''|*[!0-9.]*) printf '%s' 0.00; return 0 ;; esac
+    S="${S%%.*}"; [ -n "$S" ] || S=0
+    WHOLE=$((S / 1048576)); REM=$((S % 1048576)); DEC=$((REM * 100 / 1048576))
+    printf '%d.%02d' "$WHOLE" "$DEC"
 }
-
-
-# ============================================================
-# 综合评分
-#
-# 越低越好
-#
-# score =
-# 首包延迟
-# +
-# 下载 4MB 文件预计耗时
-#
-# 修复 2：
-# 不再使用 awk
-# ============================================================
 
 theme_calculate_score()
 {
-    T="$1"
-    S="$2"
-
-    case "$T" in
-        ''|*[!0-9]*)
-            T=999999
-        ;;
-    esac
-
-    case "$S" in
-        ''|*[!0-9]*)
-            S=0
-        ;;
-    esac
-
-    if [ "$S" -le 0 ]; then
-
-        printf '%s' "999999999"
-
-        return 0
-
-    fi
-
+    T="$1"; S="$2"
+    case "$T" in ''|*[!0-9]*) T=999999 ;; esac
+    case "$S" in ''|*[!0-9]*) S=0 ;; esac
+    [ "$S" -gt 0 ] || { printf '%s' 999999999; return 0; }
     SPEED_KB=$((S / 1024))
-
-    if [ "$SPEED_KB" -le 0 ]; then
-
-        printf '%s' "999999999"
-
-        return 0
-
-    fi
-
-    DOWNLOAD_MS=$(
-        (
-            THEME_SCORE_FILE_KB * 1000
-        ) / SPEED_KB
-    )
-
-    printf '%s' \
-        $((T + DOWNLOAD_MS))
-
-    return 0
+    [ "$SPEED_KB" -gt 0 ] || { printf '%s' 999999999; return 0; }
+    DOWNLOAD_MS=$((THEME_SCORE_FILE_KB * 1000 / SPEED_KB))
+    printf '%s' $((T + DOWNLOAD_MS))
 }
-
-
-# ============================================================
-# 错误页检测
-# ============================================================
-
-theme_test_is_error_page()
-{
-    FILE="$1"
-
-    [ -s "$FILE" ] ||
-        return 1
-
-    head -c 1024 \
-        "$FILE" \
-        2>/dev/null |
-        grep -Eqi \
-        '<html|<!doctype|bad gateway|502 bad gateway|404 not found|403 forbidden|access denied'
-}
-
-
-# ============================================================
-# 单线路测速
-# ============================================================
 
 test_theme_route()
 {
-    TEST_URL="$1"
-    TEST_FILE="$2"
-
-    rm -f "$TEST_FILE"
-
-
-    command -v curl >/dev/null 2>&1 ||
-        return 1
-
-
-    CURL_DATA="$(
-        curl \
-            -4 \
-            -L \
-            -sS \
-            --connect-timeout "$THEME_TEST_CONNECT_TIMEOUT" \
-            --max-time "$THEME_TEST_MAX_TIME" \
-            -o "$TEST_FILE" \
-            -w '%{http_code}|%{time_starttransfer}|%{speed_download}|%{size_download}' \
-            "$TEST_URL" \
-            2>/dev/null
-    )"
-
-
-    CURL_CODE=$?
-
-
-    HTTP_CODE="$(
-        printf '%s' "$CURL_DATA" |
-        cut -d '|' -f 1
-    )"
-
-
-    TTFB="$(
-        printf '%s' "$CURL_DATA" |
-        cut -d '|' -f 2
-    )"
-
-
-    SPEED_BPS="$(
-        printf '%s' "$CURL_DATA" |
-        cut -d '|' -f 3
-    )"
-
-
-    SIZE_DOWN="$(
-        printf '%s' "$CURL_DATA" |
-        cut -d '|' -f 4
-    )"
-
-
-    case "$CURL_CODE" in
-
-        0|28)
-        ;;
-
-        *)
-
-            rm -f "$TEST_FILE"
-
-            return 1
-
-        ;;
-
-    esac
-
-
-    case "$HTTP_CODE" in
-
-        200|206)
-        ;;
-
-        *)
-
-            rm -f "$TEST_FILE"
-
-            return 1
-
-        ;;
-
-    esac
-
-
-    # ========================================================
-    # 修复 2：
-    # RECEIVED_BYTES 不再使用 awk
-    # ========================================================
-
-    case "$SIZE_DOWN" in
-
-        ''|*[!0-9.]*)
-
-            RECEIVED_BYTES=0
-
-        ;;
-
-        *)
-
-            RECEIVED_BYTES="${SIZE_DOWN%%.*}"
-
-            RECEIVED_BYTES="$(
-                printf '%s' "$RECEIVED_BYTES" |
-                sed 's/^0*//'
-            )"
-
-            [ -n "$RECEIVED_BYTES" ] ||
-                RECEIVED_BYTES=0
-
-        ;;
-
-    esac
-
-
-    [ "$RECEIVED_BYTES" -ge 2048 ] || {
-
-        rm -f "$TEST_FILE"
-
-        return 1
-
-    }
-
-
-    if theme_test_is_error_page "$TEST_FILE"; then
-
-        rm -f "$TEST_FILE"
-
-        return 1
-
+    NAME="$1"; PREFIX="$2"; RESULT_FILE="${THEME_TEST_DIR}/${NAME}.result"
+    TEST_URL="${PREFIX}${ARGON_THEME_URL}"
+    if ! command -v curl >/dev/null 2>&1; then printf '%s|999999999|999999|0|0.00|%s\n' "$NAME" "$PREFIX" >"$RESULT_FILE"; return; fi
+    CURL_DATA="$(curl -4 -L -f -sS --connect-timeout "$THEME_TEST_CONNECT_TIMEOUT" --max-time "$THEME_TEST_MAX_TIME" -o /dev/null -w '%{time_starttransfer}|%{speed_download}|%{size_download}' "$TEST_URL" 2>>"$THEME_LOG")"
+    RESULT=$?
+    TTFB="$(printf '%s' "$CURL_DATA" | cut -d '|' -f 1)"
+    SPEED_BPS="$(printf '%s' "$CURL_DATA" | cut -d '|' -f 2)"
+    SIZE_DOWN="$(printf '%s' "$CURL_DATA" | cut -d '|' -f 3)"
+    case "$SIZE_DOWN" in ''|*[!0-9.]*) RECEIVED_BYTES=0 ;; *) RECEIVED_BYTES="${SIZE_DOWN%%.*}"; [ -n "$RECEIVED_BYTES" ] || RECEIVED_BYTES=0 ;; esac
+    case "$SPEED_BPS" in ''|*[!0-9.]*) SPEED_INT=0 ;; *) SPEED_INT="${SPEED_BPS%%.*}"; [ -n "$SPEED_INT" ] || SPEED_INT=0 ;; esac
+    if [ "$RESULT" -eq 0 ] && [ "$RECEIVED_BYTES" -gt 0 ] && [ "$SPEED_INT" -gt 0 ]; then
+        TTFB_MS="$(theme_seconds_to_ms "$TTFB")"; SPEED_MB="$(theme_speed_to_mb "$SPEED_INT")"; SCORE="$(theme_calculate_score "$TTFB_MS" "$SPEED_INT")"
+        printf '%s|%s|%s|%s|%s|%s\n' "$NAME" "$SCORE" "$TTFB_MS" "$SPEED_INT" "$SPEED_MB" "$PREFIX" >"$RESULT_FILE"
+    else
+        printf '%s|999999999|999999|0|0.00|%s\n' "$NAME" "$PREFIX" >"$RESULT_FILE"
     fi
-
-
-    TTFB_MS="$(
-        theme_seconds_to_ms "$TTFB"
-    )"
-
-
-    # ========================================================
-    # 修复 2 + 4：
-    # SPEED_INT 不再使用 awk
-    # ========================================================
-
-    case "$SPEED_BPS" in
-
-        ''|*[!0-9.]*)
-
-            SPEED_INT=0
-
-        ;;
-
-        *)
-
-            SPEED_INT="${SPEED_BPS%%.*}"
-
-            SPEED_INT="$(
-                printf '%s' "$SPEED_INT" |
-                sed 's/^0*//'
-            )"
-
-            [ -n "$SPEED_INT" ] ||
-                SPEED_INT=0
-
-        ;;
-
-    esac
-
-
-    [ "$SPEED_INT" -gt 0 ] || {
-
-        rm -f "$TEST_FILE"
-
-        return 1
-
-    }
-
-
-    SCORE="$(
-        theme_calculate_score \
-            "$TTFB_MS" \
-            "$SPEED_INT"
-    )"
-
-
-    rm -f "$TEST_FILE"
-
-
-    printf \
-        '%s|%s|%s' \
-        "$TTFB_MS" \
-        "$SPEED_INT" \
-        "$SCORE"
-
-
-    return 0
 }
 
-
-# ============================================================
-# 后台测速
-# ============================================================
-
-test_theme_route_background()
+test_theme_routes()
 {
-    NODE_NAME="$1"
-    NODE_PREFIX="$2"
-    ORIGINAL_URL="$3"
-    RESULT_FILE="$4"
-    TEST_FILE="$5"
-
-
-    TEST_URL="$(
-        build_theme_url \
-            "$NODE_PREFIX" \
-            "$ORIGINAL_URL"
-    )"
-
-
-    TEST_DATA="$(
-        test_theme_route \
-            "$TEST_URL" \
-            "$TEST_FILE"
-    )"
-
-
-    if [ $? -ne 0 ] ||
-       [ -z "$TEST_DATA" ]
-    then
-
-        printf \
-            '%s|FAIL\n' \
-            "$NODE_NAME" \
-            > "$RESULT_FILE"
-
-        return 1
-
-    fi
-
-
-    TTFB_MS="$(
-        printf '%s' "$TEST_DATA" |
-        cut -d '|' -f 1
-    )"
-
-
-    SPEED_BPS="$(
-        printf '%s' "$TEST_DATA" |
-        cut -d '|' -f 2
-    )"
-
-
-    SCORE="$(
-        printf '%s' "$TEST_DATA" |
-        cut -d '|' -f 3
-    )"
-
-
-    printf \
-        '%s|OK|%s|%s|%s|%s|%s\n' \
-        "$NODE_NAME" \
-        "$NODE_PREFIX" \
-        "$TEST_URL" \
-        "$TTFB_MS" \
-        "$SPEED_BPS" \
-        "$SCORE" \
-        > "$RESULT_FILE"
-
-
-    return 0
-}
-
-
-# ============================================================
-# 七线路并行测速
-# ============================================================
-
-prepare_theme_routes()
-{
-    ORIGINAL_URL="$1"
-
-
-    rm -f \
-        "$THEME_ROUTE_FILE" \
-        "$THEME_SORTED_FILE"
-
-
-    rm -rf "$THEME_TEST_DIR"
-
-
-    mkdir -p "$THEME_TEST_DIR" ||
-        return 1
-
-
-    printf "\n"
-
-    _theme_info \
-        "正在并行测试 Argon 下载线路..."
-
-    printf "\n"
-
-
-    for NODE_NAME in \
-        GH01 \
-        GH02 \
-        GH03 \
-        GH04 \
-        GH05 \
-        GH06 \
-        DIRECT
-    do
-
-        NODE_PREFIX="$(
-            printf '%s\n' "$THEME_DOWNLOAD_NODES" |
-            awk \
-                -F '|' \
-                -v n="$NODE_NAME" '
-                $1 == n
-                {
-                    print $2
-                    exit
-                }
-            '
-        )"
-
-
-        test_theme_route_background \
-            "$NODE_NAME" \
-            "$NODE_PREFIX" \
-            "$ORIGINAL_URL" \
-            "$THEME_TEST_DIR/result_${NODE_NAME}" \
-            "$THEME_TEST_DIR/download_${NODE_NAME}" &
-
-    done
-
-
+    rm -rf "$THEME_TEST_DIR"; mkdir -p "$THEME_TEST_DIR"; : >"$THEME_ROUTE_FILE"
+    _theme_info "正在并行测试 Argon 下载线路..."
+    printf '%s\n' "$THEME_DOWNLOAD_NODES" | while IFS='|' read -r NAME PREFIX; do [ -n "$NAME" ] && test_theme_route "$NAME" "$PREFIX" & done
     wait
-
-
-    printf \
-        '%-8s %-12s %-14s\n' \
-        "线路" \
-        "延迟" \
-        "下载速度"
-
-
-    printf \
-        '%-8s %-12s %-14s\n' \
-        "--------" \
-        "------------" \
-        "--------------"
-
-
-    for NODE_NAME in \
-        GH01 \
-        GH02 \
-        GH03 \
-        GH04 \
-        GH05 \
-        GH06 \
-        DIRECT
-    do
-
-        RESULT_FILE="$THEME_TEST_DIR/result_${NODE_NAME}"
-
-
-        if [ ! -s "$RESULT_FILE" ] ||
-           [ "$(cut -d '|' -f 2 "$RESULT_FILE")" != "OK" ]
-        then
-
-            printf \
-                '%-8s %-12s %-14s\n' \
-                "$NODE_NAME" \
-                "----" \
-                "----"
-
-            continue
-
+    printf "\n%-10s %-14s %-16s\n" "线路" "延迟" "下载速度"
+    printf '%s\n' "----------------------------------------"
+    printf '%s\n' "$THEME_DOWNLOAD_NODES" | while IFS='|' read -r NAME PREFIX; do
+        [ -n "$NAME" ] || continue
+        FILE="${THEME_TEST_DIR}/${NAME}.result"
+        if [ -s "$FILE" ]; then
+            LINE="$(cat "$FILE")"; printf '%s\n' "$LINE" >>"$THEME_ROUTE_FILE"
+            SCORE="$(printf '%s' "$LINE" | cut -d '|' -f 2)"; MS="$(printf '%s' "$LINE" | cut -d '|' -f 3)"; MB="$(printf '%s' "$LINE" | cut -d '|' -f 5)"
+            if [ "$SCORE" -lt 999999999 ]; then printf '%-10s %-14s %-16s\n' "$NAME" "${MS} ms" "${MB} MB/s"; else printf '%-10s %-14s %-16s\n' "$NAME" "----" "----"; fi
         fi
-
-
-        NODE_PREFIX="$(
-            cut -d '|' -f 3 "$RESULT_FILE"
-        )"
-
-
-        TEST_URL="$(
-            cut -d '|' -f 4 "$RESULT_FILE"
-        )"
-
-
-        TTFB_MS="$(
-            cut -d '|' -f 5 "$RESULT_FILE"
-        )"
-
-
-        SPEED_BPS="$(
-            cut -d '|' -f 6 "$RESULT_FILE"
-        )"
-
-
-        SCORE="$(
-            cut -d '|' -f 7 "$RESULT_FILE"
-        )"
-
-
-        SPEED_MB="$(
-            theme_speed_to_mb "$SPEED_BPS"
-        )"
-
-
-        printf \
-            '%-8s %-12s %-14s\n' \
-            "$NODE_NAME" \
-            "${TTFB_MS} ms" \
-            "${SPEED_MB} MB/s"
-
-
-        printf \
-            '%s|%s|%s|%s|%s|%s\n' \
-            "$SCORE" \
-            "$NODE_NAME" \
-            "$NODE_PREFIX" \
-            "$TEST_URL" \
-            "$TTFB_MS" \
-            "$SPEED_BPS" \
-            >> "$THEME_ROUTE_FILE"
-
     done
-
-
-    rm -rf "$THEME_TEST_DIR"
-
-
-    [ -s "$THEME_ROUTE_FILE" ] || {
-
-        _theme_warn \
-            "没有发现可用测速线路"
-
-        return 1
-
-    }
-
-
-    sort \
-        -n \
-        -t '|' \
-        -k 1,1 \
-        "$THEME_ROUTE_FILE" \
-        > "$THEME_SORTED_FILE"
-
-
-    if [ -s "$THEME_SORTED_FILE" ]; then
-
-        mv \
-            "$THEME_SORTED_FILE" \
-            "$THEME_ROUTE_FILE"
-
-    fi
-
-
-    BEST_LINE="$(
-        sed -n '1p' \
-            "$THEME_ROUTE_FILE"
-    )"
-
-
-    BEST_NAME="$(
-        printf '%s' "$BEST_LINE" |
-        cut -d '|' -f 2
-    )"
-
-
-    BEST_TTFB="$(
-        printf '%s' "$BEST_LINE" |
-        cut -d '|' -f 5
-    )"
-
-
-    BEST_SPEED="$(
-        printf '%s' "$BEST_LINE" |
-        cut -d '|' -f 6
-    )"
-
-
-    printf "\n"
-
-    _theme_ok \
-        "最佳线路：$BEST_NAME"
-
-
-    _theme_info \
-        "延迟：${BEST_TTFB} ms"
-
-
-    _theme_info \
-        "下载速度：$(theme_speed_to_mb "$BEST_SPEED") MB/s"
-
-
-    printf "\n"
-
-
-    return 0
+    sort -n -t '|' -k 2,2 "$THEME_ROUTE_FILE" >"$THEME_SORTED_FILE"
+    BEST_LINE="$(head -n 1 "$THEME_SORTED_FILE")"; BEST_SCORE="$(printf '%s' "$BEST_LINE" | cut -d '|' -f 2)"
+    [ -n "$BEST_LINE" ] && [ "$BEST_SCORE" -lt 999999999 ] || { _theme_error "所有下载线路测速均失败"; return 1; }
+    _theme_ok "最佳线路：$(printf '%s' "$BEST_LINE" | cut -d '|' -f 1)"
+    _theme_info "延迟：$(printf '%s' "$BEST_LINE" | cut -d '|' -f 3) ms"
+    _theme_info "下载速度：$(printf '%s' "$BEST_LINE" | cut -d '|' -f 5) MB/s"
 }
 
-
-# ============================================================
-# 智能下载
-# ============================================================
-
-smart_download_release()
+download_from_routes()
 {
-    ORIGINAL_URL="$1"
-    OUTPUT="$2"
-
-
-    DOWNLOAD_SUCCESS=0
-    DIRECT_TRIED=0
-
-
-    prepare_theme_routes \
-        "$ORIGINAL_URL"
-
-
-    if [ -s "$THEME_ROUTE_FILE" ]; then
-
-        while IFS='|' read -r \
-            ROUTE_SCORE \
-            ROUTE_NAME \
-            ROUTE_PREFIX \
-            ROUTE_URL \
-            ROUTE_TTFB \
-            ROUTE_SPEED
-        do
-
-            [ -n "$ROUTE_NAME" ] ||
-                continue
-
-
-            [ -n "$ROUTE_URL" ] ||
-                continue
-
-
-            if [ "$ROUTE_NAME" = "DIRECT" ]; then
-
-                DIRECT_TRIED=1
-
-            fi
-
-
-            _theme_info \
-                "正在使用线路：$ROUTE_NAME"
-
-
-            if download_direct \
-                "$ROUTE_URL" \
-                "$OUTPUT"
-            then
-
-                _theme_ok \
-                    "下载线路：$ROUTE_NAME"
-
-                DOWNLOAD_SUCCESS=1
-
-                break
-
-            fi
-
-
-            _theme_warn \
-                "$ROUTE_NAME 下载失败，切换下一线路..."
-
-
-        done < "$THEME_ROUTE_FILE"
-
-    fi
-
-
-    if [ "$DOWNLOAD_SUCCESS" -ne 1 ] &&
-       [ "$DIRECT_TRIED" -ne 1 ]
-    then
-
-        _theme_info \
-            "正在尝试 GitHub 官方直连..."
-
-
-        if download_direct \
-            "$ORIGINAL_URL" \
-            "$OUTPUT"
-        then
-
-            _theme_ok \
-                "GitHub 官方直连下载成功"
-
-            DOWNLOAD_SUCCESS=1
-
-        fi
-
-    fi
-
-
-    rm -f \
-        "$THEME_ROUTE_FILE" \
-        "$THEME_SORTED_FILE"
-
-
-    [ "$DOWNLOAD_SUCCESS" -eq 1 ]
+    SOURCE_URL="$1"; OUTPUT="$2"
+    while IFS='|' read -r NAME SCORE MS SPEED MB PREFIX; do
+        [ -n "$NAME" ] || continue
+        _theme_info "使用线路 $NAME 下载 $(basename "$SOURCE_URL")..."
+        download_direct "${PREFIX}${SOURCE_URL}" "$OUTPUT" && return 0
+        _theme_warn "线路 $NAME 下载失败，切换下一线路"
+    done <"$THEME_SORTED_FILE"
+    _theme_warn "代理线路均失败，最后尝试 DIRECT"
+    download_direct "$SOURCE_URL" "$OUTPUT"
 }
-
-
-# ============================================================
-# 安装本地包
-# ============================================================
 
 install_local_package()
 {
     FILE="$1"
-
-
-    [ -s "$FILE" ] ||
-        return 1
-
-
-    case "$PKG_MANAGER" in
-
-        opkg)
-
-            opkg install "$FILE" \
-                >>"$THEME_LOG" 2>&1
-
-        ;;
-
-
-        apk)
-
-            apk add \
-                --allow-untrusted \
-                "$FILE" \
-                >>"$THEME_LOG" 2>&1
-
-        ;;
-
-
-        *)
-
-            return 1
-
-        ;;
-
-    esac
+    case "$PKG_MANAGER" in opkg) opkg install "$FILE" >>"$THEME_LOG" 2>&1 ;; apk) apk add --allow-untrusted "$FILE" >>"$THEME_LOG" 2>&1 ;; esac
 }
 
-
-# ============================================================
-# Bootstrap 恢复
-# ============================================================
-
-restore_bootstrap_theme()
+install_argon()
 {
-    _theme_warn \
-        "正在回滚到 Bootstrap 主题..."
-
-
-    if [ -d /www/luci-static/bootstrap ]; then
-
-        uci set \
-            luci.main.mediaurlbase='/luci-static/bootstrap' \
-            >/dev/null 2>&1
-
-
-        uci set \
-            luci.main.theme='bootstrap' \
-            >/dev/null 2>&1
-
-
-        uci commit luci \
-            >/dev/null 2>&1
-
-
-        _theme_ok \
-            "已恢复 Bootstrap"
-
-        return 0
-
-    fi
-
-
-    _theme_warn \
-        "未找到 Bootstrap 主题"
-
-
-    return 1
-}
-
-
-# ============================================================
-# Argon 验证
-# ============================================================
-
-verify_argon_install()
-{
-    package_installed \
-        "luci-theme-argon" &&
-        return 0
-
-
-    [ -d /www/luci-static/argon ] &&
-        return 0
-
-
-    return 1
-}
-
-
-# ============================================================
-# Argon 安装
-# ============================================================
-
-install_argon_official()
-{
-    if ! fetch_argon_release; then
-
-        _theme_error \
-            "Argon Release 获取失败"
-
-        return 1
-
-    fi
-
-
-    theme_progress \
-        28 \
-        "正在下载 Argon Theme..."
-
-
-    printf "\n"
-
-
-    if ! smart_download_release \
-        "$ARGON_THEME_URL" \
-        "$ARGON_THEME_FILE"
-    then
-
-        _theme_error \
-            "Argon Theme 下载失败"
-
-        return 1
-
-    fi
-
-
+    download_from_routes "$ARGON_THEME_URL" "$ARGON_THEME_FILE" || { _theme_error "Argon Theme 下载失败"; return 1; }
+    install_local_package "$ARGON_THEME_FILE" || { _theme_error "Argon Theme 安装失败"; return 1; }
     if [ -n "$ARGON_CONFIG_URL" ]; then
-
-        theme_progress \
-            42 \
-            "正在下载 Argon Config..."
-
-
-        printf "\n"
-
-
-        if ! smart_download_release \
-            "$ARGON_CONFIG_URL" \
-            "$ARGON_CONFIG_FILE"
-        then
-
-            _theme_warn \
-                "Argon Config 下载失败，将仅安装 Theme"
-
-            rm -f "$ARGON_CONFIG_FILE"
-
-        fi
-
+        if download_from_routes "$ARGON_CONFIG_URL" "$ARGON_CONFIG_FILE"; then install_local_package "$ARGON_CONFIG_FILE" || _theme_warn "Argon Config 安装失败，Theme 已保留"; fi
     fi
-
-
     if [ -n "$ARGON_LANG_URL" ]; then
-
-        theme_progress \
-            50 \
-            "正在下载 Argon 中文包..."
-
-
-        printf "\n"
-
-
-        if ! smart_download_release \
-            "$ARGON_LANG_URL" \
-            "$ARGON_LANG_FILE"
-        then
-
-            _theme_warn \
-                "中文包下载失败，自动跳过"
-
-            rm -f "$ARGON_LANG_FILE"
-
-        fi
-
+        if download_from_routes "$ARGON_LANG_URL" "$ARGON_LANG_FILE"; then install_local_package "$ARGON_LANG_FILE" || _theme_warn "Argon 中文包安装失败"; fi
     fi
-
-
-    theme_progress \
-        58 \
-        "正在安装 Argon..."
-
-
-    printf \
-        "\n===== Argon Install =====\n" \
-        >>"$THEME_LOG"
-
-
-    if ! install_local_package \
-        "$ARGON_THEME_FILE"
-    then
-
-        printf "\n"
-
-        _theme_error \
-            "Argon Theme 包安装失败"
-
-        restore_bootstrap_theme
-
-        return 1
-
-    fi
-
-
-    if [ -s "$ARGON_CONFIG_FILE" ]; then
-
-        if ! install_local_package \
-            "$ARGON_CONFIG_FILE"
-        then
-
-            _theme_warn \
-                "Argon Config 安装失败，主题仍可使用"
-
-        fi
-
-    fi
-
-
-    if [ -s "$ARGON_LANG_FILE" ]; then
-
-        if ! install_local_package \
-            "$ARGON_LANG_FILE"
-        then
-
-            _theme_warn \
-                "Argon 中文包安装失败，自动跳过"
-
-        fi
-
-    fi
-
-
-    if ! verify_argon_install; then
-
-        _theme_error \
-            "Argon 安装验证失败"
-
-        restore_bootstrap_theme
-
-        return 1
-
-    fi
-
-
-    _theme_ok \
-        "Argon Theme 安装成功"
-
-
-    return 0
+    uci set luci.main.mediaurlbase='/luci-static/argon' 2>>"$THEME_LOG"
+    uci commit luci 2>>"$THEME_LOG"
+    _theme_ok "Argon 已设置为默认主题"
 }
 
-
-# ============================================================
-# 设置 Argon
-# ============================================================
-
-set_argon_default()
+rollback_bootstrap()
 {
-    verify_argon_install ||
-        return 1
-
-
-    uci set \
-        luci.main.mediaurlbase='/luci-static/argon' \
-        >>"$THEME_LOG" 2>&1
-
-
-    uci set \
-        luci.main.theme='argon' \
-        >>"$THEME_LOG" 2>&1
-
-
-    uci set \
-        luci.themes.Argon='/luci-static/argon' \
-        >>"$THEME_LOG" 2>&1
-
-
-    uci commit luci \
-        >>"$THEME_LOG" 2>&1
-
-
-    return 0
+    _theme_warn "Argon 验证失败，正在恢复 Bootstrap"
+    uci set luci.main.mediaurlbase='/luci-static/bootstrap' 2>>"$THEME_LOG"
+    uci commit luci 2>>"$THEME_LOG"
 }
-
-
-# ============================================================
-# QuickStart
-# ============================================================
-
-verify_quickstart_install()
-{
-    package_installed "quickstart" ||
-        return 1
-
-    package_installed "luci-app-quickstart" ||
-        return 1
-
-    return 0
-}
-
-
-# ============================================================
-# is-opkg
-# ============================================================
-
-ensure_is_opkg()
-{
-    IS_OPKG_BIN=""
-
-
-    if command -v is-opkg >/dev/null 2>&1; then
-
-        IS_OPKG_BIN="$(
-            command -v is-opkg
-        )"
-
-        return 0
-
-    fi
-
-
-    if [ -x /bin/is-opkg ]; then
-
-        IS_OPKG_BIN="/bin/is-opkg"
-
-        return 0
-
-    fi
-
-
-    if [ -x /usr/bin/is-opkg ]; then
-
-        IS_OPKG_BIN="/usr/bin/is-opkg"
-
-        return 0
-
-    fi
-
-
-    IS_OPKG_BIN="${THEME_TMP}/is-opkg"
-
-
-    _theme_info \
-        "正在下载 LinkEase 官方 is-opkg..."
-
-
-    if ! download_direct \
-        "$IS_OPKG_URL" \
-        "$IS_OPKG_BIN"
-    then
-
-        _theme_error \
-            "is-opkg 下载失败"
-
-        IS_OPKG_BIN=""
-
-        return 1
-
-    fi
-
-
-    chmod 755 "$IS_OPKG_BIN" ||
-        return 1
-
-
-    return 0
-}
-
-
-# ============================================================
-# QuickStart 配置
-# ============================================================
-
-apply_quickstart_config()
-{
-    rm -f \
-        "$QUICKSTART_CONFIG_TMP"
-
-
-    if ! download_direct \
-        "$QUICKSTART_CONFIG_URL" \
-        "$QUICKSTART_CONFIG_TMP"
-    then
-
-        _theme_warn \
-            "QuickStart 风格配置下载失败，保留默认配置"
-
-        return 0
-
-    fi
-
-
-    if [ -f /etc/config/quickstart ] &&
-       [ ! -f "$QUICKSTART_CONFIG_BAK" ]
-    then
-
-        cp -f \
-            /etc/config/quickstart \
-            "$QUICKSTART_CONFIG_BAK" \
-            >>"$THEME_LOG" 2>&1
-
-    fi
-
-
-    cp -f \
-        "$QUICKSTART_CONFIG_TMP" \
-        /etc/config/quickstart \
-        >>"$THEME_LOG" 2>&1 ||
-        return 0
-
-
-    if ! uci -q show quickstart \
-        >/dev/null 2>&1
-    then
-
-        _theme_warn \
-            "QuickStart 配置与当前版本不兼容"
-
-
-        if [ -f "$QUICKSTART_CONFIG_BAK" ]; then
-
-            cp -f \
-                "$QUICKSTART_CONFIG_BAK" \
-                /etc/config/quickstart
-
-        fi
-
-
-        return 0
-
-    fi
-
-
-    _theme_ok \
-        "QuickStart iStoreOS 风格配置已应用"
-
-
-    return 0
-}
-
-
-# ============================================================
-# QuickStart 安装
-# ============================================================
 
 install_quickstart()
 {
-    if [ "$PKG_MANAGER" != "opkg" ]; then
-
-        _theme_warn \
-            "当前为 APK 系统，跳过 OPKG QuickStart"
-
-        return 0
-
+    _theme_info "正在安装 QuickStart 首页与网络向导..."
+    IS_OPKG_BIN="${THEME_TMP}/is-opkg"
+    download_direct "$IS_OPKG_URL" "$IS_OPKG_BIN" || { _theme_warn "is-opkg 下载失败，跳过 QuickStart"; return 0; }
+    chmod +x "$IS_OPKG_BIN"
+    "$IS_OPKG_BIN" update >>"$THEME_LOG" 2>&1 || true
+    "$IS_OPKG_BIN" install luci-app-quickstart luci-app-wizard >>"$THEME_LOG" 2>&1 || { _theme_warn "QuickStart 部分组件安装失败"; return 0; }
+    if download_direct "$QUICKSTART_CONFIG_URL" "$QUICKSTART_CONFIG_TMP"; then
+        [ -f /etc/config/quickstart ] && [ ! -f "$QUICKSTART_CONFIG_BAK" ] && cp /etc/config/quickstart "$QUICKSTART_CONFIG_BAK"
+        cp "$QUICKSTART_CONFIG_TMP" /etc/config/quickstart
     fi
-
-
-    if verify_quickstart_install; then
-
-        _theme_ok \
-            "首页 + 网络向导已安装"
-
-        apply_quickstart_config
-
-        return 0
-
-    fi
-
-
-    if ! ensure_is_opkg; then
-
-        return 1
-
-    fi
-
-
-    printf \
-        "\n===== QuickStart Install =====\n" \
-        >>"$THEME_LOG"
-
-
-    theme_progress \
-        70 \
-        "正在更新 QuickStart 索引..."
-
-
-    "$IS_OPKG_BIN" update \
-        >>"$THEME_LOG" 2>&1
-
-
-    theme_progress \
-        78 \
-        "正在安装首页和网络向导..."
-
-
-    "$IS_OPKG_BIN" install \
-        luci-i18n-quickstart-zh-cn \
-        >>"$THEME_LOG" 2>&1
-
-
-    if ! verify_quickstart_install; then
-
-        _theme_warn \
-            "普通安装失败，尝试 --force-depends"
-
-
-        "$IS_OPKG_BIN" install \
-            luci-i18n-quickstart-zh-cn \
-            --force-depends \
-            >>"$THEME_LOG" 2>&1
-
-    fi
-
-
-    if ! verify_quickstart_install; then
-
-        _theme_error \
-            "首页 + 网络向导安装失败"
-
-        return 1
-
-    fi
-
-
-    theme_progress \
-        86 \
-        "正在配置首页和网络向导..."
-
-
-    apply_quickstart_config
-
-
-    _theme_ok \
-        "首页 + 网络向导安装成功"
-
-
-    return 0
+    _theme_ok "QuickStart 配置完成"
 }
 
-
-# ============================================================
-# LuCI 刷新
-# ============================================================
-
-refresh_theme_luci()
+refresh_luci()
 {
-    rm -rf \
-        /tmp/luci-indexcache \
-        /tmp/luci-modulecache \
-        /tmp/luci-templatecache \
-        /tmp/luci-*cache* \
-        >/dev/null 2>&1
-
-
-    if [ -x /etc/init.d/rpcd ]; then
-
-        /etc/init.d/rpcd restart \
-            >>"$THEME_LOG" 2>&1
-
-    fi
-
-
-    if [ -x /etc/init.d/uhttpd ]; then
-
-        /etc/init.d/uhttpd restart \
-            >>"$THEME_LOG" 2>&1
-
-    fi
-
-
-    return 0
+    rm -rf /tmp/luci-* /tmp/luci-modulecache 2>/dev/null
+    /etc/init.d/rpcd restart >/dev/null 2>&1 || true
+    /etc/init.d/uhttpd restart >/dev/null 2>&1 || true
 }
 
-
-# ============================================================
-# 主函数
-# ============================================================
+verify_theme()
+{
+    package_installed luci-theme-argon || { rollback_bootstrap; return 1; }
+    [ -d /www/luci-static/argon ] || { rollback_bootstrap; return 1; }
+    CURRENT_THEME="$(uci -q get luci.main.mediaurlbase)"
+    [ "$CURRENT_THEME" = "/luci-static/argon" ] || { rollback_bootstrap; return 1; }
+    return 0
+}
 
 install_theme()
 {
+    trap 'theme_interrupt' INT TERM
+    rm -f "$THEME_LOG"; mkdir -p "$THEME_TMP"; : >"$THEME_LOG"
+    theme_progress 5 "正在检测运行环境..."
     printf "\n"
-
-
-    printf "%b\n" \
-        "${BLUE}╔══════════════════════════════════════╗${RESET}"
-
-
-    printf "%b\n" \
-        "${BLUE}║${GREEN}        iStoreOS 风格一键安装         ${BLUE}║${RESET}"
-
-
-    printf "%b\n" \
-        "${BLUE}╚══════════════════════════════════════╝${RESET}"
-
-
-    printf "\n"
-
-
-    if [ "$(id -u 2>/dev/null)" != "0" ]; then
-
-        _theme_error \
-            "请使用 root 用户运行"
-
-        return 1
-
-    fi
-
-
-    cleanup_theme_all
-
-
-    mkdir -p "$THEME_TMP" || {
-
-        _theme_error \
-            "无法创建临时目录"
-
-        return 1
-
-    }
-
-
-    touch "$THEME_LOG"
-
-
-    trap \
-        'theme_interrupt' \
-        INT TERM
-
-
-    theme_progress \
-        5 \
-        "正在检测运行环境..."
-
-
-    # ========================================================
-    # 修复 1：
-    # 进度条结束后强制换行
-    # 避免 5% 和 OpenWrt版本 粘在一起
-    # ========================================================
-
-    printf "\n"
-
-
-    if ! check_theme_runtime; then
-
-        printf "\n"
-
-        return 1
-
-    fi
-
-
-    if ! detect_package_manager; then
-
-        printf "\n"
-
-        _theme_error \
-            "未找到 OPKG / APK"
-
-        return 1
-
-    fi
-
-
-    if ! detect_theme_system; then
-
-        printf "\n"
-
-        return 1
-
-    fi
-
-
-    if ! select_argon_compat; then
-
-        printf "\n"
-
-        return 1
-
-    fi
-
-
-    if ! check_theme_disk_space; then
-
-        printf "\n"
-
-        return 1
-
-    fi
-
-
-    printf "\n"
-
-
-    theme_progress \
-        15 \
-        "正在获取兼容 Argon..."
-
-
-    printf "\n"
-
-
-    if ! install_argon_official; then
-
-        printf "\n"
-
-
-        _theme_error \
-            "Argon 安装失败"
-
-
-        restore_bootstrap_theme
-
-
-        show_theme_error_log
-
-
-        cleanup_theme_temp
-
-
-        trap - INT TERM
-
-
-        return 1
-
-    fi
-
-
-    theme_progress \
-        64 \
-        "正在设置 Argon 默认主题..."
-
-
-    if ! set_argon_default; then
-
-        printf "\n"
-
-
-        _theme_error \
-            "Argon 默认主题设置失败"
-
-
-        restore_bootstrap_theme
-
-
-        show_theme_error_log
-
-
-        cleanup_theme_temp
-
-
-        trap - INT TERM
-
-
-        return 1
-
-    fi
-
-
-    theme_progress \
-        67 \
-        "正在准备首页和网络向导..."
-
-
-    if ! install_quickstart; then
-
-        printf "\n"
-
-
-        _theme_warn \
-            "Argon 已安装，但 QuickStart 安装失败"
-
-    fi
-
-
-    theme_progress \
-        93 \
-        "正在刷新 LuCI..."
-
-
-    refresh_theme_luci
-
-
-    theme_progress \
-        97 \
-        "正在进行最终验证..."
-
-
-    if ! verify_argon_install; then
-
-        printf "\n"
-
-
-        _theme_error \
-            "Argon 最终验证失败"
-
-
-        restore_bootstrap_theme
-
-
-        show_theme_error_log
-
-
-        cleanup_theme_temp
-
-
-        trap - INT TERM
-
-
-        return 1
-
-    fi
-
-
-    theme_progress \
-        100 \
-        "iStoreOS 风格安装完成"
-
-
-    printf "\n\n"
-
-
-    ARGON_INSTALLED_VERSION="$(
-        get_package_version \
-            luci-theme-argon
-    )"
-
-
-    QUICKSTART_VERSION="$(
-        get_package_version \
-            luci-app-quickstart
-    )"
-
-
-    _theme_ok \
-        "Argon 主题安装成功"
-
-
-    if verify_quickstart_install; then
-
-        _theme_ok \
-            "首页 + 网络向导安装成功"
-
-    fi
-
-
-    _theme_info \
-        "OpenWrt       : $OPENWRT_VERSION"
-
-
-    _theme_info \
-        "包管理器      : $PKG_MANAGER"
-
-
-    _theme_info \
-        "软件包格式    : .$ARGON_PACKAGE_TYPE"
-
-
-    [ -n "$ARGON_RELEASE_TAG" ] &&
-        _theme_info \
-            "Argon Release  : $ARGON_RELEASE_TAG"
-
-
-    [ -n "$ARGON_INSTALLED_VERSION" ] &&
-        _theme_info \
-            "Argon Version  : $ARGON_INSTALLED_VERSION"
-
-
-    [ -n "$QUICKSTART_VERSION" ] &&
-        _theme_info \
-            "QuickStart     : $QUICKSTART_VERSION"
-
-
-    _theme_info \
-        "Argon 来源     : jerrykuku 官方 GitHub Release"
-
-
-    _theme_info \
-        "Argon 下载     : GH01-GH06 + DIRECT 自动测速"
-
-
-    _theme_info \
-        "已设置 Argon 为默认 LuCI 主题"
-
-
-    _theme_info \
-        "如页面未更新，请 Ctrl+F5 强制刷新或重新登录 LuCI"
-
-
-    printf "\n"
-
-
+    check_theme_runtime || return 1
+    detect_package_manager || { _theme_error "未找到支持的软件包管理器"; return 1; }
+    detect_theme_system
+    select_argon_compat || return 1
+    check_theme_disk_space || return 1
+    theme_progress 20 "正在获取 Argon 版本..."; printf "\n"
+    fetch_argon_release || { show_theme_error_log; return 1; }
+    theme_progress 35 "正在测试下载线路..."; printf "\n"
+    test_theme_routes || { show_theme_error_log; return 1; }
+    theme_progress 55 "正在下载并安装 Argon..."; printf "\n"
+    install_argon || { rollback_bootstrap; show_theme_error_log; return 1; }
+    theme_progress 75 "正在安装 QuickStart..."; printf "\n"
+    install_quickstart
+    theme_progress 90 "正在刷新 LuCI..."; printf "\n"
+    refresh_luci
+    verify_theme || { _theme_error "Argon 验证失败，已恢复 Bootstrap"; show_theme_error_log; return 1; }
+    theme_progress 100 "iStoreOS 风格安装完成"; printf "\n"
+    _theme_ok "Argon + QuickStart 安装完成"
     cleanup_theme_temp
-
-
     trap - INT TERM
-
-
-    rm -f \
-        "$THEME_LOG" \
-        2>/dev/null
-
-
     return 0
 }
+
