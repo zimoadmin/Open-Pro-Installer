@@ -398,10 +398,6 @@ detect_theme_system()
         CPU_ARCH="Unknown"
 
 
-    # --------------------------------------------------------
-    # OPKG 架构
-    # --------------------------------------------------------
-
     if [ "$PKG_MANAGER" = "opkg" ]; then
 
         PKG_ARCH="$(
@@ -527,11 +523,6 @@ select_argon_compat()
     esac
 
 
-    # --------------------------------------------------------
-    # 非常关键：
-    # 根据包管理器生成正确文件扩展名
-    # --------------------------------------------------------
-
     case "$ARGON_PACKAGE_TYPE" in
 
         ipk)
@@ -622,8 +613,6 @@ download_direct()
 
     fi
 
-
-    # 防止代理返回 HTML 错误页
 
     if head -c 512 "$OUTPUT" 2>/dev/null |
        grep -Eqi \
@@ -794,10 +783,6 @@ fetch_argon_release()
     ARGON_LANG_URL=""
 
 
-    # ========================================================
-    # OpenWrt 21 固定兼容版
-    # ========================================================
-
     if [ -n "$ARGON_TARGET_TAG" ]; then
 
         ARGON_RELEASE_TAG="$ARGON_TARGET_TAG"
@@ -816,11 +801,6 @@ fetch_argon_release()
             return 1
 
         fi
-
-
-    # ========================================================
-    # 最新版
-    # ========================================================
 
     else
 
@@ -870,10 +850,6 @@ fetch_argon_release()
 
         fi
 
-
-        # ----------------------------------------------------
-        # API 失败
-        # ----------------------------------------------------
 
         if [ -z "$ARGON_RELEASE_TAG" ] ||
            [ ! -s "$ARGON_ASSET_LIST" ]
@@ -942,10 +918,6 @@ fetch_argon_release()
     fi
 
 
-    # ========================================================
-    # 根据包格式寻找 Asset
-    # ========================================================
-
     case "$ARGON_PACKAGE_TYPE" in
 
         ipk)
@@ -1006,6 +978,37 @@ fetch_argon_release()
     esac
 
 
+    # ========================================================
+    # 修复 3：
+    # 严格校验 Asset URL
+    # 防止异常文本进入中文包等变量
+    # ========================================================
+
+    case "$ARGON_THEME_URL" in
+        https://github.com/*)
+        ;;
+        *)
+            ARGON_THEME_URL=""
+        ;;
+    esac
+
+    case "$ARGON_CONFIG_URL" in
+        https://github.com/*)
+        ;;
+        *)
+            ARGON_CONFIG_URL=""
+        ;;
+    esac
+
+    case "$ARGON_LANG_URL" in
+        https://github.com/*)
+        ;;
+        *)
+            ARGON_LANG_URL=""
+        ;;
+    esac
+
+
     if [ -z "$ARGON_THEME_URL" ]; then
 
         _theme_error \
@@ -1040,10 +1043,20 @@ fetch_argon_release()
     fi
 
 
+    # ========================================================
+    # 修复 3：
+    # 没有中文包时明确显示
+    # ========================================================
+
     if [ -n "$ARGON_LANG_URL" ]; then
 
         _theme_info \
             "中文包 : $(basename "$ARGON_LANG_URL")"
+
+    else
+
+        _theme_info \
+            "中文包 : 无独立中文包"
 
     fi
 
@@ -1077,55 +1090,96 @@ build_theme_url()
 
 # ============================================================
 # 秒 → ms
+#
+# 修复 2 + 4：
+# 不再使用复杂 awk
 # ============================================================
 
 theme_seconds_to_ms()
 {
-    awk \
-        -v t="$1" '
-        BEGIN {
+    T="$1"
 
-            if (
-                t == "" ||
-                t !~ /^[0-9.]+$/
-            )
-            {
-                print 999999
-            }
-            else
-            {
-                printf "%d", t * 1000
-            }
+    case "$T" in
+        ''|*[!0-9.]*)
+            printf '%s' "999999"
+            return 0
+        ;;
+    esac
 
-        }
-    '
+    SEC="${T%%.*}"
+
+    if [ "$SEC" = "$T" ]; then
+        FRAC="0"
+    else
+        FRAC="${T#*.}"
+    fi
+
+    [ -n "$SEC" ] || SEC="0"
+
+    FRAC="${FRAC}000"
+    FRAC="$(printf '%s' "$FRAC" | cut -c 1-3)"
+
+    SEC="$(printf '%s' "$SEC" | sed 's/^0*//')"
+    FRAC="$(printf '%s' "$FRAC" | sed 's/^0*//')"
+
+    [ -n "$SEC" ] || SEC=0
+    [ -n "$FRAC" ] || FRAC=0
+
+    case "$SEC" in
+        *[!0-9]*) SEC=0 ;;
+    esac
+
+    case "$FRAC" in
+        *[!0-9]*) FRAC=0 ;;
+    esac
+
+    printf '%s' \
+        $((SEC * 1000 + FRAC))
+
+    return 0
 }
 
 
 # ============================================================
 # B/s → MB/s
+#
+# 修复 2 + 4：
+# 不再使用 awk 浮点计算
 # ============================================================
 
 theme_speed_to_mb()
 {
-    awk \
-        -v s="$1" '
-        BEGIN {
+    S="$1"
 
-            if (
-                s == "" ||
-                s <= 0
-            )
-            {
-                printf "0.00"
-            }
-            else
-            {
-                printf "%.2f", s / 1024 / 1024
-            }
+    case "$S" in
+        ''|*[!0-9.]*)
+            printf '%s' "0.00"
+            return 0
+        ;;
+    esac
 
-        }
-    '
+    S="${S%%.*}"
+
+    S="$(printf '%s' "$S" | sed 's/^0*//')"
+
+    [ -n "$S" ] || S=0
+
+    case "$S" in
+        *[!0-9]*)
+            printf '%s' "0.00"
+            return 0
+        ;;
+    esac
+
+    WHOLE=$((S / 1048576))
+    REM=$((S % 1048576))
+    DEC=$((REM * 100 / 1048576))
+
+    printf '%d.%02d' \
+        "$WHOLE" \
+        "$DEC"
+
+    return 0
 }
 
 
@@ -1135,35 +1189,59 @@ theme_speed_to_mb()
 # 越低越好
 #
 # score =
-#
 # 首包延迟
 # +
 # 下载 4MB 文件预计耗时
 #
+# 修复 2：
+# 不再使用 awk
 # ============================================================
 
 theme_calculate_score()
 {
-    awk \
-        -v t="$1" \
-        -v s="$2" \
-        -v kb="$THEME_SCORE_FILE_KB" '
-        BEGIN {
+    T="$1"
+    S="$2"
 
-            if (s <= 0)
-            {
-                print 999999999
-                exit
-            }
+    case "$T" in
+        ''|*[!0-9]*)
+            T=999999
+        ;;
+    esac
 
-            speed_kb = s / 1024
+    case "$S" in
+        ''|*[!0-9]*)
+            S=0
+        ;;
+    esac
 
-            printf "%d",
-                t +
-                (kb / speed_kb) * 1000
+    if [ "$S" -le 0 ]; then
 
-        }
-    '
+        printf '%s' "999999999"
+
+        return 0
+
+    fi
+
+    SPEED_KB=$((S / 1024))
+
+    if [ "$SPEED_KB" -le 0 ]; then
+
+        printf '%s' "999999999"
+
+        return 0
+
+    fi
+
+    DOWNLOAD_MS=$(
+        (
+            THEME_SCORE_FILE_KB * 1000
+        ) / SPEED_KB
+    )
+
+    printf '%s' \
+        $((T + DOWNLOAD_MS))
+
+    return 0
 }
 
 
@@ -1275,23 +1353,34 @@ test_theme_route()
     esac
 
 
-    RECEIVED_BYTES="$(
-        awk \
-            -v n="$SIZE_DOWN" '
-            BEGIN {
+    # ========================================================
+    # 修复 2：
+    # RECEIVED_BYTES 不再使用 awk
+    # ========================================================
 
-                if (n + 0 > 0)
-                {
-                    printf "%d", n
-                }
-                else
-                {
-                    print 0
-                }
+    case "$SIZE_DOWN" in
 
-            }
-        '
-    )"
+        ''|*[!0-9.]*)
+
+            RECEIVED_BYTES=0
+
+        ;;
+
+        *)
+
+            RECEIVED_BYTES="${SIZE_DOWN%%.*}"
+
+            RECEIVED_BYTES="$(
+                printf '%s' "$RECEIVED_BYTES" |
+                sed 's/^0*//'
+            )"
+
+            [ -n "$RECEIVED_BYTES" ] ||
+                RECEIVED_BYTES=0
+
+        ;;
+
+    esac
 
 
     [ "$RECEIVED_BYTES" -ge 2048 ] || {
@@ -1317,23 +1406,34 @@ test_theme_route()
     )"
 
 
-    SPEED_INT="$(
-        awk \
-            -v s="$SPEED_BPS" '
-            BEGIN {
+    # ========================================================
+    # 修复 2 + 4：
+    # SPEED_INT 不再使用 awk
+    # ========================================================
 
-                if (s > 0)
-                {
-                    printf "%d", s
-                }
-                else
-                {
-                    print 0
-                }
+    case "$SPEED_BPS" in
 
-            }
-        '
-    )"
+        ''|*[!0-9.]*)
+
+            SPEED_INT=0
+
+        ;;
+
+        *)
+
+            SPEED_INT="${SPEED_BPS%%.*}"
+
+            SPEED_INT="$(
+                printf '%s' "$SPEED_INT" |
+                sed 's/^0*//'
+            )"
+
+            [ -n "$SPEED_INT" ] ||
+                SPEED_INT=0
+
+        ;;
+
+    esac
 
 
     [ "$SPEED_INT" -gt 0 ] || {
@@ -1745,10 +1845,6 @@ smart_download_release()
     fi
 
 
-    # --------------------------------------------------------
-    # DIRECT 最终兜底
-    # --------------------------------------------------------
-
     if [ "$DOWNLOAD_SUCCESS" -ne 1 ] &&
        [ "$DIRECT_TRIED" -ne 1 ]
     then
@@ -1901,10 +1997,6 @@ install_argon_official()
     fi
 
 
-    # --------------------------------------------------------
-    # Theme
-    # --------------------------------------------------------
-
     theme_progress \
         28 \
         "正在下载 Argon Theme..."
@@ -1925,10 +2017,6 @@ install_argon_official()
 
     fi
 
-
-    # --------------------------------------------------------
-    # Config
-    # --------------------------------------------------------
 
     if [ -n "$ARGON_CONFIG_URL" ]; then
 
@@ -1955,10 +2043,6 @@ install_argon_official()
     fi
 
 
-    # --------------------------------------------------------
-    # 中文
-    # --------------------------------------------------------
-
     if [ -n "$ARGON_LANG_URL" ]; then
 
         theme_progress \
@@ -1983,10 +2067,6 @@ install_argon_official()
 
     fi
 
-
-    # ========================================================
-    # 安装 Theme
-    # ========================================================
 
     theme_progress \
         58 \
@@ -2014,10 +2094,6 @@ install_argon_official()
     fi
 
 
-    # ========================================================
-    # Config 安装失败不能导致主题整体失败
-    # ========================================================
-
     if [ -s "$ARGON_CONFIG_FILE" ]; then
 
         if ! install_local_package \
@@ -2031,10 +2107,6 @@ install_argon_official()
 
     fi
 
-
-    # ========================================================
-    # 中文包
-    # ========================================================
 
     if [ -s "$ARGON_LANG_FILE" ]; then
 
@@ -2080,26 +2152,15 @@ set_argon_default()
         return 1
 
 
-    # --------------------------------------------------------
-    # 兼容老 LuCI
-    #
-    # 老 LuCI dispatcher 使用 mediaurlbase。
-    # 不只写 luci.main.theme。
-    # --------------------------------------------------------
-
     uci set \
         luci.main.mediaurlbase='/luci-static/argon' \
         >>"$THEME_LOG" 2>&1
 
 
-    # 新版本兼容字段
-
     uci set \
         luci.main.theme='argon' \
         >>"$THEME_LOG" 2>&1
 
-
-    # 某些版本需要 themes.Argon
 
     uci set \
         luci.themes.Argon='/luci-static/argon' \
@@ -2276,8 +2337,6 @@ apply_quickstart_config()
 
 install_quickstart()
 {
-    # APK 系统暂时跳过 is-opkg
-
     if [ "$PKG_MANAGER" != "opkg" ]; then
 
         _theme_warn \
@@ -2429,10 +2488,6 @@ install_theme()
     printf "\n"
 
 
-    # ========================================================
-    # ROOT
-    # ========================================================
-
     if [ "$(id -u 2>/dev/null)" != "0" ]; then
 
         _theme_error \
@@ -2442,10 +2497,6 @@ install_theme()
 
     fi
 
-
-    # ========================================================
-    # 初始化
-    # ========================================================
 
     cleanup_theme_all
 
@@ -2468,13 +2519,18 @@ install_theme()
         INT TERM
 
 
-    # ========================================================
-    # 环境
-    # ========================================================
-
     theme_progress \
         5 \
         "正在检测运行环境..."
+
+
+    # ========================================================
+    # 修复 1：
+    # 进度条结束后强制换行
+    # 避免 5% 和 OpenWrt版本 粘在一起
+    # ========================================================
+
+    printf "\n"
 
 
     if ! check_theme_runtime; then
@@ -2528,10 +2584,6 @@ install_theme()
     printf "\n"
 
 
-    # ========================================================
-    # Argon
-    # ========================================================
-
     theme_progress \
         15 \
         "正在获取兼容 Argon..."
@@ -2566,10 +2618,6 @@ install_theme()
     fi
 
 
-    # ========================================================
-    # 设置默认
-    # ========================================================
-
     theme_progress \
         64 \
         "正在设置 Argon 默认主题..."
@@ -2601,10 +2649,6 @@ install_theme()
     fi
 
 
-    # ========================================================
-    # QuickStart
-    # ========================================================
-
     theme_progress \
         67 \
         "正在准备首页和网络向导..."
@@ -2621,10 +2665,6 @@ install_theme()
     fi
 
 
-    # ========================================================
-    # LuCI
-    # ========================================================
-
     theme_progress \
         93 \
         "正在刷新 LuCI..."
@@ -2632,10 +2672,6 @@ install_theme()
 
     refresh_theme_luci
 
-
-    # ========================================================
-    # 最终验证
-    # ========================================================
 
     theme_progress \
         97 \
@@ -2667,10 +2703,6 @@ install_theme()
 
     fi
 
-
-    # ========================================================
-    # 完成
-    # ========================================================
 
     theme_progress \
         100 \
@@ -2755,8 +2787,6 @@ install_theme()
 
     trap - INT TERM
 
-
-    # 成功后删除日志
 
     rm -f \
         "$THEME_LOG" \
