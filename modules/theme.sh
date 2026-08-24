@@ -36,6 +36,7 @@ OPENWRT_VERSION=""
 OPENWRT_MAJOR=""
 PKG_MANAGER=""
 ARGON_PACKAGE_TYPE=""
+ARGON_MENU_FIX_APPLIED=0
 
 ARGON_REPO="jerrykuku/luci-theme-argon"
 ARGON_RELEASE_API="https://api.github.com/repos/${ARGON_REPO}/releases/latest"
@@ -942,6 +943,387 @@ set_argon_default()
     return 0
 }
 
+
+# ============================================================
+# OpenWrt 21.x / Argon v2.2.9 菜单折叠兼容修复
+#
+# 仅在：
+#   OpenWrt 21.x
+#   Argon v2.2.9
+# 时应用。
+#
+# 修复：
+#   一级菜单点击一次展开，再次点击可收起；
+#   切换其它一级菜单时自动收起之前菜单。
+# ============================================================
+
+apply_argon21_menu_fix()
+{
+    [ "$OPENWRT_MAJOR" = "21" ] || return 0
+    [ "$ARGON_RELEASE_TAG" = "v2.2.9" ] || return 0
+
+    MENU_FILE="/www/luci-static/resources/menu-argon.js"
+    MENU_BACKUP="${MENU_FILE}.openpro.bak"
+    MENU_TMP="${THEME_TMP}/menu-argon.js"
+
+    if [ ! -f "$MENU_FILE" ]; then
+        _theme_warn "未找到 menu-argon.js，跳过 Argon 21.x 菜单折叠修复"
+        return 0
+    fi
+
+    if [ ! -f "$MENU_BACKUP" ]; then
+        cp -f "$MENU_FILE" "$MENU_BACKUP" >>"$THEME_LOG" 2>&1 || {
+            _theme_warn "menu-argon.js 备份失败，跳过菜单修复"
+            return 0
+        }
+    fi
+
+    cat > "$MENU_TMP" <<'OPENPRO_MENU_ARGON_EOF'
+'use strict';
+'require baseclass';
+'require ui';
+
+return baseclass.extend({
+	__init__: function () {
+		ui.menu.load().then(L.bind(this.render, this));
+	},
+
+	render: function (tree) {
+		var node = tree,
+			url = '',
+			children = ui.menu.getChildren(tree);
+
+		for (var i = 0; i < children.length; i++) {
+			var isActive = (
+				L.env.requestpath.length
+					? children[i].name == L.env.requestpath[0]
+					: i == 0
+			);
+
+			if (isActive)
+				this.renderMainMenu(children[i], children[i].name);
+		}
+
+		if (L.env.dispatchpath.length >= 3) {
+			for (var i = 0; i < 3 && node; i++) {
+				node = node.children[L.env.dispatchpath[i]];
+				url = url + (url ? '/' : '') + L.env.dispatchpath[i];
+			}
+
+			if (node)
+				this.renderTabMenu(node, url);
+		}
+
+		var showSide = document.querySelector('a.showSide');
+		var darkMask = document.querySelector('.darkMask');
+
+		if (showSide)
+			showSide.addEventListener(
+				'click',
+				ui.createHandlerFn(this, 'handleSidebarToggle')
+			);
+
+		if (darkMask)
+			darkMask.addEventListener(
+				'click',
+				ui.createHandlerFn(this, 'handleSidebarToggle')
+			);
+	},
+
+	handleMenuExpand: function (ev) {
+		var a = ev.currentTarget || ev.target,
+			slide = a.parentNode,
+			slide_menu = a.nextElementSibling;
+
+		if (!slide_menu)
+			return;
+
+		ev.preventDefault();
+		ev.stopPropagation();
+
+		if (slide_menu.classList.contains('active')) {
+			slide_menu.classList.remove('active');
+			a.classList.remove('active');
+			slide_menu.style.display = 'none';
+
+			if (slide)
+				slide.classList.remove('active');
+
+			a.blur();
+			return;
+		}
+
+		var openedMenus = document.querySelectorAll(
+			'.main .main-left .nav > li > ul.active'
+		);
+
+		for (var i = 0; i < openedMenus.length; i++) {
+			var ul = openedMenus[i];
+
+			if (ul === slide_menu)
+				continue;
+
+			ul.classList.remove('active');
+			ul.style.display = 'none';
+
+			if (ul.previousElementSibling)
+				ul.previousElementSibling.classList.remove('active');
+
+			if (ul.parentNode)
+				ul.parentNode.classList.remove('active');
+		}
+
+		slide_menu.classList.add('active');
+		a.classList.add('active');
+		slide_menu.style.display = 'block';
+
+		if (slide)
+			slide.classList.add('active');
+
+		a.blur();
+	},
+
+	renderMainMenu: function (tree, url, level) {
+		var l = (level || 0) + 1,
+			ul = E(
+				'ul',
+				{
+					'class': level ? 'slide-menu' : 'nav'
+				}
+			),
+			children = ui.menu.getChildren(tree);
+
+		if (children.length == 0 || l > 2)
+			return E([]);
+
+		for (var i = 0; i < children.length; i++) {
+			var isActive = (
+				(L.env.dispatchpath[l] == children[i].name) &&
+				(L.env.dispatchpath[l - 1] == tree.name)
+			);
+
+			var submenu = this.renderMainMenu(
+				children[i],
+				url + '/' + children[i].name,
+				l
+			);
+
+			var hasChildren = submenu.children.length;
+
+			var slideClass = hasChildren
+				? 'slide'
+				: null;
+
+			var menuClass = hasChildren
+				? 'menu'
+				: null;
+
+			if (isActive) {
+				ul.classList.add('active');
+
+				if (slideClass)
+					slideClass += ' active';
+
+				if (menuClass)
+					menuClass += ' active';
+			}
+
+			ul.appendChild(
+				E(
+					'li',
+					{
+						'class': slideClass
+					},
+					[
+						E(
+							'a',
+							{
+								'href': L.url(
+									url,
+									children[i].name
+								),
+
+								'click': (
+									l == 1
+										? ui.createHandlerFn(
+											this,
+											'handleMenuExpand'
+										)
+										: null
+								),
+
+								'class': menuClass,
+
+								'data-title':
+									children[i].title.replace(
+										" ",
+										"_"
+									)
+							},
+							[
+								_(children[i].title)
+							]
+						),
+
+						submenu
+					]
+				)
+			);
+		}
+
+		if (l == 1) {
+			var mainmenu =
+				document.querySelector('#mainmenu');
+
+			if (mainmenu) {
+				mainmenu.appendChild(ul);
+				mainmenu.style.display = '';
+			}
+		}
+
+		return ul;
+	},
+
+	renderTabMenu: function (tree, url, level) {
+		var container =
+				document.querySelector('#tabmenu'),
+
+			l =
+				(level || 0) + 1,
+
+			ul =
+				E(
+					'ul',
+					{
+						'class': 'tabs'
+					}
+				),
+
+			children =
+				ui.menu.getChildren(tree),
+
+			activeNode =
+				null;
+
+		if (!container)
+			return E([]);
+
+		if (children.length == 0)
+			return E([]);
+
+		for (var i = 0; i < children.length; i++) {
+			var isActive = (
+				L.env.dispatchpath[l + 2] ==
+				children[i].name
+			);
+
+			var activeClass =
+				isActive
+					? ' active'
+					: '';
+
+			var className =
+				'tabmenu-item-%s %s'.format(
+					children[i].name,
+					activeClass
+				);
+
+			ul.appendChild(
+				E(
+					'li',
+					{
+						'class': className
+					},
+					[
+						E(
+							'a',
+							{
+								'href': L.url(
+									url,
+									children[i].name
+								)
+							},
+							[
+								_(children[i].title)
+							]
+						)
+					]
+				)
+			);
+
+			if (isActive)
+				activeNode = children[i];
+		}
+
+		container.appendChild(ul);
+		container.style.display = '';
+
+		if (activeNode) {
+			container.appendChild(
+				this.renderTabMenu(
+					activeNode,
+					url + '/' + activeNode.name,
+					l
+				)
+			);
+		}
+
+		return ul;
+	},
+
+	handleSidebarToggle: function (ev) {
+		var showside =
+				document.querySelector('a.showSide'),
+
+			sidebar =
+				document.querySelector('#mainmenu'),
+
+			darkmask =
+				document.querySelector('.darkMask'),
+
+			scrollbar =
+				document.querySelector('.main-right');
+
+		if (!showside ||
+			!sidebar ||
+			!darkmask ||
+			!scrollbar)
+			return;
+
+		if (showside.classList.contains('active')) {
+			showside.classList.remove('active');
+			sidebar.classList.remove('active');
+			scrollbar.classList.remove('active');
+			darkmask.classList.remove('active');
+		}
+		else {
+			showside.classList.add('active');
+			sidebar.classList.add('active');
+			scrollbar.classList.add('active');
+			darkmask.classList.add('active');
+		}
+	}
+});
+OPENPRO_MENU_ARGON_EOF
+
+    if [ ! -s "$MENU_TMP" ]; then
+        _theme_warn "Argon 21.x 菜单修复文件生成失败"
+        return 0
+    fi
+
+    if ! cp -f "$MENU_TMP" "$MENU_FILE" >>"$THEME_LOG" 2>&1; then
+        _theme_warn "Argon 21.x 菜单修复写入失败"
+        return 0
+    fi
+
+    chmod 644 "$MENU_FILE" >>"$THEME_LOG" 2>&1
+
+    ARGON_MENU_FIX_APPLIED=1
+    _theme_ok "已应用 Argon 21.x 菜单折叠修复"
+
+    return 0
+}
+
 verify_quickstart_install()
 {
     package_installed "quickstart" || return 1
@@ -1150,6 +1532,8 @@ install_theme()
         return 1
     fi
 
+    apply_argon21_menu_fix
+
     theme_progress 67 "正在准备首页和网络向导..."
     printf "\n"
 
@@ -1201,6 +1585,7 @@ install_theme()
     _theme_info "Argon 来源     : jerrykuku 官方 GitHub Release"
     _theme_info "Argon 下载     : GH01-GH06 + DIRECT 自动测速"
     _theme_info "已设置 Argon 为默认 LuCI 主题"
+    [ "$ARGON_MENU_FIX_APPLIED" = "1" ] && _theme_info "Argon 菜单    : 已应用 OpenWrt 21.x 折叠修复"
     _theme_info "如页面未更新，请 Ctrl+F5 强制刷新或重新登录 LuCI"
 
     printf "\n"
