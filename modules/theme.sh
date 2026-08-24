@@ -899,6 +899,7 @@ install_argon_official()
     fi
 
     theme_progress 58 "正在安装 Argon..."
+    printf "\n"
     printf "\n===== Argon Install =====\n" >>"$THEME_LOG"
 
     if ! install_local_package "$ARGON_THEME_FILE"; then
@@ -1044,6 +1045,7 @@ install_quickstart()
     fi
 
     theme_progress 86 "正在配置首页和网络向导..."
+    printf "\n"
     apply_quickstart_config
     _theme_ok "首页 + 网络向导安装成功"
     return 0
@@ -1149,6 +1151,7 @@ install_theme()
     fi
 
     theme_progress 67 "正在准备首页和网络向导..."
+    printf "\n"
 
     if ! install_quickstart; then
         printf "\n"
