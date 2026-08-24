@@ -28,6 +28,8 @@ THEME_LOG="/tmp/openpro-theme.log"
 THEME_ROUTE_FILE="/tmp/openpro_theme_routes"
 THEME_SORTED_FILE="/tmp/openpro_theme_routes.sorted"
 THEME_TEST_DIR="/tmp/openpro_theme_speedtest.d"
+THEME_ROUTE_CACHE_READY=0
+THEME_ROUTE_CACHE_URL=""
 
 MODEL=""
 CPU_ARCH=""
@@ -829,15 +831,47 @@ smart_download_release()
     DOWNLOAD_SUCCESS=0
     DIRECT_TRIED=0
 
-    prepare_theme_routes "$ORIGINAL_URL"
+    # ========================================================
+    # Argon GitHub 测速只做一次：
+    # 第一次调用（Theme）执行 GH01-GH06 + DIRECT 并行测速，
+    # 保存完整排序；后续 Config / 中文包直接复用。
+    # ========================================================
+
+    if [ "$THEME_ROUTE_CACHE_READY" -ne 1 ] ||
+       [ ! -s "$THEME_ROUTE_FILE" ]
+    then
+        prepare_theme_routes "$ORIGINAL_URL" || true
+
+        if [ -s "$THEME_ROUTE_FILE" ]; then
+            THEME_ROUTE_CACHE_READY=1
+            THEME_ROUTE_CACHE_URL="$ORIGINAL_URL"
+        else
+            THEME_ROUTE_CACHE_READY=0
+            THEME_ROUTE_CACHE_URL=""
+        fi
+    else
+        _theme_info "复用首次 Argon 下载线路测速结果"
+    fi
 
     if [ -s "$THEME_ROUTE_FILE" ]; then
-        while IFS='|' read -r ROUTE_SCORE ROUTE_NAME ROUTE_PREFIX ROUTE_URL ROUTE_TTFB ROUTE_SPEED
+        while IFS='|' read -r \
+            ROUTE_SCORE \
+            ROUTE_NAME \
+            ROUTE_PREFIX \
+            ROUTE_TEST_URL \
+            ROUTE_TTFB \
+            ROUTE_SPEED
         do
             [ -n "$ROUTE_NAME" ] || continue
-            [ -n "$ROUTE_URL" ] || continue
 
-            [ "$ROUTE_NAME" = "DIRECT" ] && DIRECT_TRIED=1
+            if [ "$ROUTE_NAME" = "DIRECT" ]; then
+                DIRECT_TRIED=1
+            fi
+
+            # 复用的是“线路排名”，不是第一次测速时的具体文件 URL。
+            # 每次都用当前 ORIGINAL_URL 重新拼接真实下载地址。
+            ROUTE_URL="$(build_theme_url "$ROUTE_PREFIX" "$ORIGINAL_URL")"
+            [ -n "$ROUTE_URL" ] || continue
 
             _theme_info "正在使用线路：$ROUTE_NAME"
 
@@ -851,15 +885,24 @@ smart_download_release()
         done < "$THEME_ROUTE_FILE"
     fi
 
-    if [ "$DOWNLOAD_SUCCESS" -ne 1 ] && [ "$DIRECT_TRIED" -ne 1 ]; then
+    # --------------------------------------------------------
+    # 如果缓存线路全部失败，DIRECT 最终兜底
+    # --------------------------------------------------------
+
+    if [ "$DOWNLOAD_SUCCESS" -ne 1 ] &&
+       [ "$DIRECT_TRIED" -ne 1 ]
+    then
         _theme_info "正在尝试 GitHub 官方直连..."
+
         if download_direct "$ORIGINAL_URL" "$OUTPUT"; then
             _theme_ok "GitHub 官方直连下载成功"
             DOWNLOAD_SUCCESS=1
         fi
     fi
 
-    rm -f "$THEME_ROUTE_FILE" "$THEME_SORTED_FILE"
+    # 注意：
+    # 不再删除 THEME_ROUTE_FILE。
+    # 它需要保留给 Argon Config / 中文包继续复用。
     [ "$DOWNLOAD_SUCCESS" -eq 1 ]
 }
 
@@ -1910,6 +1953,9 @@ install_theme()
     fi
 
     cleanup_theme_all
+
+    THEME_ROUTE_CACHE_READY=0
+    THEME_ROUTE_CACHE_URL=""
 
     mkdir -p "$THEME_TMP" || {
         _theme_error "无法创建临时目录"
