@@ -275,8 +275,20 @@ fetch_argon_release()
 
     _theme_ok "Argon 版本：$ARGON_RELEASE_TAG"
     _theme_info "Theme  : $(basename "$ARGON_THEME_URL")"
-    [ -n "$ARGON_CONFIG_URL" ] && _theme_info "Config : $(basename "$ARGON_CONFIG_URL")"
-    [ -n "$ARGON_LANG_URL" ] && _theme_info "中文包 : $(basename "$ARGON_LANG_URL")"
+
+    if [ -n "$ARGON_CONFIG_URL" ]; then
+        _theme_info "Config : $(basename "$ARGON_CONFIG_URL")"
+    else
+        _theme_warn "当前 Release 未提供 Argon Config"
+    fi
+
+    if [ -n "$ARGON_LANG_URL" ]; then
+        _theme_info "中文包 : $(basename "$ARGON_LANG_URL")"
+    else
+        _theme_info "当前 Release 未提供独立中文包，自动跳过"
+    fi
+
+    return 0
 }
 
 build_theme_url()
@@ -545,6 +557,7 @@ install_argon_package()
     verify_argon_install || { _theme_error "Argon 安装后验证失败"; return 1; }
 
     _theme_ok "Argon Theme 安装成功"
+    return 0
 }
 
 set_argon_default()
@@ -559,7 +572,8 @@ set_argon_default()
     uci set luci.themes.Argon='/luci-static/argon' >>"$THEME_LOG" 2>&1
     uci commit luci >>"$THEME_LOG" 2>&1
 
-    [ "$(uci -q get luci.main.mediaurlbase)" = "/luci-static/argon" ]
+    [ "$(uci -q get luci.main.mediaurlbase)" = "/luci-static/argon" ] || return 1
+    return 0
 }
 
 verify_quickstart_install()
@@ -604,6 +618,7 @@ apply_quickstart_config()
     fi
 
     _theme_ok "QuickStart iStoreOS 风格配置已应用"
+    return 0
 }
 
 install_quickstart()
@@ -636,6 +651,7 @@ install_quickstart()
     theme_progress 86 "正在配置首页和网络向导..."
     apply_quickstart_config
     _theme_ok "首页 + 网络向导安装成功"
+    return 0
 }
 
 refresh_theme_luci()
@@ -643,12 +659,14 @@ refresh_theme_luci()
     rm -rf /tmp/luci-indexcache /tmp/luci-modulecache /tmp/luci-templatecache /tmp/luci-*cache* >/dev/null 2>&1
     [ -x /etc/init.d/rpcd ] && /etc/init.d/rpcd restart >>"$THEME_LOG" 2>&1
     [ -x /etc/init.d/uhttpd ] && /etc/init.d/uhttpd restart >>"$THEME_LOG" 2>&1
+    return 0
 }
 
 verify_argon_active()
 {
-    verify_argon_install &&
-    [ "$(uci -q get luci.main.mediaurlbase)" = "/luci-static/argon" ]
+    verify_argon_install || return 1
+    [ "$(uci -q get luci.main.mediaurlbase)" = "/luci-static/argon" ] || return 1
+    return 0
 }
 
 install_theme()
