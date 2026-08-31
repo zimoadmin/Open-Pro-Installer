@@ -40,10 +40,12 @@ BOOTSTRAP_LOG="/tmp/openpro_bootstrap.log"
 # ======================================
 # Auth HTTP Request
 #
-# 每次连接最多 3 秒
-# 单次请求最多 6 秒
-# 失败自动重试 2 次
-# BusyBox / OpenWrt Compatible
+# 第1次：AUTO 自动 IPv4 / IPv6
+# 第2次：强制 IPv4
+#
+# 连接超时：3秒
+# 总超时：6秒
+# 失败立即切换，不额外等待
 # ======================================
 
 auth_post()
@@ -51,61 +53,87 @@ auth_post()
     AUTH_PATH="$1"
     AUTH_DATA="$2"
 
+    # ----------------------------------
+    # 第1次：AUTO
+    # ----------------------------------
+
+    if [ -n "$AUTH_DATA" ]
+    then
+        AUTH_RESULT="$(
+            curl \
+                -fsS \
+                --connect-timeout 3 \
+                --max-time 6 \
+                -X POST \
+                -H "Content-Type: application/json" \
+                --data "$AUTH_DATA" \
+                "$AUTH_SERVER$AUTH_PATH" \
+                2>/dev/null
+        )"
+    else
+        AUTH_RESULT="$(
+            curl \
+                -fsS \
+                --connect-timeout 3 \
+                --max-time 6 \
+                -X POST \
+                "$AUTH_SERVER$AUTH_PATH" \
+                2>/dev/null
+        )"
+    fi
+
+    AUTH_CURL_RESULT=$?
+
+    if [ "$AUTH_CURL_RESULT" -eq 0 ] &&
+       [ -n "$AUTH_RESULT" ]
+    then
+        printf '%s' "$AUTH_RESULT"
+        return 0
+    fi
+
+
+    # ----------------------------------
+    # 第2次：强制 IPv4
+    # ----------------------------------
+
     AUTH_RESULT=""
-    AUTH_TRY=1
 
-    while [ "$AUTH_TRY" -le 2 ]
-    do
+    if [ -n "$AUTH_DATA" ]
+    then
+        AUTH_RESULT="$(
+            curl \
+                -4 \
+                -fsS \
+                --connect-timeout 3 \
+                --max-time 6 \
+                -X POST \
+                -H "Content-Type: application/json" \
+                --data "$AUTH_DATA" \
+                "$AUTH_SERVER$AUTH_PATH" \
+                2>/dev/null
+        )"
+    else
+        AUTH_RESULT="$(
+            curl \
+                -4 \
+                -fsS \
+                --connect-timeout 3 \
+                --max-time 6 \
+                -X POST \
+                "$AUTH_SERVER$AUTH_PATH" \
+                2>/dev/null
+        )"
+    fi
 
-        if [ -n "$AUTH_DATA" ]
-        then
+    AUTH_CURL_RESULT=$?
 
-            AUTH_RESULT="$(
-                curl -4 \
-                    -fsS \
-                    --connect-timeout 3 \
-                    --max-time 6 \
-                    -X POST \
-                    -H "Content-Type: application/json" \
-                    --data "$AUTH_DATA" \
-                    "$AUTH_SERVER$AUTH_PATH" \
-                    2>/dev/null
-            )"
+    if [ "$AUTH_CURL_RESULT" -eq 0 ] &&
+       [ -n "$AUTH_RESULT" ]
+    then
+        printf '%s' "$AUTH_RESULT"
+        return 0
+    fi
 
-        else
-
-            AUTH_RESULT="$(
-                curl -4 \
-                    -fsS \
-                    --connect-timeout 3 \
-                    --max-time 6 \
-                    -X POST \
-                    "$AUTH_SERVER$AUTH_PATH" \
-                    2>/dev/null
-            )"
-
-        fi
-
-        AUTH_CURL_RESULT=$?
-
-        if [ "$AUTH_CURL_RESULT" -eq 0 ] &&
-           [ -n "$AUTH_RESULT" ]
-        then
-
-            printf '%s' "$AUTH_RESULT"
-
-            return 0
-
-        fi
-
-        AUTH_TRY=$((AUTH_TRY + 1))
-
-        if [ "$AUTH_TRY" -le 2 ]
-        then
-            sleep 1
-        fi
-
-    done
 
     return 1
 }
