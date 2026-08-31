@@ -1,48 +1,978 @@
+#!/bin/sh
+
+# ============================================================
+# Open-Pro-Installer
+# OpenClash File Smart Swap
+#
+# 功能：
+# 1. GH01-GH06 + DIRECT 并行真实测速
+# 2. 检测 TTFB 首包时间
+# 3. 检测实际下载速度
+# 4. 自动计算综合成绩
+# 5. 自动按综合成绩排序
+# 6. 自动选择最佳下载线路
+# 7. 最佳线路失败自动切换下一线路
+# 8. GitHub 官方 DIRECT 最终兜底
+# 9. 自动校验下载文件
+# 10. 自动搜索 OpenClash 目标文件
+# 11. 自动识别 /etc/config/openclash
+# 12. 替换前自动备份
+# 13. 自动保留原文件权限
+# 14. 自动替换 OpenClash 文件
+# 15. 替换后自动验证
+# 16. 验证失败自动恢复备份
+# 17. 正常过程隐藏详细日志
+# 18. 单行动态百分比进度条
+#
+# BusyBox / OpenWrt /bin/sh Compatible
+# ============================================================
+
+
+# ============================================================
+# 基础配置
+# ============================================================
+
 URL="https://raw.githubusercontent.com/zimoadmin/rule/refs/heads/main/main_router/openclash"
+
 TMP="/tmp/openclash.new"
 FOUND="/tmp/openclash-target.$$"
 
-rm -f "$TMP" "$FOUND"
+ROUTE_FILE="/tmp/openclash-swap-routes.$$"
+SORTED_FILE="/tmp/openclash-swap-routes-sorted.$$"
+TEST_DIR="/tmp/openclash-swap-speedtest.$$"
+
+TARGET=""
+BACKUP=""
+
+DOWNLOAD_SUCCESS=0
+DIRECT_TRIED=0
 
 
-echo "===== 1. 下载新文件 ====="
+# ============================================================
+# 测速设置
+# ============================================================
 
-rm -f "$TMP"
+TEST_CONNECT_TIMEOUT=4
+TEST_MAX_TIME=6
 
-curl -4 -fL \
-    --connect-timeout 6 \
-    --max-time 60 \
-    --retry 1 \
-    -o "$TMP" \
-    "$URL" \
+# 按 10MB 文件预计下载耗时计算综合成绩
+SCORE_FILE_KB=10240
+
+
+# ============================================================
+# GitHub 下载线路
+# ============================================================
+
+DOWNLOAD_NODES="
+GH01|https://ghproxy.net/
+GH02|https://gh-proxy.org/
+GH03|https://gh-proxy.com/
+GH04|https://cdn.akaere.online/
+GH05|https://github.mxw.qzz.io/
+GH06|https://gh.07150721.xyz/
+DIRECT|
+"
+
+
+# ============================================================
+# 清理临时文件
+# ============================================================
+
+cleanup()
+{
+    rm -f \
+        "$TMP" \
+        "$FOUND" \
+        "$ROUTE_FILE" \
+        "$SORTED_FILE" \
+        2>/dev/null
+
+    rm -rf \
+        "$TEST_DIR" \
+        2>/dev/null
+
+    return 0
+}
+
+
+# ============================================================
+# 进度条
+# ============================================================
+
+swap_progress_bar()
+{
+    PERCENT="$1"
+    WIDTH=30
+
+    FILLED=$((PERCENT * WIDTH / 100))
+    EMPTY=$((WIDTH - FILLED))
+
+    BAR=""
+
+    I=0
+
+    while [ "$I" -lt "$FILLED" ]; do
+
+        BAR="${BAR}#"
+
+        I=$((I + 1))
+
+    done
+
+
+    I=0
+
+    while [ "$I" -lt "$EMPTY" ]; do
+
+        BAR="${BAR}-"
+
+        I=$((I + 1))
+
+    done
+
+
+    printf '\r\033[2K\033[1;92m[INFO]\033[0m 正在替换 OpenClash 文件... [\033[1;92m%s\033[0m] %3d%%' \
+        "$BAR" \
+        "$PERCENT"
+}
+
+
+# ============================================================
+# 错误处理
+# ============================================================
+
+swap_fail()
+{
+    MESSAGE="$1"
+
+    printf "\n"
+
+    printf '\033[1;91m[ERROR]\033[0m %s\n' \
+        "$MESSAGE"
+
+    cleanup
+
+    exit 1
+}
+
+
+# ============================================================
+# 构造代理 URL
+# ============================================================
+
+build_url()
+{
+    PREFIX="$1"
+    ORIGINAL_URL="$2"
+
+
+    if [ -z "$PREFIX" ]; then
+
+        printf '%s' "$ORIGINAL_URL"
+
+    else
+
+        printf '%s%s' \
+            "$PREFIX" \
+            "$ORIGINAL_URL"
+
+    fi
+}
+
+
+# ============================================================
+# 秒 → 毫秒
+# ============================================================
+
+seconds_to_ms()
+{
+    VALUE="$1"
+
+
+    awk -v t="$VALUE" '
+        BEGIN {
+
+            if (t == "" || t !~ /^[0-9.]+$/) {
+
+                print 999999
+
+                exit
+            }
+
+            printf "%d", t * 1000
+        }
+    '
+}
+
+
+# ============================================================
+# 综合成绩
+# ============================================================
+
+calculate_score()
+{
+    TTFB_MS="$1"
+    SPEED_BPS="$2"
+
+
+    awk \
+        -v t="$TTFB_MS" \
+        -v s="$SPEED_BPS" \
+        -v kb="$SCORE_FILE_KB" '
+        BEGIN {
+
+            if (s <= 0) {
+
+                print 999999999
+
+                exit
+            }
+
+            speed_kb = s / 1024
+
+            download_ms = (kb / speed_kb) * 1000
+
+            score = t + download_ms
+
+            printf "%d", score
+        }
+    '
+}
+
+
+# ============================================================
+# 检测 HTML / 错误页面
+# ============================================================
+
+is_error_page()
+{
+    FILE="$1"
+
+
+    if [ ! -s "$FILE" ]; then
+
+        return 1
+
+    fi
+
+
+    if head -c 2048 "$FILE" 2>/dev/null |
+        grep -Eqi \
+        '<html|<!doctype|bad gateway|502 bad gateway|404 not found|403 forbidden|access denied'
+    then
+
+        return 0
+
+    fi
+
+
+    return 1
+}
+
+
+# ============================================================
+# 单线路真实测速
+# ============================================================
+
+test_route()
+{
+    TEST_URL="$1"
+    TEST_FILE="$2"
+
+
+    rm -f "$TEST_FILE"
+
+
+    CURL_DATA="$(
+        curl -4 \
+            -L \
+            -sS \
+            --connect-timeout "$TEST_CONNECT_TIMEOUT" \
+            --max-time "$TEST_MAX_TIME" \
+            -o "$TEST_FILE" \
+            -w '%{http_code}|%{time_starttransfer}|%{speed_download}|%{size_download}' \
+            "$TEST_URL" \
+            2>/dev/null
+    )"
+
+
+    CURL_CODE=$?
+
+
+    HTTP_CODE="$(
+        printf '%s' "$CURL_DATA" |
+        cut -d '|' -f 1
+    )"
+
+
+    TTFB="$(
+        printf '%s' "$CURL_DATA" |
+        cut -d '|' -f 2
+    )"
+
+
+    SPEED_BPS="$(
+        printf '%s' "$CURL_DATA" |
+        cut -d '|' -f 3
+    )"
+
+
+    SIZE_DOWN="$(
+        printf '%s' "$CURL_DATA" |
+        cut -d '|' -f 4
+    )"
+
+
+    case "$CURL_CODE" in
+
+        0|28)
+            ;;
+
+        *)
+
+            rm -f "$TEST_FILE"
+
+            return 1
+
+            ;;
+
+    esac
+
+
+    case "$HTTP_CODE" in
+
+        200|206)
+            ;;
+
+        *)
+
+            rm -f "$TEST_FILE"
+
+            return 1
+
+            ;;
+
+    esac
+
+
+    case "$SIZE_DOWN" in
+
+        ''|*[!0-9.]*)
+
+            rm -f "$TEST_FILE"
+
+            return 1
+
+            ;;
+
+    esac
+
+
+    RECEIVED_BYTES="$(
+        awk -v n="$SIZE_DOWN" '
+            BEGIN {
+                printf "%d", n
+            }
+        '
+    )"
+
+
+    # 至少收到 1KB 数据
+    if [ "$RECEIVED_BYTES" -lt 1024 ]; then
+
+        rm -f "$TEST_FILE"
+
+        return 1
+
+    fi
+
+
+    if is_error_page "$TEST_FILE"; then
+
+        rm -f "$TEST_FILE"
+
+        return 1
+
+    fi
+
+
+    TTFB_MS="$(
+        seconds_to_ms "$TTFB"
+    )"
+
+
+    case "$TTFB_MS" in
+
+        ''|*[!0-9]*)
+
+            rm -f "$TEST_FILE"
+
+            return 1
+
+            ;;
+
+    esac
+
+
+    SPEED_INT="$(
+        awk -v s="$SPEED_BPS" '
+            BEGIN {
+
+                if (s <= 0) {
+
+                    print 0
+
+                } else {
+
+                    printf "%d", s
+
+                }
+            }
+        '
+    )"
+
+
+    if [ "$SPEED_INT" -le 0 ]; then
+
+        rm -f "$TEST_FILE"
+
+        return 1
+
+    fi
+
+
+    SCORE="$(
+        calculate_score \
+            "$TTFB_MS" \
+            "$SPEED_INT"
+    )"
+
+
+    rm -f "$TEST_FILE"
+
+
+    printf '%s|%s|%s' \
+        "$TTFB_MS" \
+        "$SPEED_INT" \
+        "$SCORE"
+
+
+    return 0
+}
+
+
+# ============================================================
+# 后台测速
+# ============================================================
+
+test_route_background()
+{
+    NODE_NAME="$1"
+    NODE_PREFIX="$2"
+    ORIGINAL_URL="$3"
+    RESULT_FILE="$4"
+    TEST_FILE="$5"
+
+
+    TEST_URL="$(
+        build_url \
+            "$NODE_PREFIX" \
+            "$ORIGINAL_URL"
+    )"
+
+
+    TEST_DATA="$(
+        test_route \
+            "$TEST_URL" \
+            "$TEST_FILE"
+    )"
+
+
+    TEST_RESULT=$?
+
+
+    if [ "$TEST_RESULT" -ne 0 ] ||
+       [ -z "$TEST_DATA" ]
+    then
+
+        printf '%s|FAIL\n' \
+            "$NODE_NAME" \
+            > "$RESULT_FILE"
+
+        rm -f "$TEST_FILE"
+
+        return 1
+
+    fi
+
+
+    TTFB_MS="$(
+        printf '%s' "$TEST_DATA" |
+        cut -d '|' -f 1
+    )"
+
+
+    SPEED_BPS="$(
+        printf '%s' "$TEST_DATA" |
+        cut -d '|' -f 2
+    )"
+
+
+    SCORE="$(
+        printf '%s' "$TEST_DATA" |
+        cut -d '|' -f 3
+    )"
+
+
+    printf '%s|OK|%s|%s|%s|%s|%s\n' \
+        "$NODE_NAME" \
+        "$NODE_PREFIX" \
+        "$TEST_URL" \
+        "$TTFB_MS" \
+        "$SPEED_BPS" \
+        "$SCORE" \
+        > "$RESULT_FILE"
+
+
+    rm -f "$TEST_FILE"
+
+
+    return 0
+}
+
+
+# ============================================================
+# GH01-GH06 + DIRECT 并行测速
+# ============================================================
+
+prepare_routes()
+{
+    ORIGINAL_URL="$1"
+
+
+    rm -f \
+        "$ROUTE_FILE" \
+        "$SORTED_FILE"
+
+    rm -rf "$TEST_DIR"
+
+    mkdir -p "$TEST_DIR" ||
+        return 1
+
+
+    for NODE_NAME in \
+        GH01 \
+        GH02 \
+        GH03 \
+        GH04 \
+        GH05 \
+        GH06 \
+        DIRECT
+    do
+
+        NODE_PREFIX="$(
+            printf '%s\n' "$DOWNLOAD_NODES" |
+            awk -F '|' \
+                -v node="$NODE_NAME" \
+                '$1 == node {
+                    print $2
+                    exit
+                }'
+        )"
+
+
+        RESULT_FILE="$TEST_DIR/result_${NODE_NAME}"
+
+        TEST_FILE="$TEST_DIR/download_${NODE_NAME}"
+
+
+        test_route_background \
+            "$NODE_NAME" \
+            "$NODE_PREFIX" \
+            "$ORIGINAL_URL" \
+            "$RESULT_FILE" \
+            "$TEST_FILE" &
+
+    done
+
+
+    wait
+
+
+    for NODE_NAME in \
+        GH01 \
+        GH02 \
+        GH03 \
+        GH04 \
+        GH05 \
+        GH06 \
+        DIRECT
+    do
+
+        RESULT_FILE="$TEST_DIR/result_${NODE_NAME}"
+
+
+        [ -s "$RESULT_FILE" ] ||
+            continue
+
+
+        RESULT_STATUS="$(
+            cut -d '|' -f 2 \
+                "$RESULT_FILE"
+        )"
+
+
+        [ "$RESULT_STATUS" = "OK" ] ||
+            continue
+
+
+        NODE_PREFIX="$(
+            cut -d '|' -f 3 \
+                "$RESULT_FILE"
+        )"
+
+
+        TEST_URL="$(
+            cut -d '|' -f 4 \
+                "$RESULT_FILE"
+        )"
+
+
+        TTFB_MS="$(
+            cut -d '|' -f 5 \
+                "$RESULT_FILE"
+        )"
+
+
+        SPEED_BPS="$(
+            cut -d '|' -f 6 \
+                "$RESULT_FILE"
+        )"
+
+
+        SCORE="$(
+            cut -d '|' -f 7 \
+                "$RESULT_FILE"
+        )"
+
+
+        printf '%s|%s|%s|%s|%s|%s\n' \
+            "$SCORE" \
+            "$NODE_NAME" \
+            "$NODE_PREFIX" \
+            "$TEST_URL" \
+            "$TTFB_MS" \
+            "$SPEED_BPS" \
+            >> "$ROUTE_FILE"
+
+    done
+
+
+    rm -rf "$TEST_DIR"
+
+
+    [ -s "$ROUTE_FILE" ] ||
+        return 1
+
+
+    sort -n \
+        -t '|' \
+        -k 1,1 \
+        "$ROUTE_FILE" \
+        > "$SORTED_FILE" \
+        2>/dev/null
+
+
+    if [ -s "$SORTED_FILE" ]; then
+
+        mv \
+            "$SORTED_FILE" \
+            "$ROUTE_FILE"
+
+    else
+
+        rm -f "$SORTED_FILE"
+
+    fi
+
+
+    [ -s "$ROUTE_FILE" ]
+}
+
+
+# ============================================================
+# 使用指定 URL 下载
+# ============================================================
+
+download_file()
+{
+    DOWNLOAD_URL="$1"
+
+
+    rm -f "$TMP"
+
+
+    curl -4 \
+        -fL \
+        --connect-timeout 6 \
+        --max-time 60 \
+        --retry 1 \
+        --retry-delay 1 \
+        -o "$TMP" \
+        "$DOWNLOAD_URL" \
+        >/dev/null 2>&1
+
+
+    RESULT=$?
+
+
+    if [ "$RESULT" -ne 0 ]; then
+
+        rm -f "$TMP"
+
+        return 1
+
+    fi
+
+
+    if [ ! -s "$TMP" ]; then
+
+        rm -f "$TMP"
+
+        return 1
+
+    fi
+
+
+    if is_error_page "$TMP"; then
+
+        rm -f "$TMP"
+
+        return 1
+
+    fi
+
+
+    return 0
+}
+
+
+# ============================================================
+# 智能下载
+# ============================================================
+
+smart_download()
+{
+    ORIGINAL_URL="$1"
+
+
+    DOWNLOAD_SUCCESS=0
+    DIRECT_TRIED=0
+
+
+    if ! prepare_routes "$ORIGINAL_URL"; then
+
+        return 1
+
+    fi
+
+
+    while IFS='|' read -r \
+        ROUTE_SCORE \
+        ROUTE_NAME \
+        ROUTE_PREFIX \
+        ROUTE_URL \
+        ROUTE_TTFB \
+        ROUTE_SPEED
+    do
+
+        [ -n "$ROUTE_NAME" ] ||
+            continue
+
+
+        [ -n "$ROUTE_URL" ] ||
+            continue
+
+
+        if [ "$ROUTE_NAME" = "DIRECT" ]; then
+
+            DIRECT_TRIED=1
+
+        fi
+
+
+        if download_file "$ROUTE_URL"; then
+
+            DOWNLOAD_SUCCESS=1
+
+            break
+
+        fi
+
+
+    done < "$ROUTE_FILE"
+
+
+    # ========================================================
+    # GitHub DIRECT 最终兜底
+    # ========================================================
+
+    if [ "$DOWNLOAD_SUCCESS" -ne 1 ] &&
+       [ "$DIRECT_TRIED" -ne 1 ]
+    then
+
+        if download_file "$ORIGINAL_URL"; then
+
+            DOWNLOAD_SUCCESS=1
+
+        fi
+
+    fi
+
+
+    [ "$DOWNLOAD_SUCCESS" -eq 1 ]
+}
+
+
+# ============================================================
+# 中断处理
+# ============================================================
+
+interrupt_swap()
+{
+    printf "\n"
+
+    printf '\033[1;93m[WARN]\033[0m OpenClash 文件替换已中断\n'
+
+    cleanup
+
+    trap - INT TERM
+
+    exit 130
+}
+
+
+# ============================================================
+# 主程序
+# ============================================================
+
+trap 'interrupt_swap' INT TERM
+
+
+# ============================================================
+# Root 检查
+# ============================================================
+
+if [ "$(id -u 2>/dev/null)" != "0" ]; then
+
+    swap_fail "请使用 root 用户运行"
+
+fi
+
+
+# ============================================================
+# curl 检查
+# ============================================================
+
+if ! command -v curl >/dev/null 2>&1; then
+
+    swap_fail "系统没有安装 curl"
+
+fi
+
+
+# ============================================================
+# 基础命令检查
+# ============================================================
+
+for CMD in \
+    awk \
+    sed \
+    grep \
+    cut \
+    sort \
+    find \
+    wc \
+    tr \
+    cp \
+    stat
+do
+
+    if ! command -v "$CMD" >/dev/null 2>&1; then
+
+        swap_fail "系统缺少基础命令：$CMD"
+
+    fi
+
+done
+
+
+cleanup
+
+
+# ============================================================
+# 1. 开始
+# ============================================================
+
+swap_progress_bar 1
+
+
+# ============================================================
+# 2. 并行测速 + 智能下载
+# ============================================================
+
+swap_progress_bar 5
+
+
+if ! smart_download "$URL"; then
+
+    swap_fail "所有 OpenClash 下载线路均失败"
+
+fi
+
+
+swap_progress_bar 45
+
+
+# ============================================================
+# 3. 校验下载文件
+# ============================================================
+
+if [ ! -s "$TMP" ]; then
+
+    swap_fail "下载文件不存在"
+
+fi
+
+
+if is_error_page "$TMP"; then
+
+    swap_fail "下载到的是错误页面"
+
+fi
+
+
+# 新文件本身必须包含关键配置
+if ! grep -q \
+    'option dns_port' \
+    "$TMP" \
     2>/dev/null
-
-if [ $? -ne 0 ] || [ ! -s "$TMP" ]; then
-    echo "[ERROR] 文件下载失败"
-    rm -f "$TMP" "$FOUND"
-    exit 1
-fi
-
-echo "[OK] 下载成功"
-
-
-echo
-echo "===== 2. 校验新文件 ====="
-
-if grep -Eqi \
-    '<html|<!doctype|bad gateway|404 not found|403 forbidden' \
-    "$TMP"
 then
-    echo "[ERROR] 下载到的是错误页面，停止替换"
-    rm -f "$TMP" "$FOUND"
-    exit 1
+
+    swap_fail "下载文件内容校验失败：没有找到 option dns_port"
+
 fi
 
-echo "[OK] 文件校验通过"
+
+swap_progress_bar 55
 
 
-echo
-echo "===== 3. 搜索包含 option dns_port 的 openclash 文件 ====="
+# ============================================================
+# 4. 搜索目标 OpenClash 文件
+# ============================================================
+
+rm -f "$FOUND"
+
 
 find /etc /usr /root /www \
     -type f \
@@ -50,77 +980,213 @@ find /etc /usr /root /www \
     2>/dev/null |
 while IFS= read -r FILE
 do
-    if grep -q 'option dns_port' "$FILE" 2>/dev/null; then
+
+    if grep -q \
+        'option dns_port' \
+        "$FILE" \
+        2>/dev/null
+    then
+
         echo "$FILE"
+
     fi
+
 done > "$FOUND"
 
-COUNT="$(wc -l < "$FOUND" | tr -d ' ')"
+
+COUNT="$(
+    wc -l < "$FOUND" 2>/dev/null |
+    tr -d ' '
+)"
+
+
+case "$COUNT" in
+
+    ''|*[!0-9]*)
+
+        COUNT=0
+
+        ;;
+
+esac
+
 
 if [ "$COUNT" -eq 0 ]; then
-    echo "[ERROR] 没找到包含 option dns_port 的 openclash 文件"
-    rm -f "$TMP" "$FOUND"
-    exit 1
+
+    swap_fail "没有找到包含 option dns_port 的 OpenClash 文件"
+
 fi
 
-echo "找到 $COUNT 个匹配文件："
-cat "$FOUND"
 
+swap_progress_bar 65
+
+
+# ============================================================
+# 5. 判断真正目标文件
+# ============================================================
 
 if [ "$COUNT" -eq 1 ]; then
 
-    TARGET="$(cat "$FOUND")"
+    TARGET="$(
+        sed -n '1p' \
+            "$FOUND"
+    )"
 
 else
 
-    if grep -qx '/etc/config/openclash' "$FOUND"; then
+    # 找到多个时优先真正的 UCI 配置文件
+    if grep -qx \
+        '/etc/config/openclash' \
+        "$FOUND"
+    then
+
         TARGET="/etc/config/openclash"
+
     else
-        echo "[ERROR] 找到多个匹配文件，无法唯一识别"
-        rm -f "$TMP" "$FOUND"
-        exit 1
+
+        swap_fail "找到多个 OpenClash 文件，无法唯一识别目标"
+
     fi
 
 fi
 
-echo
-echo "[OK] 目标文件：$TARGET"
+
+if [ ! -f "$TARGET" ]; then
+
+    swap_fail "OpenClash 目标文件不存在"
+
+fi
 
 
-echo
-echo "===== 4. 备份原文件 ====="
+swap_progress_bar 75
+
+
+# ============================================================
+# 6. 备份原文件
+# ============================================================
 
 BACKUP="${TARGET}.bak.$(date +%Y%m%d-%H%M%S)"
 
-cp -p "$TARGET" "$BACKUP" || {
-    echo "[ERROR] 备份失败"
-    rm -f "$TMP" "$FOUND"
-    exit 1
-}
 
-echo "[OK] 已备份：$BACKUP"
+if ! cp -p \
+    "$TARGET" \
+    "$BACKUP" \
+    >/dev/null 2>&1
+then
 
+    swap_fail "OpenClash 原文件备份失败"
 
-echo
-echo "===== 5. 替换 ====="
-
-MODE="$(stat -c '%a' "$TARGET" 2>/dev/null)"
-
-cp "$TMP" "$TARGET" || {
-    echo "[ERROR] 替换失败"
-    rm -f "$TMP" "$FOUND"
-    exit 1
-}
-
-[ -n "$MODE" ] && chmod "$MODE" "$TARGET" 2>/dev/null
+fi
 
 
-echo
-echo "======================================"
-echo "[OK] 替换完成"
-echo "======================================"
-echo "目标文件：$TARGET"
-echo "备份文件：$BACKUP"
+swap_progress_bar 82
 
 
-rm -f "$TMP" "$FOUND"
+# ============================================================
+# 7. 保存原权限
+# ============================================================
+
+MODE="$(
+    stat -c '%a' \
+        "$TARGET" \
+        2>/dev/null
+)"
+
+
+swap_progress_bar 86
+
+
+# ============================================================
+# 8. 替换文件
+# ============================================================
+
+if ! cp \
+    "$TMP" \
+    "$TARGET" \
+    >/dev/null 2>&1
+then
+
+    swap_fail "OpenClash 文件替换失败"
+
+fi
+
+
+if [ -n "$MODE" ]; then
+
+    chmod \
+        "$MODE" \
+        "$TARGET" \
+        >/dev/null 2>&1
+
+fi
+
+
+swap_progress_bar 95
+
+
+# ============================================================
+# 9. 替换后最终验证
+# ============================================================
+
+if [ ! -s "$TARGET" ]; then
+
+    cp -p \
+        "$BACKUP" \
+        "$TARGET" \
+        >/dev/null 2>&1
+
+    swap_fail "替换验证失败，已自动恢复原文件"
+
+fi
+
+
+if is_error_page "$TARGET"; then
+
+    cp -p \
+        "$BACKUP" \
+        "$TARGET" \
+        >/dev/null 2>&1
+
+    swap_fail "替换文件异常，已自动恢复原文件"
+
+fi
+
+
+if ! grep -q \
+    'option dns_port' \
+    "$TARGET" \
+    2>/dev/null
+then
+
+    cp -p \
+        "$BACKUP" \
+        "$TARGET" \
+        >/dev/null 2>&1
+
+    swap_fail "替换内容验证失败，已自动恢复原文件"
+
+fi
+
+
+# ============================================================
+# 10. 清理
+# ============================================================
+
+cleanup
+
+
+# ============================================================
+# 11. 完成
+# ============================================================
+
+swap_progress_bar 100
+
+printf "\n"
+
+printf '\033[1;92m[OK]\033[0m OpenClash 文件替换完成\n'
+
+
+trap - INT TERM
+
+
+exit 0
