@@ -4685,44 +4685,27 @@ install_theme()
     fi
 
 
-    _theme_info \
-        "OpenWrt       : $OPENWRT_VERSION"
+# ============================================================
+# 安装完成详细信息
+# 已隐藏
+# ============================================================
 
+# _theme_info "OpenWrt       : $OPENWRT_VERSION"
+# _theme_info "包管理器      : $PKG_MANAGER"
+# _theme_info "软件包架构    : $PKG_ARCH"
+# _theme_info "软件包格式    : .$ARGON_PACKAGE_TYPE"
 
-    _theme_info \
-        "包管理器      : $PKG_MANAGER"
+# [ -n "$ARGON_RELEASE_TAG" ] &&
+#     _theme_info "Argon Release  : $ARGON_RELEASE_TAG"
 
+# [ -n "$ARGON_INSTALLED_VERSION" ] &&
+#     _theme_info "Argon Version  : $ARGON_INSTALLED_VERSION"
 
-    _theme_info \
-        "软件包架构    : $PKG_ARCH"
+# [ -n "$QUICKSTART_VERSION" ] &&
+#     _theme_info "QuickStart     : $QUICKSTART_VERSION"
 
-
-    _theme_info \
-        "软件包格式    : .$ARGON_PACKAGE_TYPE"
-
-
-    [ -n "$ARGON_RELEASE_TAG" ] &&
-        _theme_info \
-            "Argon Release  : $ARGON_RELEASE_TAG"
-
-
-    [ -n "$ARGON_INSTALLED_VERSION" ] &&
-        _theme_info \
-            "Argon Version  : $ARGON_INSTALLED_VERSION"
-
-
-    [ -n "$QUICKSTART_VERSION" ] &&
-        _theme_info \
-            "QuickStart     : $QUICKSTART_VERSION"
-
-
-    _theme_info \
-        "Argon 来源     : jerrykuku 官方 GitHub Release"
-
-
-    _theme_info \
-        "Argon 下载     : GH01-GH06 + DIRECT 自动测速"
-
+# _theme_info "Argon 来源     : jerrykuku 官方 GitHub Release"
+# _theme_info "Argon 下载     : GH01-GH06 + DIRECT 自动测速"
 
     _theme_info \
         "已设置 Argon 为默认 LuCI 主题"
