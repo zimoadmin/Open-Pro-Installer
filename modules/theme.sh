@@ -10,15 +10,22 @@
 #
 # 修复：
 # 1. OpenWrt 版本信息与进度条粘连/显示不整齐
-# 2. BusyBox awk: cmd 报错
-# 3. 中文包异常代码串/无独立中文包显示
-# 4. 延迟和下载速度无数字
+# 2. BusyBox awk 兼容
+# 3. 中文包异常显示
+# 4. 延迟和下载速度显示
 # 5. 修复 THEME_SCORE_FILE_KB / SPEED_KB not found
 # 6. 修复 TTFB_MS / SPEED_INT / 1000000 not found
-# 7. 修复部分 OPKG 系统软件包架构显示 Unknown
-# 8. QuickStart 使用真实安装状态 + LuCI 文件双重验证
+# 7. 修复 OPKG 软件包架构识别
+# 8. QuickStart 实际安装成功却误报失败
+# 9. QuickStart 软件包状态作为主要验证依据
+# 10. LuCI 文件路径仅作为辅助验证
 #
 # BusyBox / OpenWrt /bin/sh Compatible
+# ============================================================
+
+
+# ============================================================
+# Color
 # ============================================================
 
 GREEN="$(printf '\033[32m')"
@@ -28,57 +35,107 @@ YELLOW="$(printf '\033[33m')"
 CYAN="$(printf '\033[36m')"
 RESET="$(printf '\033[0m')"
 
+
+# ============================================================
+# Temp
+# ============================================================
+
 THEME_TMP="/tmp/openpro-theme"
 THEME_LOG="/tmp/openpro-theme.log"
+
 THEME_ROUTE_FILE="/tmp/openpro_theme_routes"
 THEME_SORTED_FILE="/tmp/openpro_theme_routes.sorted"
 THEME_TEST_DIR="/tmp/openpro_theme_speedtest.d"
+
 THEME_ROUTE_CACHE_READY=0
 THEME_ROUTE_CACHE_URL=""
+
+
+# ============================================================
+# System
+# ============================================================
 
 MODEL=""
 CPU_ARCH=""
 PKG_ARCH=""
+
 OPENWRT_VERSION=""
 OPENWRT_MAJOR=""
+
 PKG_MANAGER=""
 ARGON_PACKAGE_TYPE=""
+
 ARGON_MENU_FIX_APPLIED=0
 
+
+# ============================================================
+# Argon
+# ============================================================
+
 ARGON_REPO="jerrykuku/luci-theme-argon"
+
 ARGON_RELEASE_API="https://api.github.com/repos/${ARGON_REPO}/releases/latest"
+
 ARGON_RELEASE_JSON="${THEME_TMP}/argon_release.json"
 ARGON_ASSET_LIST="${THEME_TMP}/argon_assets.list"
 ARGON_RELEASE_HEADERS="${THEME_TMP}/argon_headers"
 ARGON_EXPANDED_ASSETS="${THEME_TMP}/argon_assets.html"
+
 ARGON_RELEASE_TAG=""
 ARGON_TARGET_TAG=""
+
 ARGON_THEME_URL=""
 ARGON_CONFIG_URL=""
 ARGON_LANG_URL=""
+
 ARGON_THEME_FILE=""
 ARGON_CONFIG_FILE=""
 ARGON_LANG_FILE=""
 
+
+# ============================================================
+# QuickStart
+# ============================================================
+
 IS_OPKG_URL="https://raw.githubusercontent.com/linkease/istore/main/luci/luci-app-store/root/bin/is-opkg"
+
 IS_OPKG_BIN=""
 
 QUICKSTART_CONFIG_URL="https://cafe.cpolar.cn/wkdaily/gl/raw/branch/main/config/quickstart"
+
 QUICKSTART_CONFIG_TMP="${THEME_TMP}/quickstart.conf"
+
 QUICKSTART_CONFIG_BAK="/etc/config/quickstart.openpro.bak"
 
 QUICKSTART_ORIGIN_BASE=""
 QUICKSTART_MIRROR_BASE=""
+
 QUICKSTART_SELECTED_BASE=""
 QUICKSTART_FALLBACK_BASE=""
+
 QUICKSTART_INDEX_PATH=""
+
 QUICKSTART_SOURCE_DIR="${THEME_TMP}/quickstart-speedtest.d"
+
 QUICKSTART_SOURCE_FILE="${THEME_TMP}/quickstart-sources.list"
+
 QUICKSTART_PATCHED_IS_OPKG="${THEME_TMP}/is-opkg-selected"
 
+
+# ============================================================
+# Speed Test
+# ============================================================
+
 THEME_TEST_CONNECT_TIMEOUT=4
+
 THEME_TEST_MAX_TIME=6
+
 THEME_SCORE_FILE_KB=4096
+
+
+# ============================================================
+# GitHub 下载线路
+# ============================================================
 
 THEME_DOWNLOAD_NODES="
 GH01|https://ghproxy.net/
@@ -92,7 +149,7 @@ DIRECT|
 
 
 # ============================================================
-# 日志
+# Log
 # ============================================================
 
 _theme_info()
@@ -100,15 +157,18 @@ _theme_info()
     printf "%b\n" "${GREEN}[INFO]${RESET} $*"
 }
 
+
 _theme_ok()
 {
     printf "%b\n" "${GREEN}[OK]${RESET} $*"
 }
 
+
 _theme_warn()
 {
     printf "%b\n" "${YELLOW}[WARN]${RESET} $*"
 }
+
 
 _theme_error()
 {
@@ -117,13 +177,14 @@ _theme_error()
 
 
 # ============================================================
-# 进度条
+# Progress
 # ============================================================
 
 theme_progress()
 {
     PERCENT="$1"
     TEXT="$2"
+
     WIDTH=30
 
     FILLED=$((PERCENT * WIDTH / 100))
@@ -132,16 +193,26 @@ theme_progress()
     BAR=""
 
     I=0
+
     while [ "$I" -lt "$FILLED" ]; do
+
         BAR="${BAR}#"
+
         I=$((I + 1))
+
     done
 
+
     I=0
+
     while [ "$I" -lt "$EMPTY" ]; do
+
         BAR="${BAR}-"
+
         I=$((I + 1))
+
     done
+
 
     printf "\r\033[2K${GREEN}[INFO]${RESET} %-28s [${GREEN}%s${RESET}] %3d%%" \
         "$TEXT" \
@@ -151,7 +222,7 @@ theme_progress()
 
 
 # ============================================================
-# 错误日志
+# Error Log
 # ============================================================
 
 show_theme_error_log()
@@ -160,11 +231,17 @@ show_theme_error_log()
 
     printf "%b\n" "${RED}========== ERROR LOG ==========${RESET}"
 
+
     if [ -s "$THEME_LOG" ]; then
+
         tail -n 120 "$THEME_LOG"
+
     else
+
         printf "没有可用错误日志\n"
+
     fi
+
 
     printf "%b\n" "${RED}===============================${RESET}"
 
@@ -173,7 +250,7 @@ show_theme_error_log()
 
 
 # ============================================================
-# 清理
+# Cleanup
 # ============================================================
 
 cleanup_theme_temp()
@@ -183,10 +260,12 @@ cleanup_theme_temp()
         "$THEME_TEST_DIR" \
         2>/dev/null
 
+
     rm -f \
         "$THEME_ROUTE_FILE" \
         "$THEME_SORTED_FILE" \
         2>/dev/null
+
 
     return 0
 }
@@ -196,16 +275,18 @@ cleanup_theme_all()
 {
     cleanup_theme_temp
 
+
     rm -f \
         "$THEME_LOG" \
         2>/dev/null
+
 
     return 0
 }
 
 
 # ============================================================
-# 中断
+# Interrupt
 # ============================================================
 
 theme_interrupt()
@@ -225,12 +306,13 @@ theme_interrupt()
 
 
 # ============================================================
-# 基础环境
+# Runtime Check
 # ============================================================
 
 check_theme_runtime()
 {
     MISSING=""
+
 
     for CMD in \
         grep \
@@ -283,7 +365,7 @@ check_theme_runtime()
 
 
 # ============================================================
-# 包管理器
+# Package Manager
 # ============================================================
 
 detect_package_manager()
@@ -291,6 +373,7 @@ detect_package_manager()
     if command -v opkg >/dev/null 2>&1; then
 
         PKG_MANAGER="opkg"
+
         ARGON_PACKAGE_TYPE="ipk"
 
         return 0
@@ -301,6 +384,7 @@ detect_package_manager()
     if command -v apk >/dev/null 2>&1; then
 
         PKG_MANAGER="apk"
+
         ARGON_PACKAGE_TYPE="apk"
 
         return 0
@@ -313,7 +397,7 @@ detect_package_manager()
 
 
 # ============================================================
-# OpenWrt 主版本
+# OpenWrt Major
 # ============================================================
 
 detect_openwrt_major()
@@ -337,12 +421,19 @@ detect_openwrt_major()
 
 
 # ============================================================
-# 获取 OPKG 架构
+# OPKG 架构
 #
-# 修复：
-# 某些 GL.iNet / OpenWrt 的
-# opkg print-architecture 输出格式不同，
-# 原来的过滤可能最终得到空值。
+# 目标：
+#
+# opkg print-architecture
+#
+# arch all 1
+# arch noarch 1
+# arch aarch64_cortex-a53_neon-vfpv4 10
+#
+# 最终只得到：
+#
+# aarch64_cortex-a53_neon-vfpv4
 # ============================================================
 
 detect_opkg_arch()
@@ -350,11 +441,6 @@ detect_opkg_arch()
     PKG_ARCH=""
 
 
-    # 第一种：
-    # 标准：
-    # arch all 1
-    # arch noarch 1
-    # arch aarch64_cortex-a53 10
     PKG_ARCH="$(
         opkg print-architecture 2>/dev/null |
         awk '
@@ -362,23 +448,22 @@ detect_opkg_arch()
             $2 != "all" &&
             $2 != "noarch"
             {
-                p = $3 + 0
+                priority = $3 + 0
 
-                if (p >= max) {
-                    max = p
-                    arch = $2
+                if (priority >= best_priority) {
+                    best_priority = priority
+                    best_arch = $2
                 }
             }
 
             END {
-                if (arch != "")
-                    print arch
+                if (best_arch != "")
+                    printf "%s", best_arch
             }
         '
     )"
 
 
-    # 第二种兼容
     if [ -z "$PKG_ARCH" ]; then
 
         PKG_ARCH="$(
@@ -387,59 +472,16 @@ detect_opkg_arch()
             grep -v '^arch all ' |
             grep -v '^arch noarch ' |
             tail -n 1 |
-            cut -d ' ' -f 2
+            awk '{print $2}'
         )"
 
     fi
 
 
-    # 第三种：
-    # 有些系统只显示架构名称
     if [ -z "$PKG_ARCH" ]; then
 
-        PKG_ARCH="$(
-            opkg print-architecture 2>/dev/null |
-            while IFS=' ' read -r FIELD1 FIELD2 FIELD3
-            do
-
-                case "$FIELD1" in
-
-                    arch)
-
-                        case "$FIELD2" in
-                            ""|all|noarch)
-                                ;;
-                            *)
-                                printf '%s\n' "$FIELD2"
-                                ;;
-                        esac
-
-                        ;;
-
-                    all|noarch)
-
-                        ;;
-
-                    *)
-
-                        if [ -n "$FIELD1" ]; then
-                            printf '%s\n' "$FIELD1"
-                        fi
-
-                        ;;
-
-                esac
-
-            done |
-            tail -n 1
-        )"
-
-    fi
-
-
-    # 最终兜底
-    if [ -z "$PKG_ARCH" ]; then
         PKG_ARCH="$CPU_ARCH"
+
     fi
 
 
@@ -452,7 +494,7 @@ detect_opkg_arch()
 
 
 # ============================================================
-# 系统检测
+# Detect System
 # ============================================================
 
 detect_theme_system()
@@ -513,10 +555,15 @@ detect_theme_system()
 
 
     _theme_info "OpenWrt版本  : $OPENWRT_VERSION"
+
     _theme_info "OpenWrt主版本: $OPENWRT_MAJOR"
+
     _theme_info "设备型号     : $MODEL"
+
     _theme_info "CPU架构      : $CPU_ARCH"
+
     _theme_info "软件包架构   : $PKG_ARCH"
+
     _theme_info "包管理器     : $PKG_MANAGER"
 
 
@@ -525,7 +572,7 @@ detect_theme_system()
 
 
 # ============================================================
-# 空间检查
+# Disk
 # ============================================================
 
 check_theme_disk_space()
@@ -568,7 +615,7 @@ check_theme_disk_space()
 
 
 # ============================================================
-# Argon 版本策略
+# Argon Compatibility
 # ============================================================
 
 select_argon_compat()
@@ -580,6 +627,7 @@ select_argon_compat()
             ARGON_TARGET_TAG="v2.2.9"
 
             _theme_info "兼容策略     : OpenWrt 21.x"
+
             _theme_info "Argon版本    : v2.2.9"
 
             ;;
@@ -590,6 +638,7 @@ select_argon_compat()
             ARGON_TARGET_TAG=""
 
             _theme_info "兼容策略     : OpenWrt ${OPENWRT_MAJOR}.x"
+
             _theme_info "Argon版本    : 自动获取最新兼容版本"
 
             ;;
@@ -611,7 +660,9 @@ select_argon_compat()
         ipk)
 
             ARGON_THEME_FILE="${THEME_TMP}/argon-theme.ipk"
+
             ARGON_CONFIG_FILE="${THEME_TMP}/argon-config.ipk"
+
             ARGON_LANG_FILE="${THEME_TMP}/argon-lang.ipk"
 
             ;;
@@ -620,7 +671,9 @@ select_argon_compat()
         apk)
 
             ARGON_THEME_FILE="${THEME_TMP}/argon-theme.apk"
+
             ARGON_CONFIG_FILE="${THEME_TMP}/argon-config.apk"
+
             ARGON_LANG_FILE="${THEME_TMP}/argon-lang.apk"
 
             ;;
@@ -645,13 +698,14 @@ select_argon_compat()
 
 
 # ============================================================
-# 普通下载
+# Download
 # ============================================================
 
 download_direct()
 {
     URL="$1"
     OUTPUT="$2"
+
 
     rm -f "$OUTPUT"
 
@@ -672,6 +726,7 @@ download_direct()
             "$URL" \
             >>"$THEME_LOG" 2>&1
 
+
         RESULT=$?
 
     else
@@ -682,6 +737,7 @@ download_direct()
             -O "$OUTPUT" \
             "$URL" \
             >>"$THEME_LOG" 2>&1
+
 
         RESULT=$?
 
@@ -708,6 +764,7 @@ download_direct()
             "$URL" \
             >>"$THEME_LOG"
 
+
         rm -f "$OUTPUT"
 
         return 1
@@ -720,7 +777,7 @@ download_direct()
 
 
 # ============================================================
-# 软件包是否安装
+# Package Installed
 # ============================================================
 
 package_installed()
@@ -732,8 +789,7 @@ package_installed()
 
         opkg)
 
-            opkg status "$PACKAGE_NAME" \
-                2>/dev/null |
+            opkg status "$PACKAGE_NAME" 2>/dev/null |
                 grep -q 'Status:.*installed'
 
             ;;
@@ -762,7 +818,7 @@ package_installed()
 
 
 # ============================================================
-# 软件包版本
+# Package Version
 # ============================================================
 
 get_package_version()
@@ -774,8 +830,7 @@ get_package_version()
 
         opkg)
 
-            opkg status "$PACKAGE_NAME" \
-                2>/dev/null |
+            opkg status "$PACKAGE_NAME" 2>/dev/null |
                 sed -n 's/^Version:[[:space:]]*//p' |
                 head -n 1
 
@@ -799,12 +854,13 @@ get_package_version()
 
 
 # ============================================================
-# Argon Release
+# Argon Release URL
 # ============================================================
 
 get_release_tag_url()
 {
     TAG="$1"
+
 
     [ -n "$TAG" ] ||
         return 1
@@ -816,6 +872,10 @@ get_release_tag_url()
         "$TAG"
 }
 
+
+# ============================================================
+# Argon Release Page
+# ============================================================
 
 fetch_argon_release_page()
 {
@@ -856,13 +916,16 @@ fetch_argon_release_page()
                 'https://github.com%s\n' \
                 "$ASSET_PATH"
 
-        done \
-        > "$ARGON_ASSET_LIST"
+        done > "$ARGON_ASSET_LIST"
 
 
     [ -s "$ARGON_ASSET_LIST" ]
 }
 
+
+# ============================================================
+# Argon Release
+# ============================================================
 
 fetch_argon_release()
 {
@@ -873,8 +936,11 @@ fetch_argon_release()
 
 
     ARGON_RELEASE_TAG=""
+
     ARGON_THEME_URL=""
+
     ARGON_CONFIG_URL=""
+
     ARGON_LANG_URL=""
 
 
@@ -928,17 +994,15 @@ fetch_argon_release()
             else
 
                 ARGON_RELEASE_TAG="$(
-                    tr ',' '\n' \
-                        < "$ARGON_RELEASE_JSON" |
+                    tr ',' '\n' < "$ARGON_RELEASE_JSON" |
                     sed -n \
-                        's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' |
+                    's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' |
                     head -n 1
                 )"
 
 
-                tr ',' '\n' \
-                    < "$ARGON_RELEASE_JSON" |
-                sed -n \
+                tr ',' '\n' < "$ARGON_RELEASE_JSON" |
+                    sed -n \
                     's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p' \
                     > "$ARGON_ASSET_LIST"
 
@@ -981,10 +1045,9 @@ fetch_argon_release()
 
 
             ARGON_RELEASE_TAG="$(
-                printf '%s\n' \
-                    "$EFFECTIVE_URL" |
+                printf '%s\n' "$EFFECTIVE_URL" |
                 sed -n \
-                    's#^.*/releases/tag/\([^/?#]*\).*$#\1#p'
+                's#^.*/releases/tag/\([^/?#]*\).*$#\1#p'
             )"
 
 
@@ -1075,29 +1138,38 @@ fetch_argon_release()
 
 
     case "$ARGON_THEME_URL" in
+
         https://github.com/*)
             ;;
+
         *)
             ARGON_THEME_URL=""
             ;;
+
     esac
 
 
     case "$ARGON_CONFIG_URL" in
+
         https://github.com/*)
             ;;
+
         *)
             ARGON_CONFIG_URL=""
             ;;
+
     esac
 
 
     case "$ARGON_LANG_URL" in
+
         https://github.com/*)
             ;;
+
         *)
             ARGON_LANG_URL=""
             ;;
+
     esac
 
 
@@ -1153,7 +1225,7 @@ fetch_argon_release()
 
 
 # ============================================================
-# 构造 GitHub 代理 URL
+# Build Proxy URL
 # ============================================================
 
 build_theme_url()
@@ -1178,9 +1250,7 @@ build_theme_url()
 
 
 # ============================================================
-# 秒 → 毫秒
-#
-# 不使用 awk 浮点。
+# Seconds -> ms
 # ============================================================
 
 theme_seconds_to_ms()
@@ -1192,8 +1262,7 @@ theme_seconds_to_ms()
 
         ''|*[!0-9.]*)
 
-            printf '%s' \
-                "999999"
+            printf '%s' "999999"
 
             return 0
 
@@ -1250,16 +1319,20 @@ theme_seconds_to_ms()
 
 
     case "$SEC" in
+
         *[!0-9]*)
             SEC=0
             ;;
+
     esac
 
 
     case "$FRAC" in
+
         *[!0-9]*)
             FRAC=0
             ;;
+
     esac
 
 
@@ -1269,7 +1342,7 @@ theme_seconds_to_ms()
 
 
 # ============================================================
-# B/s → MB/s
+# Bytes/s -> MB/s
 # ============================================================
 
 theme_speed_to_mb()
@@ -1281,8 +1354,7 @@ theme_speed_to_mb()
 
         ''|*[!0-9.]*)
 
-            printf '%s' \
-                "0.00"
+            printf '%s' "0.00"
 
             return 0
 
@@ -1308,8 +1380,7 @@ theme_speed_to_mb()
 
         *[!0-9]*)
 
-            printf '%s' \
-                "0.00"
+            printf '%s' "0.00"
 
             return 0
 
@@ -1319,7 +1390,9 @@ theme_speed_to_mb()
 
 
     WHOLE=$((S / 1048576))
+
     REM=$((S % 1048576))
+
     DEC=$((REM * 100 / 1048576))
 
 
@@ -1330,13 +1403,9 @@ theme_speed_to_mb()
 
 
 # ============================================================
-# 综合评分
+# Score
 #
-# BusyBox / OpenWrt /bin/sh 兼容
-#
-# 修复：
-# THEME_SCORE_FILE_KB: not found
-# SPEED_KB: not found
+# BusyBox /bin/sh 安全算术
 # ============================================================
 
 theme_calculate_score()
@@ -1369,8 +1438,7 @@ theme_calculate_score()
 
     if [ "$S" -le 0 ]; then
 
-        printf '%s' \
-            "999999999"
+        printf '%s' "999999999"
 
         return 0
 
@@ -1382,8 +1450,7 @@ theme_calculate_score()
 
     if [ "$SPEED_KB" -le 0 ]; then
 
-        printf '%s' \
-            "999999999"
+        printf '%s' "999999999"
 
         return 0
 
@@ -1405,7 +1472,7 @@ theme_calculate_score()
 
 
 # ============================================================
-# HTML 错误页
+# Error Page
 # ============================================================
 
 theme_test_is_error_page()
@@ -1425,7 +1492,7 @@ theme_test_is_error_page()
 
 
 # ============================================================
-# Argon 单线路测速
+# Argon Route Test
 # ============================================================
 
 test_theme_route()
@@ -1622,7 +1689,7 @@ test_theme_route()
 
 
 # ============================================================
-# Argon 后台测速
+# Background Test
 # ============================================================
 
 test_theme_route_background()
@@ -1694,7 +1761,7 @@ test_theme_route_background()
 
 
 # ============================================================
-# 获取代理节点
+# Node Prefix
 # ============================================================
 
 get_theme_node_prefix()
@@ -1709,7 +1776,9 @@ get_theme_node_prefix()
             continue
 
 
-        printf '%s' "$PREFIX"
+        printf '%s' \
+            "$PREFIX"
+
 
         return 0
 
@@ -1729,7 +1798,7 @@ EOF
 
 
 # ============================================================
-# Argon 并行测速
+# Prepare Argon Routes
 # ============================================================
 
 prepare_theme_routes()
@@ -1866,16 +1935,24 @@ prepare_theme_routes()
 
 
         case "$TTFB_MS" in
+
             ''|*[!0-9]*)
+
                 TTFB_MS="----"
+
                 ;;
+
         esac
 
 
         case "$SPEED_BPS" in
+
             ''|*[!0-9]*)
+
                 SPEED_MB="0.00"
+
                 ;;
+
         esac
 
 
@@ -1975,7 +2052,7 @@ prepare_theme_routes()
 
 
 # ============================================================
-# Argon 智能下载
+# Smart Download Argon
 # ============================================================
 
 smart_download_release()
@@ -1985,6 +2062,7 @@ smart_download_release()
 
 
     DOWNLOAD_SUCCESS=0
+
     DIRECT_TRIED=0
 
 
@@ -2000,11 +2078,13 @@ smart_download_release()
         if [ -s "$THEME_ROUTE_FILE" ]; then
 
             THEME_ROUTE_CACHE_READY=1
+
             THEME_ROUTE_CACHE_URL="$ORIGINAL_URL"
 
         else
 
             THEME_ROUTE_CACHE_READY=0
+
             THEME_ROUTE_CACHE_URL=""
 
         fi
@@ -2062,7 +2142,9 @@ smart_download_release()
                 _theme_ok \
                     "下载线路：$ROUTE_NAME"
 
+
                 DOWNLOAD_SUCCESS=1
+
 
                 break
 
@@ -2094,6 +2176,7 @@ smart_download_release()
             _theme_ok \
                 "GitHub 官方直连下载成功"
 
+
             DOWNLOAD_SUCCESS=1
 
         fi
@@ -2106,7 +2189,7 @@ smart_download_release()
 
 
 # ============================================================
-# 安装本地包
+# Install Local Package
 # ============================================================
 
 install_local_package()
@@ -2150,7 +2233,7 @@ install_local_package()
 
 
 # ============================================================
-# 回滚 Bootstrap
+# Bootstrap Theme
 # ============================================================
 
 restore_bootstrap_theme()
@@ -2193,7 +2276,7 @@ restore_bootstrap_theme()
 
 
 # ============================================================
-# Argon 验证
+# Verify Argon
 # ============================================================
 
 verify_argon_install()
@@ -2212,7 +2295,7 @@ verify_argon_install()
 
 
 # ============================================================
-# 安装 Argon
+# Install Argon
 # ============================================================
 
 install_argon_official()
@@ -2266,6 +2349,7 @@ install_argon_official()
             _theme_warn \
                 "Argon Config 下载失败，将仅安装 Theme"
 
+
             rm -f \
                 "$ARGON_CONFIG_FILE"
 
@@ -2291,6 +2375,7 @@ install_argon_official()
 
             _theme_warn \
                 "中文包下载失败，自动跳过"
+
 
             rm -f \
                 "$ARGON_LANG_FILE"
@@ -2382,7 +2467,7 @@ install_argon_official()
 
 
 # ============================================================
-# 设置 Argon 默认
+# Argon Default
 # ============================================================
 
 set_argon_default()
@@ -2415,7 +2500,8 @@ set_argon_default()
 
 
 # ============================================================
-# OpenWrt 21.x / Argon v2.2.9 菜单折叠兼容修复
+# OpenWrt 21.x / Argon v2.2.9
+# 菜单折叠修复
 # ============================================================
 
 apply_argon21_menu_fix()
@@ -2429,7 +2515,9 @@ apply_argon21_menu_fix()
 
 
     MENU_FILE="/www/luci-static/resources/menu-argon.js"
+
     MENU_BACKUP="${MENU_FILE}.openpro.bak"
+
     MENU_TMP="${THEME_TMP}/menu-argon.js"
 
 
@@ -2830,49 +2918,95 @@ OPENPRO_MENU_ARGON_EOF
 
 
 # ============================================================
-# QuickStart 真实安装验证
+# QuickStart Verify
+#
+# 关键修复：
+#
+# quickstart
+# luci-app-quickstart
+#
+# 两个软件包都已安装，即视为 QuickStart 安装成功。
+#
+# LuCI 文件路径因不同 OpenWrt / GL.iNet / iStoreOS
+# 可能不同，所以不再作为强制失败条件。
 # ============================================================
 
 verify_quickstart_install()
 {
-    # 软件包必须真实安装
-    package_installed \
-        "quickstart" ||
-        return 1
-
-
-    package_installed \
-        "luci-app-quickstart" ||
-        return 1
-
-
+    QUICKSTART_CORE_OK=0
     QUICKSTART_LUCI_OK=0
+    QUICKSTART_FILE_OK=0
 
 
-    # 新式 LuCI menu.d
+    # ========================================================
+    # quickstart 本体
+    # ========================================================
+
+    if package_installed "quickstart"; then
+
+        QUICKSTART_CORE_OK=1
+
+    fi
+
+
+    # ========================================================
+    # luci-app-quickstart
+    # ========================================================
+
+    if package_installed "luci-app-quickstart"; then
+
+        QUICKSTART_LUCI_OK=1
+
+    fi
+
+
+    # ========================================================
+    # 两个包均已安装
+    #
+    # 这是主要成功条件
+    # ========================================================
+
+    if [ "$QUICKSTART_CORE_OK" = "1" ] &&
+       [ "$QUICKSTART_LUCI_OK" = "1" ]
+    then
+
+        return 0
+
+    fi
+
+
+    # ========================================================
+    # LuCI 文件辅助检查
+    # ========================================================
+
     if ls \
         /usr/share/luci/menu.d/*quickstart* \
         >/dev/null 2>&1
     then
 
-        QUICKSTART_LUCI_OK=1
+        QUICKSTART_FILE_OK=1
 
     fi
 
 
-    # 旧式控制器
     if [ -f /usr/lib/lua/luci/controller/quickstart.lua ] ||
        [ -d /usr/lib/lua/luci/controller/quickstart ]
     then
 
-        QUICKSTART_LUCI_OK=1
+        QUICKSTART_FILE_OK=1
 
     fi
 
 
-    # 新式 JS View
+    if [ -d /www/luci-static/resources/view/quickstart ]; then
+
+        QUICKSTART_FILE_OK=1
+
+    fi
+
+
     if find \
-        /www/luci-static/resources/view \
+        /www/luci-static/resources \
         -type f \
         -iname '*quickstart*' \
         -print \
@@ -2881,29 +3015,30 @@ verify_quickstart_install()
         grep -q .
     then
 
-        QUICKSTART_LUCI_OK=1
+        QUICKSTART_FILE_OK=1
 
     fi
 
 
-    # QuickStart 常见页面目录
-    if [ -d /www/luci-static/resources/view/quickstart ]; then
+    # ========================================================
+    # luci-app 包 + 实际 LuCI 文件
+    # ========================================================
 
-        QUICKSTART_LUCI_OK=1
+    if [ "$QUICKSTART_LUCI_OK" = "1" ] &&
+       [ "$QUICKSTART_FILE_OK" = "1" ]
+    then
+
+        return 0
 
     fi
 
 
-    [ "$QUICKSTART_LUCI_OK" = "1" ] ||
-        return 1
-
-
-    return 0
+    return 1
 }
 
 
 # ============================================================
-# 下载 is-opkg
+# is-opkg
 # ============================================================
 
 ensure_is_opkg()
@@ -2951,7 +3086,7 @@ ensure_is_opkg()
 
 
 # ============================================================
-# QuickStart 源
+# QuickStart Repo
 # ============================================================
 
 select_quickstart_repo()
@@ -2961,7 +3096,9 @@ select_quickstart_repo()
         apk)
 
             QUICKSTART_ORIGIN_BASE="https://istore.istoreos.com/repo-apk"
+
             QUICKSTART_MIRROR_BASE="https://repo.istoreos.com/repo-apk"
+
             QUICKSTART_INDEX_PATH="/all/meta.conf"
 
             ;;
@@ -2970,7 +3107,9 @@ select_quickstart_repo()
         opkg)
 
             QUICKSTART_ORIGIN_BASE="https://istore.istoreos.com/repo"
+
             QUICKSTART_MIRROR_BASE="https://repo.istoreos.com/repo"
+
             QUICKSTART_INDEX_PATH="/all/meta.conf"
 
             ;;
@@ -3001,14 +3140,13 @@ select_quickstart_repo()
 
 
 # ============================================================
-# QuickStart 软件源测速
-#
-# BusyBox / OpenWrt /bin/sh 兼容
+# QuickStart Source Test
 #
 # 修复：
-# TTFB_MS: not found
-# SPEED_INT: not found
-# 1000000: not found
+#
+# TTFB_MS not found
+# SPEED_INT not found
+# 1000000 not found
 # ============================================================
 
 test_quickstart_source()
@@ -3186,8 +3324,6 @@ test_quickstart_source()
     esac
 
 
-    # 小 meta.conf 速度可能非常低，
-    # 但只要实际收到数据就视为可用。
     if [ "$SPEED_INT" -le 0 ]; then
 
         SPEED_INT=1
@@ -3195,8 +3331,12 @@ test_quickstart_source()
     fi
 
 
-    # BusyBox 正确算术语法
+    # ========================================================
+    # BusyBox /bin/sh 正确算术
+    # ========================================================
+
     DOWNLOAD_SCORE=$((1000000 / SPEED_INT))
+
 
     SCORE=$((TTFB_MS + DOWNLOAD_SCORE))
 
@@ -3215,7 +3355,7 @@ test_quickstart_source()
 
 
 # ============================================================
-# QuickStart 后台测速
+# QuickStart Background Test
 # ============================================================
 
 test_quickstart_source_background()
@@ -3281,7 +3421,7 @@ test_quickstart_source_background()
 
 
 # ============================================================
-# QuickStart 软件源并行测速
+# Prepare QuickStart Sources
 # ============================================================
 
 prepare_quickstart_sources()
@@ -3422,6 +3562,7 @@ prepare_quickstart_sources()
 
 
         QUICKSTART_SELECTED_BASE=""
+
         QUICKSTART_FALLBACK_BASE=""
 
 
@@ -3511,7 +3652,7 @@ prepare_quickstart_sources()
 
 
 # ============================================================
-# 修改 is-opkg 下载源
+# Patch is-opkg
 # ============================================================
 
 patch_is_opkg_source()
@@ -3603,7 +3744,7 @@ patch_is_opkg_source()
 
 
 # ============================================================
-# QuickStart 在线版本
+# QuickStart Online Version
 # ============================================================
 
 get_quickstart_online_version()
@@ -3627,7 +3768,7 @@ get_quickstart_online_version()
 
 
 # ============================================================
-# QuickStart 本机版本
+# QuickStart Installed Version
 # ============================================================
 
 get_quickstart_installed_version()
@@ -3664,7 +3805,7 @@ get_quickstart_installed_version()
 
 
 # ============================================================
-# QuickStart 配置
+# QuickStart Config
 # ============================================================
 
 apply_quickstart_config()
@@ -3754,7 +3895,7 @@ apply_quickstart_config()
 
 
 # ============================================================
-# QuickStart 安装
+# Install QuickStart
 # ============================================================
 
 install_quickstart()
@@ -3785,9 +3926,9 @@ install_quickstart()
     fi
 
 
-    # --------------------------------------------------------
-    # 已经安装
-    # --------------------------------------------------------
+    # ========================================================
+    # 已安装
+    # ========================================================
 
     if verify_quickstart_install; then
 
@@ -3811,9 +3952,9 @@ install_quickstart()
     fi
 
 
-    # --------------------------------------------------------
-    # 更新索引
-    # --------------------------------------------------------
+    # ========================================================
+    # Update
+    # ========================================================
 
     theme_progress \
         70 \
@@ -3856,9 +3997,9 @@ install_quickstart()
         "匹配中文包    : luci-i18n-quickstart-zh-cn"
 
 
-    # --------------------------------------------------------
-    # 安装
-    # --------------------------------------------------------
+    # ========================================================
+    # Install
+    # ========================================================
 
     theme_progress \
         78 \
@@ -3877,19 +4018,32 @@ install_quickstart()
     INSTALL_RESULT=$?
 
 
-    # --------------------------------------------------------
-    # 第一次安装返回非 0，
-    # 或返回 0 但真实文件尚未生效
-    # --------------------------------------------------------
+    # ========================================================
+    # 安装后先真实检查
+    #
+    # 即使 is-opkg 返回非 0，
+    # 只要软件包已经实际安装，就直接视为成功。
+    # ========================================================
 
-    if [ "$INSTALL_RESULT" -ne 0 ] ||
+    if verify_quickstart_install; then
+
+        INSTALL_RESULT=0
+
+    fi
+
+
+    # ========================================================
+    # 真正未安装才进入兼容模式
+    # ========================================================
+
+    if [ "$INSTALL_RESULT" -ne 0 ] &&
        ! verify_quickstart_install
     then
 
         if [ "$PKG_MANAGER" = "opkg" ]; then
 
             _theme_warn \
-                "普通安装未完全完成，尝试 OPKG 兼容模式"
+                "普通安装未完成，尝试 OPKG 兼容模式"
 
 
             "$IS_OPKG_BIN" \
@@ -3919,14 +4073,14 @@ install_quickstart()
     fi
 
 
-    # --------------------------------------------------------
-    # 最终真实验证
-    # --------------------------------------------------------
+    # ========================================================
+    # Final Verify
+    # ========================================================
 
     if ! verify_quickstart_install; then
 
         _theme_error \
-            "QuickStart 安装验证失败：本体或 LuCI 菜单未生效"
+            "QuickStart 安装验证失败"
 
 
         return 1
@@ -3962,7 +4116,7 @@ install_quickstart()
 
 
 # ============================================================
-# 刷新 LuCI
+# Refresh LuCI
 # ============================================================
 
 refresh_theme_luci()
@@ -3998,7 +4152,7 @@ refresh_theme_luci()
 
 
 # ============================================================
-# 主安装函数
+# Main
 # ============================================================
 
 install_theme()
@@ -4039,6 +4193,7 @@ install_theme()
 
 
     THEME_ROUTE_CACHE_READY=0
+
     THEME_ROUTE_CACHE_URL=""
 
 
@@ -4062,7 +4217,7 @@ install_theme()
 
 
     # ========================================================
-    # 环境
+    # Environment
     # ========================================================
 
     theme_progress \
@@ -4165,7 +4320,7 @@ install_theme()
 
 
     # ========================================================
-    # 默认主题
+    # Argon Default
     # ========================================================
 
     theme_progress \
@@ -4217,13 +4372,32 @@ install_theme()
     printf "\n"
 
 
-    if ! install_quickstart; then
+    QUICKSTART_INSTALL_OK=0
+
+
+    if install_quickstart; then
+
+        QUICKSTART_INSTALL_OK=1
+
+    else
 
         printf "\n"
 
 
-        _theme_warn \
-            "Argon 已安装，但 QuickStart 安装失败"
+        # 再做一次真实软件包检查
+        if verify_quickstart_install; then
+
+            QUICKSTART_INSTALL_OK=1
+
+            _theme_ok \
+                "QuickStart 已确认实际安装成功"
+
+        else
+
+            _theme_warn \
+                "Argon 已安装，但 QuickStart 安装失败"
+
+        fi
 
     fi
 
@@ -4241,7 +4415,7 @@ install_theme()
 
 
     # ========================================================
-    # 最终验证
+    # Argon Final Verify
     # ========================================================
 
     theme_progress \
@@ -4275,6 +4449,10 @@ install_theme()
     fi
 
 
+    # ========================================================
+    # Final
+    # ========================================================
+
     theme_progress \
         100 \
         "iStoreOS 风格安装完成"
@@ -4293,10 +4471,6 @@ install_theme()
         get_quickstart_installed_version
     )"
 
-
-    # ========================================================
-    # 结果
-    # ========================================================
 
     _theme_ok \
         "Argon 主题安装成功"
