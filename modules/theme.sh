@@ -3038,47 +3038,228 @@ verify_quickstart_install()
 
 
 # ============================================================
-# is-opkg
+# 下载 LinkEase 官方 is-opkg
+#
+# 复用 Argon 首次 GH01-GH06 + DIRECT 测速结果
+# 不重新测速
+# 下载失败自动切换下一线路
+# DIRECT 最终兜底
 # ============================================================
 
 ensure_is_opkg()
 {
     IS_OPKG_BIN="${THEME_TMP}/is-opkg"
 
+    _theme_info "正在下载 LinkEase 官方 is-opkg..."
 
-    _theme_info \
-        "正在下载 LinkEase 官方 is-opkg..."
+    rm -f "$IS_OPKG_BIN"
 
-
-    if ! download_direct \
-        "$IS_OPKG_URL" \
-        "$IS_OPKG_BIN"
-    then
-
-        _theme_error \
-            "is-opkg 下载失败"
+    DOWNLOAD_SUCCESS=0
+    DIRECT_TRIED=0
 
 
-        IS_OPKG_BIN=""
+    # ========================================================
+    # 优先复用 Argon 首次测速排序
+    # ========================================================
+
+    if [ -s "$THEME_ROUTE_FILE" ]; then
+
+        while IFS='|' read -r \
+            ROUTE_SCORE \
+            ROUTE_NAME \
+            ROUTE_PREFIX \
+            ROUTE_TEST_URL \
+            ROUTE_TTFB \
+            ROUTE_SPEED
+        do
+
+            [ -n "$ROUTE_NAME" ] ||
+                continue
+
+            if [ "$ROUTE_NAME" = "DIRECT" ]; then
+                DIRECT_TRIED=1
+            fi
 
 
-        return 1
+            DOWNLOAD_URL="$(
+                build_theme_url \
+                    "$ROUTE_PREFIX" \
+                    "$IS_OPKG_URL"
+            )"
+
+
+            [ -n "$DOWNLOAD_URL" ] ||
+                continue
+
+
+            _theme_info "正在使用线路：$ROUTE_NAME"
+
+
+            rm -f "$IS_OPKG_BIN"
+
+
+            if command -v curl >/dev/null 2>&1; then
+
+                curl \
+                    -4 \
+                    -L \
+                    -f \
+                    -sS \
+                    --connect-timeout 4 \
+                    --max-time 20 \
+                    --retry 0 \
+                    -H "User-Agent: Open-Pro-Installer" \
+                    -o "$IS_OPKG_BIN" \
+                    "$DOWNLOAD_URL" \
+                    >>"$THEME_LOG" 2>&1
+
+                RESULT=$?
+
+            else
+
+                wget \
+                    -T 10 \
+                    -O "$IS_OPKG_BIN" \
+                    "$DOWNLOAD_URL" \
+                    >>"$THEME_LOG" 2>&1
+
+                RESULT=$?
+
+            fi
+
+
+            if [ "$RESULT" -eq 0 ] &&
+               [ -s "$IS_OPKG_BIN" ]
+            then
+
+                # 防止代理返回 HTML 错误页
+                if ! head -c 512 "$IS_OPKG_BIN" 2>/dev/null |
+                    grep -Eqi \
+                    '<html|<!doctype|404 not found|bad gateway|502 bad gateway|403 forbidden|cloudflare'
+                then
+
+                    chmod 755 \
+                        "$IS_OPKG_BIN" \
+                        >>"$THEME_LOG" 2>&1 || {
+
+                            rm -f "$IS_OPKG_BIN"
+
+                            continue
+                        }
+
+
+                    _theme_ok "is-opkg 下载线路：$ROUTE_NAME"
+
+                    DOWNLOAD_SUCCESS=1
+
+                    break
+
+                fi
+
+            fi
+
+
+            rm -f "$IS_OPKG_BIN"
+
+
+            _theme_warn "$ROUTE_NAME 下载失败，切换下一线路..."
+
+
+        done < "$THEME_ROUTE_FILE"
 
     fi
 
 
-    chmod \
-        755 \
-        "$IS_OPKG_BIN" \
-        >>"$THEME_LOG" 2>&1 || {
+    # ========================================================
+    # 如果没有测速缓存或所有缓存线路失败
+    # DIRECT 最终兜底
+    # ========================================================
 
-            _theme_error \
-                "is-opkg 设置执行权限失败"
+    if [ "$DOWNLOAD_SUCCESS" -ne 1 ] &&
+       [ "$DIRECT_TRIED" -ne 1 ]
+    then
 
-            IS_OPKG_BIN=""
+        _theme_info "正在尝试 GitHub 官方直连..."
 
-            return 1
-        }
+
+        rm -f "$IS_OPKG_BIN"
+
+
+        if command -v curl >/dev/null 2>&1; then
+
+            curl \
+                -4 \
+                -L \
+                -f \
+                -sS \
+                --connect-timeout 4 \
+                --max-time 20 \
+                --retry 0 \
+                -H "User-Agent: Open-Pro-Installer" \
+                -o "$IS_OPKG_BIN" \
+                "$IS_OPKG_URL" \
+                >>"$THEME_LOG" 2>&1
+
+            RESULT=$?
+
+        else
+
+            wget \
+                -T 10 \
+                -O "$IS_OPKG_BIN" \
+                "$IS_OPKG_URL" \
+                >>"$THEME_LOG" 2>&1
+
+            RESULT=$?
+
+        fi
+
+
+        if [ "$RESULT" -eq 0 ] &&
+           [ -s "$IS_OPKG_BIN" ]
+        then
+
+            if ! head -c 512 "$IS_OPKG_BIN" 2>/dev/null |
+                grep -Eqi \
+                '<html|<!doctype|404 not found|bad gateway|502 bad gateway|403 forbidden|cloudflare'
+            then
+
+                chmod 755 \
+                    "$IS_OPKG_BIN" \
+                    >>"$THEME_LOG" 2>&1
+
+
+                if [ $? -eq 0 ]; then
+
+                    _theme_ok "is-opkg GitHub 官方直连下载成功"
+
+                    DOWNLOAD_SUCCESS=1
+
+                fi
+
+            fi
+
+        fi
+
+    fi
+
+
+    # ========================================================
+    # 最终验证
+    # ========================================================
+
+    if [ "$DOWNLOAD_SUCCESS" -ne 1 ] ||
+       [ ! -s "$IS_OPKG_BIN" ] ||
+       [ ! -x "$IS_OPKG_BIN" ]
+    then
+
+        rm -f "$IS_OPKG_BIN"
+
+        _theme_error "is-opkg 下载失败"
+
+        return 1
+
+    fi
 
 
     return 0
