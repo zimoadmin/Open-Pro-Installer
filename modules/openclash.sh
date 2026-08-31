@@ -31,6 +31,17 @@
 # 24. Core 更新采用完整测速 URL
 # 25. Core 未真实验证前不显示 100%
 #
+# 26. 自动下载并运行 openclash-swap
+#     与 27 共用同一份 GH01-GH06 + DIRECT 测速结果
+#     并将完整线路排名传递给 openclash-swap
+#
+# 27. 自动下载并安装 openclash-smart-select
+#     保存到 /usr/bin/openclash-smart-select
+#     自动添加执行权限
+#
+# 28. 自动添加 Smart Select 定时任务
+#     每 30 分钟自动运行一次
+#
 # BusyBox / OpenWrt /bin/sh Compatible
 # ============================================================
 
@@ -70,6 +81,21 @@ LATEST_META_VERSION=""
 
 OPENCLASH_CORE_CPU_MODEL=""
 OPENCLASH_RELEASE_BRANCH="master"
+
+
+# ============================================================
+# 26 / 27 / 28 扩展功能配置
+# ============================================================
+
+OC_SCRIPT_ROUTE_FILE="/tmp/openpro_openclash_script_routes"
+
+OPENCLASH_SWAP_URL="https://raw.githubusercontent.com/zimoadmin/Open-Pro-Installer/refs/heads/main/modules/openclash-swap"
+
+OPENCLASH_SMART_SELECT_URL="https://raw.githubusercontent.com/zimoadmin/Open-Pro-Installer/refs/heads/main/modules/openclash-smart-select.sh"
+
+OPENCLASH_SMART_SELECT_PATH="/usr/bin/openclash-smart-select"
+
+OPENCLASH_SMART_SELECT_CRON_LOG="/tmp/openclash-smart-select.log"
 
 
 # ============================================================
@@ -180,6 +206,16 @@ cleanup_core_update()
     rm -f "$OC_CORE_UPDATE_LOG" 2>/dev/null
 
     CORE_UPDATE_PID=""
+
+    return 0
+}
+
+
+cleanup_openclash_script_routes()
+{
+    rm -f \
+        "$OC_SCRIPT_ROUTE_FILE" \
+        2>/dev/null
 
     return 0
 }
@@ -1197,6 +1233,564 @@ smart_download_openclash()
 
 
 # ============================================================
+# 26 / 27
+# 生成一份共享 GH01-GH06 + DIRECT 测速结果
+#
+# 只执行一次测速
+#
+# 缓存格式：
+# score|name|prefix|ttfb|speed
+# ============================================================
+
+prepare_openclash_script_routes()
+{
+    cleanup_openclash_script_routes
+
+
+    printf "\n"
+
+    _oc_info "正在为 OpenClash 扩展功能筛选最佳下载线路..."
+
+
+    if ! prepare_openclash_routes \
+        "$OPENCLASH_SWAP_URL"
+    then
+
+        _oc_warn "扩展功能下载线路测速失败"
+
+        cleanup_openclash_temp
+
+        return 1
+    fi
+
+
+    if [ ! -s "$OC_ROUTE_FILE" ]; then
+
+        _oc_warn "没有生成有效扩展下载线路"
+
+        cleanup_openclash_temp
+
+        return 1
+    fi
+
+
+    while IFS='|' read -r \
+        ROUTE_SCORE \
+        ROUTE_NAME \
+        ROUTE_PREFIX \
+        ROUTE_URL \
+        ROUTE_TTFB \
+        ROUTE_SPEED
+    do
+
+        [ -n "$ROUTE_NAME" ] ||
+            continue
+
+
+        printf '%s|%s|%s|%s|%s\n' \
+            "$ROUTE_SCORE" \
+            "$ROUTE_NAME" \
+            "$ROUTE_PREFIX" \
+            "$ROUTE_TTFB" \
+            "$ROUTE_SPEED" \
+            >> "$OC_SCRIPT_ROUTE_FILE"
+
+
+    done < "$OC_ROUTE_FILE"
+
+
+    rm -f \
+        "$OC_ROUTE_FILE" \
+        "$OC_SORTED_FILE" \
+        "$OC_TEST_FILE" \
+        "$OC_DOWNLOAD_LOG" \
+        2>/dev/null
+
+    rm -rf "$OC_TEST_DIR" 2>/dev/null
+
+
+    if [ ! -s "$OC_SCRIPT_ROUTE_FILE" ]; then
+
+        _oc_warn "扩展功能测速缓存生成失败"
+
+        return 1
+    fi
+
+
+    SCRIPT_BEST_LINE="$(
+        sed -n '1p' \
+            "$OC_SCRIPT_ROUTE_FILE"
+    )"
+
+
+    SCRIPT_BEST_NAME="$(
+        printf '%s\n' "$SCRIPT_BEST_LINE" |
+        cut -d '|' -f 2
+    )"
+
+
+    SCRIPT_BEST_TTFB="$(
+        printf '%s\n' "$SCRIPT_BEST_LINE" |
+        cut -d '|' -f 4
+    )"
+
+
+    SCRIPT_BEST_SPEED="$(
+        printf '%s\n' "$SCRIPT_BEST_LINE" |
+        cut -d '|' -f 5
+    )"
+
+
+    _oc_ok "扩展功能最佳线路：$SCRIPT_BEST_NAME"
+
+    _oc_info "首包时间：${SCRIPT_BEST_TTFB} ms"
+
+    _oc_info "下载速度：$(oc_speed_to_mb "$SCRIPT_BEST_SPEED") MB/s"
+
+
+    return 0
+}
+
+
+# ============================================================
+# 26 / 27
+# 使用共享测速结果下载普通 Shell 文件
+#
+# 不再次测速
+#
+# $1 = GitHub 原始 URL
+# $2 = 输出文件
+# ============================================================
+
+smart_download_openclash_script_cached()
+{
+    ORIGINAL_URL="$1"
+    OUTPUT="$2"
+
+    DOWNLOAD_SUCCESS=0
+    DIRECT_TRIED=0
+
+
+    rm -f "$OUTPUT" 2>/dev/null
+
+
+    if [ ! -s "$OC_SCRIPT_ROUTE_FILE" ]; then
+
+        _oc_warn "没有可用的共享测速结果"
+
+        return 1
+    fi
+
+
+    while IFS='|' read -r \
+        ROUTE_SCORE \
+        ROUTE_NAME \
+        ROUTE_PREFIX \
+        ROUTE_TTFB \
+        ROUTE_SPEED
+    do
+
+        [ -n "$ROUTE_NAME" ] ||
+            continue
+
+
+        if [ "$ROUTE_NAME" = "DIRECT" ] ||
+           [ -z "$ROUTE_PREFIX" ]
+        then
+
+            ROUTE_URL="$ORIGINAL_URL"
+
+            DIRECT_TRIED=1
+
+        else
+
+            ROUTE_URL="$(
+                build_openclash_url \
+                    "$ROUTE_PREFIX" \
+                    "$ORIGINAL_URL"
+            )"
+
+        fi
+
+
+        ROUTE_SPEED_MB="$(
+            oc_speed_to_mb "$ROUTE_SPEED"
+        )"
+
+
+        _oc_info "正在使用线路：$ROUTE_NAME"
+
+        _oc_info "复用测速速度：${ROUTE_SPEED_MB} MB/s"
+
+
+        rm -f "$OUTPUT" 2>/dev/null
+
+
+        curl -4 \
+            -L \
+            -f \
+            -sS \
+            --connect-timeout 8 \
+            --max-time 120 \
+            --retry 1 \
+            --retry-delay 1 \
+            -o "$OUTPUT" \
+            "$ROUTE_URL" \
+            >/dev/null 2>&1
+
+
+        if [ $? -eq 0 ] &&
+           [ -s "$OUTPUT" ]
+        then
+
+            if ! head -c 1024 "$OUTPUT" 2>/dev/null |
+                grep -Eqi \
+                '<html|<!doctype|bad gateway|502 bad gateway|404 not found|403 forbidden|access denied'
+            then
+
+                _oc_ok "下载线路：$ROUTE_NAME"
+
+                DOWNLOAD_SUCCESS=1
+
+                break
+            fi
+
+        fi
+
+
+        rm -f "$OUTPUT" 2>/dev/null
+
+
+        _oc_warn "$ROUTE_NAME 下载失败，自动切换下一线路..."
+
+
+    done < "$OC_SCRIPT_ROUTE_FILE"
+
+
+    # ========================================================
+    # DIRECT 最终兜底
+    # ========================================================
+
+    if [ "$DOWNLOAD_SUCCESS" -ne 1 ] &&
+       [ "$DIRECT_TRIED" -ne 1 ]
+    then
+
+        _oc_info "正在尝试 GitHub 官方直连..."
+
+
+        rm -f "$OUTPUT" 2>/dev/null
+
+
+        curl -4 \
+            -L \
+            -f \
+            -sS \
+            --connect-timeout 8 \
+            --max-time 120 \
+            --retry 1 \
+            --retry-delay 1 \
+            -o "$OUTPUT" \
+            "$ORIGINAL_URL" \
+            >/dev/null 2>&1
+
+
+        if [ $? -eq 0 ] &&
+           [ -s "$OUTPUT" ]
+        then
+
+            if ! head -c 1024 "$OUTPUT" 2>/dev/null |
+                grep -Eqi \
+                '<html|<!doctype|bad gateway|502 bad gateway|404 not found|403 forbidden|access denied'
+            then
+
+                _oc_ok "GitHub 官方直连下载成功"
+
+                DOWNLOAD_SUCCESS=1
+            fi
+
+        fi
+
+    fi
+
+
+    [ "$DOWNLOAD_SUCCESS" -eq 1 ]
+}
+
+
+# ============================================================
+# 26. 下载并运行 OpenClash Swap
+#
+# 下载 openclash-swap 时：
+# 使用共享测速排名
+#
+# openclash-swap 内部下载配置时：
+# 通过 OPENPRO_SCRIPT_ROUTE_FILE
+# 再次复用完全相同的线路排名
+# ============================================================
+
+run_openclash_swap()
+{
+    SWAP_TMP="/tmp/openclash-swap.$$"
+
+
+    printf "\n"
+
+    _oc_info "正在下载 OpenClash 文件替换脚本..."
+
+
+    if ! smart_download_openclash_script_cached \
+        "$OPENCLASH_SWAP_URL" \
+        "$SWAP_TMP"
+    then
+
+        rm -f "$SWAP_TMP" 2>/dev/null
+
+        _oc_warn "OpenClash 文件替换脚本下载失败"
+
+        return 1
+    fi
+
+
+    if [ ! -s "$SWAP_TMP" ]; then
+
+        rm -f "$SWAP_TMP" 2>/dev/null
+
+        _oc_warn "OpenClash 文件替换脚本为空"
+
+        return 1
+    fi
+
+
+    chmod 755 \
+        "$SWAP_TMP" \
+        >/dev/null 2>&1
+
+
+    _oc_info "正在执行 OpenClash 文件智能替换..."
+
+
+    OPENPRO_SCRIPT_ROUTE_FILE="$OC_SCRIPT_ROUTE_FILE" \
+        sh "$SWAP_TMP"
+
+
+    SWAP_RESULT=$?
+
+
+    rm -f \
+        "$SWAP_TMP" \
+        >/dev/null 2>&1
+
+
+    if [ "$SWAP_RESULT" -eq 0 ]; then
+
+        _oc_ok "OpenClash 文件替换完成"
+
+        return 0
+
+    fi
+
+
+    _oc_warn "OpenClash 文件替换执行失败"
+
+    return 1
+}
+
+
+# ============================================================
+# 27. 安装 OpenClash Smart Select
+#
+# 继续复用同一份 GH01-GH06 + DIRECT 测速排名
+# ============================================================
+
+install_openclash_smart_select()
+{
+    SMART_SELECT_TMP="/tmp/openclash-smart-select.$$"
+
+
+    printf "\n"
+
+    _oc_info "正在下载 OpenClash Smart Select..."
+
+
+    if ! smart_download_openclash_script_cached \
+        "$OPENCLASH_SMART_SELECT_URL" \
+        "$SMART_SELECT_TMP"
+    then
+
+        rm -f "$SMART_SELECT_TMP" 2>/dev/null
+
+        _oc_warn "OpenClash Smart Select 下载失败"
+
+        return 1
+    fi
+
+
+    if [ ! -s "$SMART_SELECT_TMP" ]; then
+
+        rm -f "$SMART_SELECT_TMP" 2>/dev/null
+
+        _oc_warn "OpenClash Smart Select 文件为空"
+
+        return 1
+    fi
+
+
+    if head -c 1024 "$SMART_SELECT_TMP" 2>/dev/null |
+        grep -Eqi \
+        '<html|<!doctype|bad gateway|502 bad gateway|404 not found|403 forbidden|access denied'
+    then
+
+        rm -f "$SMART_SELECT_TMP" 2>/dev/null
+
+        _oc_warn "OpenClash Smart Select 下载内容异常"
+
+        return 1
+    fi
+
+
+    rm -f \
+        "$OPENCLASH_SMART_SELECT_PATH" \
+        >/dev/null 2>&1
+
+
+    if ! mv \
+        "$SMART_SELECT_TMP" \
+        "$OPENCLASH_SMART_SELECT_PATH"
+    then
+
+        rm -f "$SMART_SELECT_TMP" 2>/dev/null
+
+        _oc_warn "OpenClash Smart Select 安装失败"
+
+        return 1
+    fi
+
+
+    if ! chmod +x \
+        "$OPENCLASH_SMART_SELECT_PATH"
+    then
+
+        _oc_warn "OpenClash Smart Select 设置执行权限失败"
+
+        return 1
+    fi
+
+
+    if [ ! -x "$OPENCLASH_SMART_SELECT_PATH" ]; then
+
+        _oc_warn "OpenClash Smart Select 安装验证失败"
+
+        return 1
+    fi
+
+
+    _oc_ok "OpenClash Smart Select 安装完成"
+
+    _oc_info "安装路径：$OPENCLASH_SMART_SELECT_PATH"
+
+
+    return 0
+}
+
+
+# ============================================================
+# 28. 添加每 30 分钟 Smart Select 定时任务
+# ============================================================
+
+setup_openclash_smart_select_cron()
+{
+    CRON_FILE="/etc/crontabs/root"
+    CRON_TMP="/tmp/openclash-smart-select-cron.tmp"
+
+
+    printf "\n"
+
+    _oc_info "正在配置 OpenClash Smart Select 定时任务..."
+
+
+    if [ ! -x "$OPENCLASH_SMART_SELECT_PATH" ]; then
+
+        _oc_warn "没有检测到 $OPENCLASH_SMART_SELECT_PATH"
+
+        _oc_warn "跳过 Smart Select 定时任务"
+
+        return 1
+    fi
+
+
+    mkdir -p /etc/crontabs \
+        >/dev/null 2>&1
+
+
+    touch "$CRON_FILE" \
+        >/dev/null 2>&1
+
+
+    rm -f "$CRON_TMP" 2>/dev/null
+
+
+    grep -v \
+        '/usr/bin/openclash-smart-select' \
+        "$CRON_FILE" \
+        2>/dev/null \
+        > "$CRON_TMP"
+
+
+    echo '*/30 * * * * /usr/bin/openclash-smart-select >/tmp/openclash-smart-select.log 2>&1' \
+        >> "$CRON_TMP"
+
+
+    if ! mv \
+        "$CRON_TMP" \
+        "$CRON_FILE"
+    then
+
+        rm -f "$CRON_TMP" 2>/dev/null
+
+        _oc_warn "Smart Select Cron 写入失败"
+
+        return 1
+    fi
+
+
+    if [ ! -x /etc/init.d/cron ]; then
+
+        _oc_warn "没有找到 /etc/init.d/cron"
+
+        return 1
+    fi
+
+
+    /etc/init.d/cron restart \
+        >/dev/null 2>&1
+
+
+    if ! grep -q \
+        '^\*/30 \* \* \* \* /usr/bin/openclash-smart-select ' \
+        "$CRON_FILE" \
+        2>/dev/null
+    then
+
+        _oc_warn "Smart Select Cron 验证失败"
+
+        return 1
+    fi
+
+
+    _oc_ok "Smart Select 定时任务配置完成"
+
+    _oc_info "执行周期：每 30 分钟"
+
+    _oc_info "执行脚本：$OPENCLASH_SMART_SELECT_PATH"
+
+    _oc_info "运行日志：$OPENCLASH_SMART_SELECT_CRON_LOG"
+
+
+    return 0
+}
+
+
+# ============================================================
 # 安装进度条
 # ============================================================
 
@@ -1661,9 +2255,6 @@ check_openclash_core()
 
 # ============================================================
 # 使用官方版本脚本获取最新 Meta 版本
-#
-# $1 = GitHub Proxy
-#      DIRECT 时传 0
 # ============================================================
 
 get_latest_meta_core_version()
@@ -1764,10 +2355,6 @@ core_update_progress()
 }
 
 
-# ============================================================
-# Core 更新成功进度
-# ============================================================
-
 core_update_progress_success()
 {
     ROUTE_NAME="$1"
@@ -1784,16 +2371,6 @@ core_update_progress_success()
 
 # ============================================================
 # 调用 OpenClash 官方 Core 更新脚本
-#
-# 当前 OpenClash 官方行为：
-# 如果第 2 参数为 http(s) URL，
-# 则该参数会被当作完整 Core 下载 URL。
-#
-# 因此这里直接传入测速成功后的完整 ROUTE_URL，
-# 保证“测速 URL”和“实际 Core 下载 URL”完全一致。
-#
-# $1 = ROUTE_NAME
-# $2 = ROUTE_URL（完整 URL）
 # ============================================================
 
 run_official_meta_core_update()
@@ -1923,11 +2500,6 @@ run_official_meta_core_update()
     CORE_UPDATE_PID=""
 
 
-    # 官方脚本部分错误路径也可能返回 0。
-    # 因此这里最高只显示 95%。
-    # 只有实际执行 clash_meta -v 并验证版本成功后，
-    # 外层逻辑才显示真正的 100%。
-
     core_update_progress \
         95 \
         "$ROUTE_NAME"
@@ -1966,10 +2538,6 @@ auto_update_openclash_core()
     _oc_info "更新脚本：$CORE_UPDATE_SCRIPT"
 
 
-    # ========================================================
-    # Core 环境
-    # ========================================================
-
     if ! check_openclash_core_runtime; then
 
         _oc_warn "当前环境无法自动更新 Meta Core"
@@ -1977,10 +2545,6 @@ auto_update_openclash_core()
         return 1
     fi
 
-
-    # ========================================================
-    # Core CPU 架构
-    # ========================================================
 
     if ! detect_openclash_core_cpu_model; then
         return 1
@@ -1991,10 +2555,6 @@ auto_update_openclash_core()
 
     _oc_info "Core 分支：$OPENCLASH_RELEASE_BRANCH"
 
-
-    # ========================================================
-    # 当前版本
-    # ========================================================
 
     OLD_META_VERSION=""
 
@@ -2011,13 +2571,6 @@ auto_update_openclash_core()
 
     fi
 
-
-    # ========================================================
-    # 官方 Core 下载地址
-    #
-    # 该地址既用于测速，
-    # 也会将测速生成的完整 URL 交给官方更新脚本。
-    # ========================================================
 
     CORE_TEST_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/${OPENCLASH_RELEASE_BRANCH}/meta/clash-${OPENCLASH_CORE_CPU_MODEL}.tar.gz"
 
@@ -2037,10 +2590,6 @@ auto_update_openclash_core()
         CORE_ROUTE_AVAILABLE=1
     fi
 
-
-    # ========================================================
-    # 获取官方最新版本
-    # ========================================================
 
     LATEST_META_VERSION=""
 
@@ -2083,10 +2632,6 @@ auto_update_openclash_core()
     fi
 
 
-    # ========================================================
-    # 没拿到版本时尝试 DIRECT
-    # ========================================================
-
     if [ -z "$LATEST_META_VERSION" ]; then
 
         if get_latest_meta_core_version 0; then
@@ -2102,10 +2647,6 @@ auto_update_openclash_core()
     fi
 
 
-    # ========================================================
-    # 已经是最新版
-    # ========================================================
-
     if [ -n "$OLD_META_VERSION" ] &&
        [ -n "$LATEST_META_VERSION" ] &&
        [ "$OLD_META_VERSION" = "$LATEST_META_VERSION" ]
@@ -2119,10 +2660,6 @@ auto_update_openclash_core()
         return 0
     fi
 
-
-    # ========================================================
-    # 需要更新
-    # ========================================================
 
     if [ -n "$LATEST_META_VERSION" ]; then
 
@@ -2151,10 +2688,6 @@ auto_update_openclash_core()
     CORE_UPDATE_SUCCESS=0
     DIRECT_CORE_TRIED=0
 
-
-    # ========================================================
-    # 按测速排名依次调用官方脚本
-    # ========================================================
 
     if [ "$CORE_ROUTE_AVAILABLE" -eq 1 ]; then
 
@@ -2194,10 +2727,6 @@ auto_update_openclash_core()
                 "$ROUTE_URL"
 
 
-            # =================================================
-            # 真实验证 Core
-            # =================================================
-
             sleep 1
 
 
@@ -2208,10 +2737,6 @@ auto_update_openclash_core()
 
                 _oc_info "验证版本：$NEW_META_VERSION"
 
-
-                # ---------------------------------------------
-                # 已知 latest：必须与最新版一致
-                # ---------------------------------------------
 
                 if [ -n "$LATEST_META_VERSION" ]; then
 
@@ -2231,11 +2756,6 @@ auto_update_openclash_core()
                         break
                     fi
 
-
-                # ---------------------------------------------
-                # 无法获取 latest：
-                # 新安装成功或者版本发生变化即可
-                # ---------------------------------------------
 
                 else
 
@@ -2269,10 +2789,6 @@ auto_update_openclash_core()
 
     fi
 
-
-    # ========================================================
-    # DIRECT 最终兜底
-    # ========================================================
 
     if [ "$CORE_UPDATE_SUCCESS" -ne 1 ] &&
        [ "$DIRECT_CORE_TRIED" -ne 1 ]
@@ -2330,10 +2846,6 @@ auto_update_openclash_core()
     fi
 
 
-    # ========================================================
-    # 最终验证
-    # ========================================================
-
     printf "\n"
 
     _oc_info "正在进行最终 Meta Core 验证..."
@@ -2366,9 +2878,6 @@ auto_update_openclash_core()
 
         elif [ -n "$META_CORE_VERSION" ]; then
 
-            # 无法获取 latest，但 Core 可以真实执行。
-            # 如果原本没有 Core，则视为安装成功。
-
             if [ -z "$OLD_META_VERSION" ]; then
                 CORE_UPDATE_SUCCESS=1
             fi
@@ -2381,10 +2890,6 @@ auto_update_openclash_core()
 
     fi
 
-
-    # ========================================================
-    # 更新失败显示官方日志
-    # ========================================================
 
     if [ "$CORE_UPDATE_SUCCESS" -ne 1 ]; then
 
@@ -2470,6 +2975,7 @@ interrupt_openclash()
     cleanup_openclash_package
     cleanup_openclash_temp
     cleanup_core_update
+    cleanup_openclash_script_routes
 
 
     trap - INT TERM
@@ -2494,10 +3000,6 @@ install_openclash()
     printf "\n"
 
 
-    # ========================================================
-    # Root
-    # ========================================================
-
     if [ "$(id -u 2>/dev/null)" != "0" ]; then
 
         _oc_error "请使用 root 用户运行"
@@ -2506,20 +3008,12 @@ install_openclash()
     fi
 
 
-    # ========================================================
-    # 基础运行环境
-    # ========================================================
-
     if ! check_openclash_runtime; then
 
         return 1
 
     fi
 
-
-    # ========================================================
-    # 下载工具
-    # ========================================================
 
     if ! command -v curl >/dev/null 2>&1 &&
        ! command -v wget >/dev/null 2>&1
@@ -2542,16 +3036,8 @@ install_openclash()
     fi
 
 
-    # ========================================================
-    # 架构
-    # ========================================================
-
     detect_openclash_arch
 
-
-    # ========================================================
-    # 参数
-    # ========================================================
 
     if [ -z "$DOWNLOAD_URL" ]; then
 
@@ -2591,6 +3077,7 @@ install_openclash()
 
     cleanup_openclash_temp
     cleanup_core_update
+    cleanup_openclash_script_routes
 
 
     trap 'interrupt_openclash' INT TERM
@@ -2704,10 +3191,6 @@ install_openclash()
 
     esac
 
-
-    # ========================================================
-    # 安装失败
-    # ========================================================
 
     if [ "$INSTALL_RESULT" -ne 0 ]; then
 
@@ -2824,6 +3307,109 @@ install_openclash()
 
 
     # ========================================================
+    # 26 / 27
+    # 只执行一次 GH01-GH06 + DIRECT 并行测速
+    # ========================================================
+
+    EXT_ROUTE_READY=0
+
+
+    if prepare_openclash_script_routes; then
+
+        EXT_ROUTE_READY=1
+
+    else
+
+        _oc_warn "扩展功能 GitHub 线路测速失败"
+
+        _oc_info "OpenClash 本体和 Meta Core 不受影响"
+
+    fi
+
+
+    # ========================================================
+    # 26. OpenClash Swap
+    # ========================================================
+
+    if [ "$EXT_ROUTE_READY" -eq 1 ]; then
+
+        if run_openclash_swap; then
+
+            _oc_ok "OpenClash Swap 执行完成"
+
+        else
+
+            _oc_warn "OpenClash Swap 执行存在异常"
+
+            _oc_info "OpenClash 本体和 Meta Core 不受影响"
+
+        fi
+
+    else
+
+        _oc_warn "没有共享测速结果，跳过 OpenClash Swap"
+
+    fi
+
+
+    # ========================================================
+    # 27. OpenClash Smart Select
+    # ========================================================
+
+    SMART_SELECT_INSTALLED=0
+
+
+    if [ "$EXT_ROUTE_READY" -eq 1 ]; then
+
+        if install_openclash_smart_select; then
+
+            SMART_SELECT_INSTALLED=1
+
+        else
+
+            _oc_warn "OpenClash Smart Select 安装存在异常"
+
+            _oc_info "OpenClash 本体和 Meta Core 不受影响"
+
+        fi
+
+    else
+
+        _oc_warn "没有共享测速结果，跳过 OpenClash Smart Select"
+
+    fi
+
+
+    # ========================================================
+    # 28. 每 30 分钟自动运行 Smart Select
+    # ========================================================
+
+    if [ "$SMART_SELECT_INSTALLED" -eq 1 ]; then
+
+        if setup_openclash_smart_select_cron; then
+
+            _oc_ok "OpenClash Smart Select 自动任务配置完成"
+
+        else
+
+            _oc_warn "OpenClash Smart Select 自动任务配置存在异常"
+
+            _oc_info "不会影响 OpenClash 正常使用"
+
+        fi
+
+    else
+
+        _oc_warn "Smart Select 未成功安装，跳过 Cron 配置"
+
+    fi
+
+
+    # 26 / 27 / 28 已全部处理完
+    cleanup_openclash_script_routes
+
+
+    # ========================================================
     # LuCI
     # ========================================================
 
@@ -2862,6 +3448,24 @@ install_openclash()
     else
 
         _oc_warn "Meta : 未安装"
+
+    fi
+
+
+    if [ -x "$OPENCLASH_SMART_SELECT_PATH" ]; then
+
+        _oc_info "Smart Select : 已安装"
+
+    fi
+
+
+    if grep -q \
+        '/usr/bin/openclash-smart-select' \
+        /etc/crontabs/root \
+        2>/dev/null
+    then
+
+        _oc_info "Smart Select Cron : 每 30 分钟"
 
     fi
 
