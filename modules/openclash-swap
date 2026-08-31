@@ -5,24 +5,25 @@
 # OpenClash File Smart Swap
 #
 # 功能：
-# 1. GH01-GH06 + DIRECT 并行真实测速
-# 2. 检测 TTFB 首包时间
-# 3. 检测实际下载速度
-# 4. 自动计算综合成绩
-# 5. 自动按综合成绩排序
-# 6. 自动选择最佳下载线路
-# 7. 最佳线路失败自动切换下一线路
-# 8. GitHub 官方 DIRECT 最终兜底
-# 9. 自动校验下载文件
-# 10. 自动搜索 OpenClash 目标文件
-# 11. 自动识别 /etc/config/openclash
-# 12. 替换前自动备份
-# 13. 自动设置 OpenWrt UCI 配置文件权限
-# 14. 自动替换 OpenClash 文件
-# 15. 替换后自动验证
-# 16. 验证失败自动恢复备份
-# 17. 正常过程隐藏详细日志
-# 18. 单行动态百分比进度条
+# 1. 支持继承 Open-Pro-Installer 已有测速结果
+# 2. 共享 GH01-GH06 + DIRECT 排名，不重复测速
+# 3. 独立运行时自动执行 GH01-GH06 + DIRECT 并行测速
+# 4. 检测 TTFB 首包时间
+# 5. 检测实际下载速度
+# 6. 自动计算综合成绩
+# 7. 自动按综合成绩排序
+# 8. 最佳线路失败自动切换下一线路
+# 9. GitHub 官方 DIRECT 最终兜底
+# 10. 自动校验下载文件
+# 11. 自动搜索 OpenClash 目标文件
+# 12. 自动识别 /etc/config/openclash
+# 13. 替换前自动备份
+# 14. 自动设置 OpenWrt UCI 配置文件权限
+# 15. 自动替换 OpenClash 文件
+# 16. 替换后自动验证
+# 17. 验证失败自动恢复备份
+# 18. 正常过程隐藏详细日志
+# 19. 单行动态百分比进度条
 #
 # BusyBox / OpenWrt /bin/sh Compatible
 # ============================================================
@@ -46,6 +47,23 @@ BACKUP=""
 
 DOWNLOAD_SUCCESS=0
 DIRECT_TRIED=0
+
+# ============================================================
+# 主 OpenClash Installer 可传入：
+#
+# OPENPRO_SCRIPT_ROUTE_FILE
+#
+# 文件格式：
+# score|name|prefix|ttfb|speed
+#
+# 例如：
+# 632|GH04|https://cdn.akaere.online/|183|10000000
+#
+# 如果存在，则本脚本直接继承这份测速结果，
+# 不再执行 GH01-GH06 + DIRECT 测速。
+# ============================================================
+
+OPENPRO_SCRIPT_ROUTE_FILE="${OPENPRO_SCRIPT_ROUTE_FILE:-}"
 
 
 # ============================================================
@@ -165,7 +183,6 @@ build_url()
     PREFIX="$1"
     ORIGINAL_URL="$2"
 
-
     if [ -z "$PREFIX" ]; then
 
         printf '%s' "$ORIGINAL_URL"
@@ -187,7 +204,6 @@ build_url()
 seconds_to_ms()
 {
     VALUE="$1"
-
 
     awk -v t="$VALUE" '
         BEGIN {
@@ -213,7 +229,6 @@ calculate_score()
 {
     TTFB_MS="$1"
     SPEED_BPS="$2"
-
 
     awk \
         -v t="$TTFB_MS" \
@@ -248,7 +263,6 @@ is_error_page()
 {
     FILE="$1"
 
-
     if [ ! -s "$FILE" ]; then
 
         return 1
@@ -272,13 +286,14 @@ is_error_page()
 
 # ============================================================
 # 单线路真实测速
+#
+# 仅独立运行时使用
 # ============================================================
 
 test_route()
 {
     TEST_URL="$1"
     TEST_FILE="$2"
-
 
     rm -f "$TEST_FILE"
 
@@ -329,11 +344,8 @@ test_route()
             ;;
 
         *)
-
             rm -f "$TEST_FILE"
-
             return 1
-
             ;;
 
     esac
@@ -345,11 +357,8 @@ test_route()
             ;;
 
         *)
-
             rm -f "$TEST_FILE"
-
             return 1
-
             ;;
 
     esac
@@ -377,7 +386,6 @@ test_route()
     )"
 
 
-    # 至少收到 1KB 数据
     if [ "$RECEIVED_BYTES" -lt 1024 ]; then
 
         rm -f "$TEST_FILE"
@@ -542,6 +550,7 @@ test_route_background()
 
 
 # ============================================================
+# 独立运行模式：
 # GH01-GH06 + DIRECT 并行测速
 # ============================================================
 
@@ -701,6 +710,106 @@ prepare_routes()
 
 
 # ============================================================
+# 继承 Open-Pro-Installer 的测速结果
+#
+# 输入缓存格式：
+#
+# score|name|prefix|ttfb|speed
+#
+# 转换成本脚本使用格式：
+#
+# score|name|prefix|url|ttfb|speed
+# ============================================================
+
+load_shared_routes()
+{
+    [ -n "$OPENPRO_SCRIPT_ROUTE_FILE" ] ||
+        return 1
+
+
+    [ -s "$OPENPRO_SCRIPT_ROUTE_FILE" ] ||
+        return 1
+
+
+    rm -f \
+        "$ROUTE_FILE" \
+        "$SORTED_FILE" \
+        2>/dev/null
+
+
+    while IFS='|' read -r \
+        ROUTE_SCORE \
+        ROUTE_NAME \
+        ROUTE_PREFIX \
+        ROUTE_TTFB \
+        ROUTE_SPEED
+    do
+
+        [ -n "$ROUTE_NAME" ] ||
+            continue
+
+
+        if [ "$ROUTE_NAME" = "DIRECT" ] ||
+           [ -z "$ROUTE_PREFIX" ]
+        then
+
+            ROUTE_URL="$URL"
+
+        else
+
+            ROUTE_URL="$(
+                build_url \
+                    "$ROUTE_PREFIX" \
+                    "$URL"
+            )"
+
+        fi
+
+
+        printf '%s|%s|%s|%s|%s|%s\n' \
+            "$ROUTE_SCORE" \
+            "$ROUTE_NAME" \
+            "$ROUTE_PREFIX" \
+            "$ROUTE_URL" \
+            "$ROUTE_TTFB" \
+            "$ROUTE_SPEED" \
+            >> "$ROUTE_FILE"
+
+
+    done < "$OPENPRO_SCRIPT_ROUTE_FILE"
+
+
+    [ -s "$ROUTE_FILE" ]
+}
+
+
+# ============================================================
+# 准备下载线路
+#
+# 优先：
+# 主 OpenClash Installer 的共享测速结果
+#
+# 没有共享结果：
+# 自己执行 GH01-GH06 + DIRECT
+# ============================================================
+
+prepare_download_routes()
+{
+    ORIGINAL_URL="$1"
+
+
+    if load_shared_routes; then
+
+        return 0
+
+    fi
+
+
+    prepare_routes "$ORIGINAL_URL"
+}
+
+
+# ============================================================
 # 使用指定 URL 下载
 # ============================================================
 
@@ -759,18 +868,23 @@ download_file()
 
 # ============================================================
 # 智能下载
+#
+# 共享模式：
+# 不测速，按主脚本现有排名下载
+#
+# 独立模式：
+# 自己测速后按排名下载
 # ============================================================
 
 smart_download()
 {
     ORIGINAL_URL="$1"
 
-
     DOWNLOAD_SUCCESS=0
     DIRECT_TRIED=0
 
 
-    if ! prepare_routes "$ORIGINAL_URL"; then
+    if ! prepare_download_routes "$ORIGINAL_URL"; then
 
         return 1
 
@@ -814,7 +928,7 @@ smart_download()
 
 
     # ========================================================
-    # GitHub DIRECT 最终兜底
+    # DIRECT 最终兜底
     # ========================================================
 
     if [ "$DOWNLOAD_SUCCESS" -ne 1 ] &&
@@ -918,7 +1032,7 @@ swap_progress_bar 1
 
 
 # ============================================================
-# 2. 并行测速 + 智能下载
+# 2. 继承测速结果 / 智能下载
 # ============================================================
 
 swap_progress_bar 5
@@ -952,7 +1066,6 @@ if is_error_page "$TMP"; then
 fi
 
 
-# 新文件本身必须包含关键配置
 if ! grep -q \
     'option dns_port' \
     "$TMP" \
@@ -1034,7 +1147,6 @@ if [ "$COUNT" -eq 1 ]; then
 
 else
 
-    # 找到多个时优先真正的 UCI 配置文件
     if grep -qx \
         '/etc/config/openclash' \
         "$FOUND"
@@ -1084,9 +1196,6 @@ swap_progress_bar 82
 
 # ============================================================
 # 7. 准备替换
-#
-# 不再使用 stat
-# 避免精简版 BusyBox / OpenWrt 缺少 stat
 # ============================================================
 
 swap_progress_bar 86
@@ -1108,25 +1217,12 @@ fi
 
 
 # ============================================================
-# 设置 OpenWrt UCI 配置文件标准权限
-# /etc/config/openclash 为配置文件，不需要执行权限
+# 设置 OpenWrt UCI 配置文件权限
 # ============================================================
 
-if [ "$TARGET" = "/etc/config/openclash" ]; then
-
-    chmod 600 \
-        "$TARGET" \
-        >/dev/null 2>&1
-
-else
-
-    # 极少数情况下目标不在 /etc/config，
-    # 使用较保守的普通文件权限
-    chmod 600 \
-        "$TARGET" \
-        >/dev/null 2>&1
-
-fi
+chmod 600 \
+    "$TARGET" \
+    >/dev/null 2>&1
 
 
 swap_progress_bar 95
