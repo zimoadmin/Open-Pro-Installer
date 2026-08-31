@@ -17,7 +17,7 @@
 # 10. 自动搜索 OpenClash 目标文件
 # 11. 自动识别 /etc/config/openclash
 # 12. 替换前自动备份
-# 13. 自动保留原文件权限
+# 13. 自动设置 OpenWrt UCI 配置文件权限
 # 14. 自动替换 OpenClash 文件
 # 15. 替换后自动验证
 # 16. 验证失败自动恢复备份
@@ -895,7 +895,7 @@ for CMD in \
     wc \
     tr \
     cp \
-    stat
+    chmod
 do
 
     if ! command -v "$CMD" >/dev/null 2>&1; then
@@ -1083,15 +1083,11 @@ swap_progress_bar 82
 
 
 # ============================================================
-# 7. 保存原权限
+# 7. 准备替换
+#
+# 不再使用 stat
+# 避免精简版 BusyBox / OpenWrt 缺少 stat
 # ============================================================
-
-MODE="$(
-    stat -c '%a' \
-        "$TARGET" \
-        2>/dev/null
-)"
-
 
 swap_progress_bar 86
 
@@ -1111,10 +1107,22 @@ then
 fi
 
 
-if [ -n "$MODE" ]; then
+# ============================================================
+# 设置 OpenWrt UCI 配置文件标准权限
+# /etc/config/openclash 为配置文件，不需要执行权限
+# ============================================================
 
-    chmod \
-        "$MODE" \
+if [ "$TARGET" = "/etc/config/openclash" ]; then
+
+    chmod 600 \
+        "$TARGET" \
+        >/dev/null 2>&1
+
+else
+
+    # 极少数情况下目标不在 /etc/config，
+    # 使用较保守的普通文件权限
+    chmod 600 \
         "$TARGET" \
         >/dev/null 2>&1
 
