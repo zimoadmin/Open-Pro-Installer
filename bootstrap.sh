@@ -45,7 +45,7 @@ BOOTSTRAP_LOG="/tmp/openpro_bootstrap.log"
 #
 # 连接超时：3秒
 # 总超时：6秒
-# 失败立即切换，不额外等待
+# 失败立即切换
 # ======================================
 
 auth_post()
@@ -53,12 +53,8 @@ auth_post()
     AUTH_PATH="$1"
     AUTH_DATA="$2"
 
-    # ----------------------------------
     # 第1次：AUTO
-    # ----------------------------------
-
-    if [ -n "$AUTH_DATA" ]
-    then
+    if [ -n "$AUTH_DATA" ]; then
         AUTH_RESULT="$(
             curl \
                 -fsS \
@@ -85,24 +81,19 @@ auth_post()
     AUTH_CURL_RESULT=$?
 
     if [ "$AUTH_CURL_RESULT" -eq 0 ] &&
-       [ -n "$AUTH_RESULT" ]
-    then
+       [ -n "$AUTH_RESULT" ]; then
+
         printf '%s' "$AUTH_RESULT"
         return 0
     fi
 
 
-    # ----------------------------------
     # 第2次：强制 IPv4
-    # ----------------------------------
-
     AUTH_RESULT=""
 
-    if [ -n "$AUTH_DATA" ]
-    then
+    if [ -n "$AUTH_DATA" ]; then
         AUTH_RESULT="$(
-            curl \
-                -4 \
+            curl -4 \
                 -fsS \
                 --connect-timeout 3 \
                 --max-time 6 \
@@ -114,8 +105,7 @@ auth_post()
         )"
     else
         AUTH_RESULT="$(
-            curl \
-                -4 \
+            curl -4 \
                 -fsS \
                 --connect-timeout 3 \
                 --max-time 6 \
@@ -128,16 +118,14 @@ auth_post()
     AUTH_CURL_RESULT=$?
 
     if [ "$AUTH_CURL_RESULT" -eq 0 ] &&
-       [ -n "$AUTH_RESULT" ]
-    then
+       [ -n "$AUTH_RESULT" ]; then
+
         printf '%s' "$AUTH_RESULT"
         return 0
     fi
-
 
     return 1
 }
-
 
 # ======================================
 # Header
