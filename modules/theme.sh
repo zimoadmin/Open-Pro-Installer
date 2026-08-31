@@ -4089,9 +4089,16 @@ apply_quickstart_config()
     return 0
 }
 
-
 # ============================================================
 # Install QuickStart
+#
+# 优化版：
+# 1. 已安装则直接跳过索引更新和安装
+# 2. 只执行一次 is-opkg update
+# 3. 避免失败后重复 update
+# 4. 优先安装中文包，由 is-opkg 自动解决依赖
+# 5. OPKG 失败才进入 --force-depends
+# 6. 每一步完成后立即验证，避免无意义重复安装
 # ============================================================
 
 install_quickstart()
@@ -4101,35 +4108,20 @@ install_quickstart()
         >>"$THEME_LOG"
 
 
-    if ! ensure_is_opkg; then
-
-        return 1
-
-    fi
-
-
-    prepare_quickstart_sources
-
-
-    if ! patch_is_opkg_source; then
-
-        _theme_warn \
-            "QuickStart 最快源应用失败，改用 LinkEase 官方默认策略"
-
-
-        IS_OPKG_BIN="${THEME_TMP}/is-opkg"
-
-    fi
-
-
     # ========================================================
-    # 已安装
+    # 第一优先：检查是否已经安装
+    #
+    # 已安装的机器不再：
+    # 下载 is-opkg
+    # 测速软件源
+    # 更新索引
+    # 重装 QuickStart
     # ========================================================
 
     if verify_quickstart_install; then
 
         _theme_ok \
-            "首页 + 网络向导已安装"
+            "首页 + 网络向导已安装，跳过安装"
 
 
         theme_progress \
@@ -4149,7 +4141,45 @@ install_quickstart()
 
 
     # ========================================================
-    # Update
+    # 获取 is-opkg
+    # ========================================================
+
+    if ! ensure_is_opkg; then
+
+        _theme_error \
+            "无法获取 QuickStart 安装工具"
+
+        return 1
+
+    fi
+
+
+    # ========================================================
+    # QuickStart 软件源测速
+    # ========================================================
+
+    prepare_quickstart_sources
+
+
+    # ========================================================
+    # 应用最快源
+    # ========================================================
+
+    if ! patch_is_opkg_source; then
+
+        _theme_warn \
+            "QuickStart 最快源应用失败，使用 LinkEase 官方默认策略"
+
+
+        IS_OPKG_BIN="${THEME_TMP}/is-opkg"
+
+    fi
+
+
+    # ========================================================
+    # 更新索引
+    #
+    # 整个安装过程只执行一次
     # ========================================================
 
     theme_progress \
@@ -4160,16 +4190,27 @@ install_quickstart()
     printf "\n"
 
 
-    if ! "$IS_OPKG_BIN" \
+    UPDATE_OK=0
+
+
+    if "$IS_OPKG_BIN" \
         update \
         >>"$THEME_LOG" 2>&1
     then
+
+        UPDATE_OK=1
+
+    else
 
         _theme_warn \
             "QuickStart 索引更新失败，继续尝试安装"
 
     fi
 
+
+    # ========================================================
+    # 获取在线版本
+    # ========================================================
 
     QUICKSTART_ONLINE_VERSION="$(
         get_quickstart_online_version
@@ -4194,7 +4235,7 @@ install_quickstart()
 
 
     # ========================================================
-    # Install
+    # 安装
     # ========================================================
 
     theme_progress \
@@ -4204,6 +4245,17 @@ install_quickstart()
 
     printf "\n"
 
+
+    # ========================================================
+    # 第一次正常安装
+    #
+    # luci-i18n-quickstart-zh-cn 会自动拉取：
+    #
+    # quickstart
+    # luci-app-quickstart
+    #
+    # 所以只需要安装中文包
+    # ========================================================
 
     "$IS_OPKG_BIN" \
         install \
@@ -4215,10 +4267,10 @@ install_quickstart()
 
 
     # ========================================================
-    # 安装后先真实检查
+    # 第一时间检查实际安装状态
     #
-    # 即使 is-opkg 返回非 0，
-    # 只要软件包已经实际安装，就直接视为成功。
+    # is-opkg 某些系统可能返回非 0，
+    # 但实际上软件已经安装成功。
     # ========================================================
 
     if verify_quickstart_install; then
@@ -4229,42 +4281,47 @@ install_quickstart()
 
 
     # ========================================================
-    # 真正未安装才进入兼容模式
+    # OPKG 兼容模式
+    #
+    # 只有真正没有安装成功才执行
     # ========================================================
 
     if [ "$INSTALL_RESULT" -ne 0 ] &&
        ! verify_quickstart_install
     then
 
-        if [ "$PKG_MANAGER" = "opkg" ]; then
+        case "$PKG_MANAGER" in
 
-            _theme_warn \
-                "普通安装未完成，尝试 OPKG 兼容模式"
+            opkg)
 
-
-            "$IS_OPKG_BIN" \
-                install \
-                luci-i18n-quickstart-zh-cn \
-                --force-depends \
-                >>"$THEME_LOG" 2>&1
-
-        else
-
-            _theme_warn \
-                "APK 首次安装未完成，刷新索引后重试"
+                _theme_warn \
+                    "普通安装未完成，尝试 OPKG 兼容模式"
 
 
-            "$IS_OPKG_BIN" \
-                update \
-                >>"$THEME_LOG" 2>&1
+                "$IS_OPKG_BIN" \
+                    install \
+                    luci-i18n-quickstart-zh-cn \
+                    --force-depends \
+                    >>"$THEME_LOG" 2>&1
+
+                ;;
 
 
-            "$IS_OPKG_BIN" \
-                install \
-                luci-i18n-quickstart-zh-cn \
-                >>"$THEME_LOG" 2>&1
+            apk)
 
-        fi
+                _theme_warn \
+                    "APK 普通安装未完成，直接重试安装"
+
+
+                # 不再重新执行 update
+                "$IS_OPKG_BIN" \
+                    install \
+                    luci-i18n-quickstart-zh-cn \
+                    >>"$THEME_LOG" 2>&1
+
+                ;;
+
+        esac
 
     fi
 
@@ -4284,6 +4341,10 @@ install_quickstart()
     fi
 
 
+    # ========================================================
+    # 配置
+    # ========================================================
+
     theme_progress \
         86 \
         "正在配置首页和网络向导..."
@@ -4294,6 +4355,10 @@ install_quickstart()
 
     apply_quickstart_config
 
+
+    # ========================================================
+    # 清理 LuCI Cache
+    # ========================================================
 
     rm -rf \
         /tmp/luci-indexcache \
