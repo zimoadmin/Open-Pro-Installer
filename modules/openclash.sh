@@ -997,6 +997,47 @@ prepare_openclash_routes()
 
 
 # ============================================================
+# 保存全流程共享测速结果
+#
+# 来源：第一次下载 OpenClash 软件包时生成的 OC_ROUTE_FILE
+# 格式：score|name|prefix|ttfb|speed
+#
+# 后续 Meta Core / openclash-swap / Smart Select 全部复用，
+# 整个安装流程不再重复执行 GH01-GH06 + DIRECT 测速。
+# ============================================================
+
+cache_openclash_routes_for_reuse()
+{
+    cleanup_openclash_script_routes
+
+    if [ ! -s "$OC_ROUTE_FILE" ]; then
+        return 1
+    fi
+
+    while IFS='|' read -r \
+        ROUTE_SCORE \
+        ROUTE_NAME \
+        ROUTE_PREFIX \
+        ROUTE_URL \
+        ROUTE_TTFB \
+        ROUTE_SPEED
+    do
+        [ -n "$ROUTE_NAME" ] || continue
+
+        printf '%s|%s|%s|%s|%s\n' \
+            "$ROUTE_SCORE" \
+            "$ROUTE_NAME" \
+            "$ROUTE_PREFIX" \
+            "$ROUTE_TTFB" \
+            "$ROUTE_SPEED" \
+            >> "$OC_SCRIPT_ROUTE_FILE"
+    done < "$OC_ROUTE_FILE"
+
+    [ -s "$OC_SCRIPT_ROUTE_FILE" ]
+}
+
+
+# ============================================================
 # 验证 OpenClash 软件包
 # ============================================================
 
@@ -1149,7 +1190,20 @@ smart_download_openclash()
     OUTPUT="$2"
 
 
-    prepare_openclash_routes "$ORIGINAL_URL"
+    if ! prepare_openclash_routes "$ORIGINAL_URL"; then
+
+        return 1
+
+    fi
+
+
+    # 第一次测速结果保存为全流程共享排名。
+    # 后续 Meta Core / 26 / 27 / openclash-swap 均直接复用。
+    if ! cache_openclash_routes_for_reuse; then
+
+        _oc_warn "共享测速结果缓存失败，后续扩展功能可能无法复用线路"
+
+    fi
 
 
     DOWNLOAD_SUCCESS=0
@@ -1234,84 +1288,22 @@ smart_download_openclash()
 
 # ============================================================
 # 26 / 27
-# 生成一份共享 GH01-GH06 + DIRECT 测速结果
+# 复用第一次 OpenClash 软件包测速结果
 #
-# 只执行一次测速
-#
-# 缓存格式：
-# score|name|prefix|ttfb|speed
+# 不再执行 prepare_openclash_routes，不再重新测速。
+# 缓存格式：score|name|prefix|ttfb|speed
 # ============================================================
 
 prepare_openclash_script_routes()
 {
-    cleanup_openclash_script_routes
-
-
     printf "\n"
 
-    _oc_info "正在为 OpenClash 扩展功能筛选最佳下载线路..."
-
-
-    if ! prepare_openclash_routes \
-        "$OPENCLASH_SWAP_URL"
-    then
-
-        _oc_warn "扩展功能下载线路测速失败"
-
-        cleanup_openclash_temp
-
-        return 1
-    fi
-
-
-    if [ ! -s "$OC_ROUTE_FILE" ]; then
-
-        _oc_warn "没有生成有效扩展下载线路"
-
-        cleanup_openclash_temp
-
-        return 1
-    fi
-
-
-    while IFS='|' read -r \
-        ROUTE_SCORE \
-        ROUTE_NAME \
-        ROUTE_PREFIX \
-        ROUTE_URL \
-        ROUTE_TTFB \
-        ROUTE_SPEED
-    do
-
-        [ -n "$ROUTE_NAME" ] ||
-            continue
-
-
-        printf '%s|%s|%s|%s|%s\n' \
-            "$ROUTE_SCORE" \
-            "$ROUTE_NAME" \
-            "$ROUTE_PREFIX" \
-            "$ROUTE_TTFB" \
-            "$ROUTE_SPEED" \
-            >> "$OC_SCRIPT_ROUTE_FILE"
-
-
-    done < "$OC_ROUTE_FILE"
-
-
-    rm -f \
-        "$OC_ROUTE_FILE" \
-        "$OC_SORTED_FILE" \
-        "$OC_TEST_FILE" \
-        "$OC_DOWNLOAD_LOG" \
-        2>/dev/null
-
-    rm -rf "$OC_TEST_DIR" 2>/dev/null
+    _oc_info "正在复用首次 GH01-GH06 + DIRECT 测速结果..."
 
 
     if [ ! -s "$OC_SCRIPT_ROUTE_FILE" ]; then
 
-        _oc_warn "扩展功能测速缓存生成失败"
+        _oc_warn "没有找到首次测速缓存"
 
         return 1
     fi
@@ -1341,7 +1333,7 @@ prepare_openclash_script_routes()
     )"
 
 
-    _oc_ok "扩展功能最佳线路：$SCRIPT_BEST_NAME"
+    _oc_ok "共享最佳线路：$SCRIPT_BEST_NAME"
 
     _oc_info "首包时间：${SCRIPT_BEST_TTFB} ms"
 
@@ -2514,6 +2506,12 @@ run_official_meta_core_update()
 # ============================================================
 # 自动检测并更新 Meta / Mihomo
 # ============================================================
+# 自动检测并更新 Meta / Mihomo
+#
+# 重要：不再重新测速。
+# 直接复用第一次 OpenClash 软件包下载时生成的
+# OC_SCRIPT_ROUTE_FILE 排名，并针对 Core URL 动态拼接代理。
+# ============================================================
 
 auto_update_openclash_core()
 {
@@ -2577,17 +2575,28 @@ auto_update_openclash_core()
 
     printf "\n"
 
-    _oc_info "正在筛选 Meta Core 最佳下载线路..."
-
-
-    prepare_openclash_routes "$CORE_TEST_URL"
+    _oc_info "Meta Core 复用首次 GH01-GH06 + DIRECT 测速排名..."
 
 
     CORE_ROUTE_AVAILABLE=0
 
+    if [ -s "$OC_SCRIPT_ROUTE_FILE" ]; then
 
-    if [ -s "$OC_ROUTE_FILE" ]; then
         CORE_ROUTE_AVAILABLE=1
+
+        CORE_BEST_LINE="$(sed -n '1p' "$OC_SCRIPT_ROUTE_FILE")"
+        CORE_BEST_NAME="$(printf '%s\n' "$CORE_BEST_LINE" | cut -d '|' -f 2)"
+        CORE_BEST_TTFB="$(printf '%s\n' "$CORE_BEST_LINE" | cut -d '|' -f 4)"
+        CORE_BEST_SPEED="$(printf '%s\n' "$CORE_BEST_LINE" | cut -d '|' -f 5)"
+
+        _oc_ok "共享最佳线路：$CORE_BEST_NAME"
+        _oc_info "首包时间：${CORE_BEST_TTFB} ms"
+        _oc_info "下载速度：$(oc_speed_to_mb "$CORE_BEST_SPEED") MB/s"
+
+    else
+
+        _oc_warn "没有找到首次测速缓存，Meta Core 将仅使用 DIRECT 兜底"
+
     fi
 
 
@@ -2600,10 +2609,12 @@ auto_update_openclash_core()
             ROUTE_SCORE \
             ROUTE_NAME \
             ROUTE_PREFIX \
-            ROUTE_URL \
             ROUTE_TTFB \
             ROUTE_SPEED
         do
+
+            [ -n "$ROUTE_NAME" ] || continue
+
 
             if [ "$ROUTE_NAME" = "DIRECT" ] ||
                [ -z "$ROUTE_PREFIX" ]
@@ -2627,7 +2638,7 @@ auto_update_openclash_core()
                 break
             fi
 
-        done < "$OC_ROUTE_FILE"
+        done < "$OC_SCRIPT_ROUTE_FILE"
 
     fi
 
@@ -2654,7 +2665,6 @@ auto_update_openclash_core()
 
         _oc_ok "Meta / Mihomo 内核已经是最新版本"
 
-        cleanup_openclash_temp
         cleanup_core_update
 
         return 0
@@ -2695,20 +2705,28 @@ auto_update_openclash_core()
             ROUTE_SCORE \
             ROUTE_NAME \
             ROUTE_PREFIX \
-            ROUTE_URL \
             ROUTE_TTFB \
             ROUTE_SPEED
         do
 
-            [ -n "$ROUTE_NAME" ] ||
-                continue
-
-            [ -n "$ROUTE_URL" ] ||
-                continue
+            [ -n "$ROUTE_NAME" ] || continue
 
 
-            if [ "$ROUTE_NAME" = "DIRECT" ]; then
+            if [ "$ROUTE_NAME" = "DIRECT" ] ||
+               [ -z "$ROUTE_PREFIX" ]
+            then
+
+                ROUTE_URL="$CORE_TEST_URL"
                 DIRECT_CORE_TRIED=1
+
+            else
+
+                ROUTE_URL="$(
+                    build_openclash_url \
+                        "$ROUTE_PREFIX" \
+                        "$CORE_TEST_URL"
+                )"
+
             fi
 
 
@@ -2719,7 +2737,7 @@ auto_update_openclash_core()
 
             _oc_info "尝试 Core 下载线路：$ROUTE_NAME"
 
-            _oc_info "测速速度：${ROUTE_SPEED_MB} MB/s"
+            _oc_info "复用测速速度：${ROUTE_SPEED_MB} MB/s"
 
 
             run_official_meta_core_update \
@@ -2744,10 +2762,8 @@ auto_update_openclash_core()
 
                         CORE_UPDATE_SUCCESS=1
 
-
                         core_update_progress_success \
                             "$ROUTE_NAME"
-
 
                         _oc_ok "Meta / Mihomo 内核更新成功"
 
@@ -2755,7 +2771,6 @@ auto_update_openclash_core()
 
                         break
                     fi
-
 
                 else
 
@@ -2765,10 +2780,8 @@ auto_update_openclash_core()
 
                         CORE_UPDATE_SUCCESS=1
 
-
                         core_update_progress_success \
                             "$ROUTE_NAME"
-
 
                         _oc_ok "Meta / Mihomo 内核安装/更新成功"
 
@@ -2785,7 +2798,7 @@ auto_update_openclash_core()
             _oc_warn "$ROUTE_NAME Core 更新验证失败，切换下一线路..."
 
 
-        done < "$OC_ROUTE_FILE"
+        done < "$OC_SCRIPT_ROUTE_FILE"
 
     fi
 
@@ -2911,7 +2924,6 @@ auto_update_openclash_core()
     fi
 
 
-    cleanup_openclash_temp
     cleanup_core_update
 
 
@@ -3308,7 +3320,7 @@ install_openclash()
 
     # ========================================================
     # 26 / 27
-    # 只执行一次 GH01-GH06 + DIRECT 并行测速
+    # 复用首次 GH01-GH06 + DIRECT 测速结果，不再重新测速
     # ========================================================
 
     EXT_ROUTE_READY=0
@@ -3320,7 +3332,7 @@ install_openclash()
 
     else
 
-        _oc_warn "扩展功能 GitHub 线路测速失败"
+        _oc_warn "首次测速结果不可用，扩展功能无法复用线路"
 
         _oc_info "OpenClash 本体和 Meta Core 不受影响"
 
