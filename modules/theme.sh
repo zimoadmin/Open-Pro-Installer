@@ -464,29 +464,44 @@ detect_opkg_arch()
     )"
 
 
-    if [ -z "$PKG_ARCH" ]; then
+# ======================================
+# 获取软件包架构
+# ======================================
 
-        PKG_ARCH="$(
-            opkg print-architecture 2>/dev/null |
-            grep '^arch ' |
-            grep -v '^arch all ' |
-            grep -v '^arch noarch ' |
-            tail -n 1 |
-            awk '{print $2}'
-        )"
+if [ "$PKG_MANAGER" = "opkg" ]; then
 
-    fi
+    PKG_ARCH="$(
+        opkg print-architecture 2>/dev/null |
+        awk '
+            $1 == "arch" &&
+            $2 != "all" &&
+            $2 != "noarch" {
+                priority = $3 + 0
 
+                if (priority > max_priority) {
+                    max_priority = priority
+                    arch_name = $2
+                }
+            }
 
-    if [ -z "$PKG_ARCH" ]; then
+            END {
+                if (arch_name != "")
+                    printf "%s", arch_name
+            }
+        '
+    )"
 
-        PKG_ARCH="$CPU_ARCH"
+elif [ "$PKG_MANAGER" = "apk" ]; then
 
-    fi
+    PKG_ARCH="$CPU_ARCH"
 
+else
 
-    [ -n "$PKG_ARCH" ] ||
-        PKG_ARCH="Unknown"
+    PKG_ARCH="Unknown"
+
+fi
+
+[ -n "$PKG_ARCH" ] || PKG_ARCH="Unknown"
 
 
     return 0
