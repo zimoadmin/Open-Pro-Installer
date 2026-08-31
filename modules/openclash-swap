@@ -1,0 +1,126 @@
+URL="https://raw.githubusercontent.com/zimoadmin/rule/refs/heads/main/main_router/openclash"
+TMP="/tmp/openclash.new"
+FOUND="/tmp/openclash-target.$$"
+
+rm -f "$TMP" "$FOUND"
+
+
+echo "===== 1. 下载新文件 ====="
+
+rm -f "$TMP"
+
+curl -4 -fL \
+    --connect-timeout 6 \
+    --max-time 60 \
+    --retry 1 \
+    -o "$TMP" \
+    "$URL" \
+    2>/dev/null
+
+if [ $? -ne 0 ] || [ ! -s "$TMP" ]; then
+    echo "[ERROR] 文件下载失败"
+    rm -f "$TMP" "$FOUND"
+    exit 1
+fi
+
+echo "[OK] 下载成功"
+
+
+echo
+echo "===== 2. 校验新文件 ====="
+
+if grep -Eqi \
+    '<html|<!doctype|bad gateway|404 not found|403 forbidden' \
+    "$TMP"
+then
+    echo "[ERROR] 下载到的是错误页面，停止替换"
+    rm -f "$TMP" "$FOUND"
+    exit 1
+fi
+
+echo "[OK] 文件校验通过"
+
+
+echo
+echo "===== 3. 搜索包含 option dns_port 的 openclash 文件 ====="
+
+find /etc /usr /root /www \
+    -type f \
+    -name 'openclash' \
+    2>/dev/null |
+while IFS= read -r FILE
+do
+    if grep -q 'option dns_port' "$FILE" 2>/dev/null; then
+        echo "$FILE"
+    fi
+done > "$FOUND"
+
+COUNT="$(wc -l < "$FOUND" | tr -d ' ')"
+
+if [ "$COUNT" -eq 0 ]; then
+    echo "[ERROR] 没找到包含 option dns_port 的 openclash 文件"
+    rm -f "$TMP" "$FOUND"
+    exit 1
+fi
+
+echo "找到 $COUNT 个匹配文件："
+cat "$FOUND"
+
+
+if [ "$COUNT" -eq 1 ]; then
+
+    TARGET="$(cat "$FOUND")"
+
+else
+
+    if grep -qx '/etc/config/openclash' "$FOUND"; then
+        TARGET="/etc/config/openclash"
+    else
+        echo "[ERROR] 找到多个匹配文件，无法唯一识别"
+        rm -f "$TMP" "$FOUND"
+        exit 1
+    fi
+
+fi
+
+echo
+echo "[OK] 目标文件：$TARGET"
+
+
+echo
+echo "===== 4. 备份原文件 ====="
+
+BACKUP="${TARGET}.bak.$(date +%Y%m%d-%H%M%S)"
+
+cp -p "$TARGET" "$BACKUP" || {
+    echo "[ERROR] 备份失败"
+    rm -f "$TMP" "$FOUND"
+    exit 1
+}
+
+echo "[OK] 已备份：$BACKUP"
+
+
+echo
+echo "===== 5. 替换 ====="
+
+MODE="$(stat -c '%a' "$TARGET" 2>/dev/null)"
+
+cp "$TMP" "$TARGET" || {
+    echo "[ERROR] 替换失败"
+    rm -f "$TMP" "$FOUND"
+    exit 1
+}
+
+[ -n "$MODE" ] && chmod "$MODE" "$TARGET" 2>/dev/null
+
+
+echo
+echo "======================================"
+echo "[OK] 替换完成"
+echo "======================================"
+echo "目标文件：$TARGET"
+echo "备份文件：$BACKUP"
+
+
+rm -f "$TMP" "$FOUND"
