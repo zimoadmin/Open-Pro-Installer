@@ -38,6 +38,80 @@ BOOTSTRAP_LOG="/tmp/openpro_bootstrap.log"
 
 
 # ======================================
+# Auth HTTP Request
+#
+# 每次连接最多 3 秒
+# 单次请求最多 6 秒
+# 失败自动重试 2 次
+# BusyBox / OpenWrt Compatible
+# ======================================
+
+auth_post()
+{
+    AUTH_PATH="$1"
+    AUTH_DATA="$2"
+
+    AUTH_RESULT=""
+    AUTH_TRY=1
+
+    while [ "$AUTH_TRY" -le 2 ]
+    do
+
+        if [ -n "$AUTH_DATA" ]
+        then
+
+            AUTH_RESULT="$(
+                curl -4 \
+                    -fsS \
+                    --connect-timeout 3 \
+                    --max-time 6 \
+                    -X POST \
+                    -H "Content-Type: application/json" \
+                    --data "$AUTH_DATA" \
+                    "$AUTH_SERVER$AUTH_PATH" \
+                    2>/dev/null
+            )"
+
+        else
+
+            AUTH_RESULT="$(
+                curl -4 \
+                    -fsS \
+                    --connect-timeout 3 \
+                    --max-time 6 \
+                    -X POST \
+                    "$AUTH_SERVER$AUTH_PATH" \
+                    2>/dev/null
+            )"
+
+        fi
+
+        AUTH_CURL_RESULT=$?
+
+        if [ "$AUTH_CURL_RESULT" -eq 0 ] &&
+           [ -n "$AUTH_RESULT" ]
+        then
+
+            printf '%s' "$AUTH_RESULT"
+
+            return 0
+
+        fi
+
+        AUTH_TRY=$((AUTH_TRY + 1))
+
+        if [ "$AUTH_TRY" -le 2 ]
+        then
+            sleep 1
+        fi
+
+    done
+
+    return 1
+}
+
+
+# ======================================
 # Header
 # ======================================
 
@@ -127,15 +201,9 @@ printf "%b\n" "${GREEN}[AUTH] 正在申请授权...${RESET}"
 
 
 AUTH_RESPONSE="$(
-
-curl -4 \
-    --connect-timeout 10 \
-    --max-time 20 \
-    -fsS \
-    -X POST \
-    "$AUTH_SERVER/request" \
-    2>/dev/null
-
+    auth_post \
+        "/request" \
+        ""
 )"
 
 
@@ -143,6 +211,7 @@ if [ -z "$AUTH_RESPONSE" ]
 then
 
     printf "%b\n" "${RED}[ERROR] 无法连接授权服务器${RESET}"
+    printf "%b\n" "${YELLOW}[INFO] 已自动尝试 2 次，请稍后重试${RESET}"
 
     exit 1
 
@@ -212,22 +281,27 @@ printf "%b\n" "${GREEN}[AUTH] 正在验证...${RESET}"
 # Verify
 # ======================================
 
-VERIFY_DATA="$(printf '{"code":"%s"}' "$AUTH_CODE")"
+VERIFY_DATA="$(
+    printf '{"code":"%s"}' "$AUTH_CODE"
+)"
 
 
 VERIFY_RESPONSE="$(
-
-curl -4 \
-    --connect-timeout 10 \
-    --max-time 20 \
-    -sS \
-    -X POST \
-    -H "Content-Type: application/json" \
-    --data "$VERIFY_DATA" \
-    "$AUTH_SERVER/verify" \
-    2>/dev/null
-
+    auth_post \
+        "/verify" \
+        "$VERIFY_DATA"
 )"
+
+
+if [ -z "$VERIFY_RESPONSE" ]
+then
+
+    printf "%b\n" "${RED}[ERROR] 授权服务器连接超时${RESET}"
+    printf "%b\n" "${YELLOW}[INFO] 已自动尝试 2 次，请重新运行${RESET}"
+
+    exit 1
+
+fi
 
 
 if printf '%s' "$VERIFY_RESPONSE" |
@@ -294,8 +368,8 @@ download_repo()
         -L \
         -f \
         -sS \
-        --connect-timeout 10 \
-        --max-time 60 \
+        --connect-timeout 5 \
+        --max-time 30 \
         --retry 2 \
         --retry-delay 1 \
         -o "$ZIP_FILE" \
