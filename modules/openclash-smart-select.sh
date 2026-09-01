@@ -25,7 +25,7 @@
 # 参数
 # ============================================================
 
-TOP_N="${TOP_N:-10}"
+TOP_N="${TOP_N:-15}"
 
 SPEED_BYTES="${SPEED_BYTES:-10000000}"
 
@@ -161,7 +161,7 @@ valid_positive_integer() {
     esac
 }
 
-TOP_N="$(valid_positive_integer "$TOP_N" 10)"
+TOP_N="$(valid_positive_integer "$TOP_N" 15)"
 SPEED_BYTES="$(valid_positive_integer "$SPEED_BYTES" 10000000)"
 SWITCH_THRESHOLD="$(valid_positive_integer "$SWITCH_THRESHOLD" 15)"
 MAX_DELAY="$(valid_positive_integer "$MAX_DELAY" 800)"
