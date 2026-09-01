@@ -2408,22 +2408,20 @@ openclash_stage_line()
 
 openclash_total_line()
 {
-    TOTAL_PERCENT=$(
-        (
-            OC_STAGE_1 +
-            OC_STAGE_2 +
-            OC_STAGE_3 +
-            OC_STAGE_4
-        ) / 4
-    )
+    TOTAL_PERCENT=$(( \
+        OC_STAGE_1 + \
+        OC_STAGE_2 + \
+        OC_STAGE_3 + \
+        OC_STAGE_4 \
+    ))
 
+    TOTAL_PERCENT=$((TOTAL_PERCENT / 4))
 
     TOTAL_BAR="$(
         openclash_make_bar "$TOTAL_PERCENT"
     )"
 
-
-    printf '总体进度             [\033[1;96m%s\033[0m] %3d%%\n' \
+    printf '总体进度          [\033[1;96m%s\033[0m] %3d%%\n' \
         "$TOTAL_BAR" \
         "$TOTAL_PERCENT"
 }
