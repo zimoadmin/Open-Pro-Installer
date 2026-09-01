@@ -113,48 +113,33 @@ download_release_json()
 
     rm -f "$OUTPUT"
 
-
     if ! command -v curl >/dev/null 2>&1; then
         return 1
     fi
 
-
     curl \
-        -4 \
         -L \
-        -f \
         -sS \
-        --connect-timeout 3 \
-        --max-time "$RELEASE_TIMEOUT" \
-        -A "Open-Pro-Installer" \
-        -H "Accept: application/json" \
+        --connect-timeout 10 \
+        --max-time 15 \
         -o "$OUTPUT" \
         "$URL" \
         >/dev/null 2>&1
 
-
     RESULT=$?
 
-
     if [ "$RESULT" -ne 0 ]; then
-
         rm -f "$OUTPUT"
-
         return 1
     fi
 
-
-    [ -s "$OUTPUT" ] || {
-
+    if [ ! -s "$OUTPUT" ]; then
         rm -f "$OUTPUT"
-
         return 1
-    }
-
+    fi
 
     return 0
 }
-
 
 # ============================================================
 # Worker JSON Validate
