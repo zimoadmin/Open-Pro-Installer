@@ -27,7 +27,7 @@
 
 TOP_N="${TOP_N:-10}"
 
-SPEED_BYTES="${SPEED_BYTES:-20000000}"
+SPEED_BYTES="${SPEED_BYTES:-10000000}"
 
 SWITCH_THRESHOLD="${SWITCH_THRESHOLD:-15}"
 
@@ -37,7 +37,7 @@ DELAY_URL="${DELAY_URL:-https://www.gstatic.com/generate_204}"
 
 DELAY_TIMEOUT="${DELAY_TIMEOUT:-5000}"
 
-SPEED_TIMEOUT="${SPEED_TIMEOUT:-20}"
+SPEED_TIMEOUT="${SPEED_TIMEOUT:-10}"
 
 SPEED_URL="${SPEED_URL:-}"
 
@@ -162,11 +162,11 @@ valid_positive_integer() {
 }
 
 TOP_N="$(valid_positive_integer "$TOP_N" 10)"
-SPEED_BYTES="$(valid_positive_integer "$SPEED_BYTES" 20000000)"
+SPEED_BYTES="$(valid_positive_integer "$SPEED_BYTES" 10000000)"
 SWITCH_THRESHOLD="$(valid_positive_integer "$SWITCH_THRESHOLD" 15)"
 MAX_DELAY="$(valid_positive_integer "$MAX_DELAY" 800)"
 DELAY_TIMEOUT="$(valid_positive_integer "$DELAY_TIMEOUT" 5000)"
-SPEED_TIMEOUT="${SPEED_TIMEOUT:-20}"
+SPEED_TIMEOUT="$(valid_positive_integer "$SPEED_TIMEOUT" 10)"
 
 if [ -z "$SPEED_URL" ]; then
     SPEED_URL="https://speed.cloudflare.com/__down?bytes=${SPEED_BYTES}"
@@ -1196,7 +1196,9 @@ sleep 1
 
 COUNT=0
 
-MIN_BYTES=$((SPEED_BYTES * 90 / 100))
+# 10 秒超时也允许使用已经下载的数据测速
+# 至少下载 1MB 才认为测速结果有参考价值
+MIN_VALID_BYTES=1000000
 
 while IFS="$TAB" read -r DELAY NODE
 do
@@ -1274,31 +1276,75 @@ do
     # 用 jq，避免 BusyBox awk 兼容问题
     # ========================================================
 
-    DOWNLOAD_OK="$(jq -nr \
-        --argjson size "$SIZE_DOWN" \
-        --argjson min "$MIN_BYTES" \
-        --argjson speed "$SPEED_BPS" '
-        if (
-            $size >= $min
-            and
-            $speed > 0
-        )
-        then
-            1
-        else
-            0
-        end
-    ' 2>/dev/null)"
+# ========================================================
+# 测速结果判断
+#
+# curl:
+#   0  = 正常完成
+#   28 = 到达 10 秒超时
+#
+# 即使 10 秒没有完成 10MB，只要已经下载 >=1MB，
+# 就保留 curl 给出的实际平均速度参与评分。
+# ========================================================
 
-    [ -z "$DOWNLOAD_OK" ] && DOWNLOAD_OK=0
+SIZE_INT="${SIZE_DOWN%%.*}"
+SPEED_INT="${SPEED_BPS%%.*}"
+
+case "$SIZE_INT" in
+    ''|*[!0-9]*)
+        SIZE_INT=0
+        ;;
+esac
+
+case "$SPEED_INT" in
+    ''|*[!0-9]*)
+        SPEED_INT=0
+        ;;
+esac
 
 
-    if [ "$CURL_RC" -ne 0 ] ||
-       [ "$DOWNLOAD_OK" != "1" ]
-    then
-
-        printf "      ${RED}测速失败${RESET} HTTP:%s" \
+# HTTP 必须正常
+case "$HTTP_CODE" in
+    200|206)
+        ;;
+    *)
+        printf "      ${RED}测速失败${RESET} HTTP:%s\n" \
             "$HTTP_CODE"
+
+        continue
+        ;;
+esac
+
+
+# curl 只有正常完成或超时可以接受
+case "$CURL_RC" in
+
+    0)
+
+        # 正常完成
+        ;;
+
+    28)
+
+        # 10 秒超时，但允许使用已经下载的数据
+        if [ "$SIZE_INT" -lt "$MIN_VALID_BYTES" ] ||
+           [ "$SPEED_INT" -le 0 ]
+        then
+
+            printf "      ${RED}10秒超时，数据不足，跳过${RESET}"
+
+            printf " | 已下载：%s bytes\n" \
+                "$SIZE_INT"
+
+            continue
+        fi
+
+        printf "      ${YELLOW}10秒未完成，按已下载数据计算${RESET}\n"
+        ;;
+
+    *)
+
+        printf "      ${RED}测速失败${RESET}"
 
         if [ -s "$ERROR_FILE" ]; then
 
@@ -1312,8 +1358,20 @@ do
         printf "\n"
 
         continue
-    fi
+        ;;
 
+esac
+
+
+# 最终至少要求 1MB 数据 + 有速度
+if [ "$SIZE_INT" -lt "$MIN_VALID_BYTES" ] ||
+   [ "$SPEED_INT" -le 0 ]
+then
+
+    printf "      ${RED}有效测速数据不足，跳过${RESET}\n"
+
+    continue
+fi
 
     # ========================================================
     # B/s → Mbps
@@ -1331,8 +1389,16 @@ do
         SPEED_MBPS_FMT="$SPEED_MBPS"
 
 
-    printf "      速度：${GREEN}%s Mbps${RESET}\n" \
-        "$SPEED_MBPS_FMT"
+DOWN_MB="$(jq -nr \
+    --argjson b "$SIZE_INT" '
+    (($b / 1000000) * 100 | round) / 100
+')"
+
+printf "      速度：${GREEN}%s Mbps${RESET}" \
+    "$SPEED_MBPS_FMT"
+
+printf " | 下载：%s MB\n" \
+    "$DOWN_MB"
 
     printf "%s\t%s\t%s\n" \
         "$DELAY" \
