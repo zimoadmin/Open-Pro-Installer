@@ -82,6 +82,19 @@ LATEST_META_VERSION=""
 OPENCLASH_CORE_CPU_MODEL=""
 OPENCLASH_RELEASE_BRANCH="master"
 
+# ============================================================
+# OpenClash Release 获取配置
+# ============================================================
+
+OPENCLASH_RELEASE_WORKER="https://auth.12334123.xyz/openclash"
+
+OPENCLASH_RELEASE_API="https://api.github.com/repos/vernesong/OpenClash/releases/latest"
+
+OPENCLASH_RELEASE_TMP="/tmp/openpro_openclash_release.json"
+
+OPENCLASH_RELEASE_TIMEOUT=12
+
+OPENCLASH_RELEASE_RETRY=3
 
 # ============================================================
 # 26 / 27 / 28 扩展功能配置
@@ -327,6 +340,470 @@ check_openclash()
     return 1
 }
 
+# ============================================================
+# 判断 Release 信息是否完整
+# ============================================================
+
+openclash_release_ready()
+{
+    [ -n "$DOWNLOAD_URL" ] &&
+    [ -n "$PACKAGE_EXT" ]
+}
+
+
+# ============================================================
+# 从 Worker JSON 解析 Release
+#
+# Worker 返回示例：
+# {
+#   "success": true,
+#   "version": "v0.47.156",
+#   "ipk": "https://github.com/...all.ipk",
+#   "apk": "https://github.com/...apk"
+# }
+# ============================================================
+
+parse_openclash_worker_release()
+{
+    FILE="$1"
+
+    [ -s "$FILE" ] || return 1
+
+
+    RELEASE_TAG="$(
+        sed -n \
+            's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+            "$FILE" |
+        head -n 1
+    )"
+
+
+    RELEASE_IPK="$(
+        sed -n \
+            's/.*"ipk"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+            "$FILE" |
+        head -n 1
+    )"
+
+
+    RELEASE_APK="$(
+        sed -n \
+            's/.*"apk"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+            "$FILE" |
+        head -n 1
+    )"
+
+
+    # 自动根据系统包管理器选择软件包
+    if command -v apk >/dev/null 2>&1 &&
+       [ -n "$RELEASE_APK" ]
+    then
+
+        DOWNLOAD_URL="$RELEASE_APK"
+        PACKAGE_EXT="apk"
+
+    elif command -v opkg >/dev/null 2>&1 &&
+         [ -n "$RELEASE_IPK" ]
+    then
+
+        DOWNLOAD_URL="$RELEASE_IPK"
+        PACKAGE_EXT="ipk"
+
+    elif [ -n "$RELEASE_IPK" ]; then
+
+        DOWNLOAD_URL="$RELEASE_IPK"
+        PACKAGE_EXT="ipk"
+
+    elif [ -n "$RELEASE_APK" ]; then
+
+        DOWNLOAD_URL="$RELEASE_APK"
+        PACKAGE_EXT="apk"
+
+    else
+
+        return 1
+    fi
+
+
+    [ -n "$RELEASE_TAG" ] || return 1
+    [ -n "$DOWNLOAD_URL" ] || return 1
+    [ -n "$PACKAGE_EXT" ] || return 1
+
+
+    return 0
+}
+
+
+# ============================================================
+# 从 GitHub 官方 API JSON 解析 Release
+# ============================================================
+
+parse_openclash_github_release()
+{
+    FILE="$1"
+
+    [ -s "$FILE" ] || return 1
+
+
+    RELEASE_TAG="$(
+        sed -n \
+            's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+            "$FILE" |
+        head -n 1
+    )"
+
+
+    # --------------------------------------------------------
+    # APK
+    # --------------------------------------------------------
+
+    RELEASE_APK="$(
+        grep -o \
+            'https://[^"]*luci-app-openclash[^"]*\.apk' \
+            "$FILE" 2>/dev/null |
+        head -n 1
+    )"
+
+
+    # --------------------------------------------------------
+    # IPK
+    # 优先 all.ipk
+    # --------------------------------------------------------
+
+    RELEASE_IPK="$(
+        grep -o \
+            'https://[^"]*luci-app-openclash[^"]*_all\.ipk' \
+            "$FILE" 2>/dev/null |
+        head -n 1
+    )"
+
+
+    if [ -z "$RELEASE_IPK" ]; then
+
+        RELEASE_IPK="$(
+            grep -o \
+                'https://[^"]*luci-app-openclash[^"]*\.ipk' \
+                "$FILE" 2>/dev/null |
+            head -n 1
+        )"
+
+    fi
+
+
+    # --------------------------------------------------------
+    # 根据包管理器自动选择
+    # --------------------------------------------------------
+
+    if command -v apk >/dev/null 2>&1 &&
+       [ -n "$RELEASE_APK" ]
+    then
+
+        DOWNLOAD_URL="$RELEASE_APK"
+        PACKAGE_EXT="apk"
+
+    elif command -v opkg >/dev/null 2>&1 &&
+         [ -n "$RELEASE_IPK" ]
+    then
+
+        DOWNLOAD_URL="$RELEASE_IPK"
+        PACKAGE_EXT="ipk"
+
+    elif [ -n "$RELEASE_IPK" ]; then
+
+        DOWNLOAD_URL="$RELEASE_IPK"
+        PACKAGE_EXT="ipk"
+
+    elif [ -n "$RELEASE_APK" ]; then
+
+        DOWNLOAD_URL="$RELEASE_APK"
+        PACKAGE_EXT="apk"
+
+    else
+
+        return 1
+    fi
+
+
+    [ -n "$RELEASE_TAG" ] || return 1
+    [ -n "$DOWNLOAD_URL" ] || return 1
+    [ -n "$PACKAGE_EXT" ] || return 1
+
+
+    return 0
+}
+
+
+# ============================================================
+# CURL 获取 JSON
+# ============================================================
+
+download_openclash_release_json()
+{
+    URL="$1"
+    OUTPUT="$2"
+
+    rm -f "$OUTPUT"
+
+
+    curl -4 \
+        -L \
+        -f \
+        -sS \
+        --connect-timeout 5 \
+        --max-time "$OPENCLASH_RELEASE_TIMEOUT" \
+        -A "Open-Pro-Installer" \
+        -H "Accept: application/json" \
+        -o "$OUTPUT" \
+        "$URL" \
+        >/dev/null 2>&1
+
+
+    [ $? -eq 0 ] &&
+    [ -s "$OUTPUT" ]
+}
+
+
+# ============================================================
+# 通过 Worker 获取 Release
+# ============================================================
+
+get_openclash_release_from_worker()
+{
+    _oc_info "正在连接 Open-Pro Worker..."
+
+
+    TRY=1
+
+    while [ "$TRY" -le "$OPENCLASH_RELEASE_RETRY" ]
+    do
+
+        _oc_info "Worker 尝试：${TRY}/${OPENCLASH_RELEASE_RETRY}"
+
+
+        if download_openclash_release_json \
+            "$OPENCLASH_RELEASE_WORKER" \
+            "$OPENCLASH_RELEASE_TMP"
+        then
+
+            if parse_openclash_worker_release \
+                "$OPENCLASH_RELEASE_TMP"
+            then
+
+                rm -f "$OPENCLASH_RELEASE_TMP"
+
+                _oc_ok "Worker 获取成功"
+
+                return 0
+            fi
+
+        fi
+
+
+        rm -f "$OPENCLASH_RELEASE_TMP"
+
+
+        if [ "$TRY" -lt "$OPENCLASH_RELEASE_RETRY" ]; then
+
+            sleep 1
+
+        fi
+
+
+        TRY=$((TRY + 1))
+
+    done
+
+
+    _oc_warn "Worker 获取失败"
+
+
+    return 1
+}
+
+
+# ============================================================
+# GitHub 官方 API 获取 Release
+# ============================================================
+
+get_openclash_release_from_github()
+{
+    _oc_info "正在尝试 GitHub 官方 API..."
+
+
+    if download_openclash_release_json \
+        "$OPENCLASH_RELEASE_API" \
+        "$OPENCLASH_RELEASE_TMP"
+    then
+
+        if parse_openclash_github_release \
+            "$OPENCLASH_RELEASE_TMP"
+        then
+
+            rm -f "$OPENCLASH_RELEASE_TMP"
+
+            _oc_ok "GitHub 官方 API 获取成功"
+
+            return 0
+        fi
+
+    fi
+
+
+    rm -f "$OPENCLASH_RELEASE_TMP"
+
+
+    _oc_warn "GitHub 官方 API 获取失败"
+
+
+    return 1
+}
+
+
+# ============================================================
+# GitHub API 代理兜底
+# ============================================================
+
+get_openclash_release_from_proxy()
+{
+    _oc_info "正在尝试 GitHub API 代理兜底..."
+
+
+    for NODE_NAME in \
+        GH01 \
+        GH02 \
+        GH03 \
+        GH04 \
+        GH05 \
+        GH06
+    do
+
+        NODE_PREFIX="$(
+            printf '%s\n' "$OPENCLASH_DOWNLOAD_NODES" |
+            awk -F '|' \
+                -v node="$NODE_NAME" \
+                '$1 == node {
+                    print $2
+                    exit
+                }'
+        )"
+
+
+        [ -n "$NODE_PREFIX" ] || continue
+
+
+        API_URL="$(
+            build_openclash_url \
+                "$NODE_PREFIX" \
+                "$OPENCLASH_RELEASE_API"
+        )"
+
+
+        _oc_info "尝试 API 线路：$NODE_NAME"
+
+
+        if download_openclash_release_json \
+            "$API_URL" \
+            "$OPENCLASH_RELEASE_TMP"
+        then
+
+            if parse_openclash_github_release \
+                "$OPENCLASH_RELEASE_TMP"
+            then
+
+                rm -f "$OPENCLASH_RELEASE_TMP"
+
+                _oc_ok "API 代理获取成功：$NODE_NAME"
+
+                return 0
+            fi
+
+        fi
+
+
+        rm -f "$OPENCLASH_RELEASE_TMP"
+
+    done
+
+
+    return 1
+}
+
+
+# ============================================================
+# OpenClash Release 智能获取
+#
+# 顺序：
+#
+# ① 上层已经提供变量
+# ② Worker × 3
+# ③ GitHub 官方 API
+# ④ GH01-GH06 API 代理
+# ============================================================
+
+get_openclash_release()
+{
+    # --------------------------------------------------------
+    # 如果上层已经成功获取，就直接使用
+    # --------------------------------------------------------
+
+    if openclash_release_ready; then
+
+        _oc_ok "已获取 OpenClash Release 信息"
+
+        return 0
+    fi
+
+
+    DOWNLOAD_URL=""
+    PACKAGE_EXT=""
+    RELEASE_TAG=""
+
+
+    printf "\n"
+
+    _oc_info "正在获取最新 OpenClash Release..."
+
+
+    # --------------------------------------------------------
+    # ① Worker
+    # --------------------------------------------------------
+
+    if get_openclash_release_from_worker; then
+
+        return 0
+
+    fi
+
+
+    # --------------------------------------------------------
+    # ② GitHub 官方 API
+    # --------------------------------------------------------
+
+    if get_openclash_release_from_github; then
+
+        return 0
+
+    fi
+
+
+    # --------------------------------------------------------
+    # ③ GitHub API 代理
+    # --------------------------------------------------------
+
+    if get_openclash_release_from_proxy; then
+
+        return 0
+
+    fi
+
+
+    printf "\n"
+
+    _oc_error "所有 OpenClash Release 获取方式均失败"
+
+
+    return 1
+}
 
 # ============================================================
 # 获取已安装版本
@@ -3048,33 +3525,53 @@ install_openclash()
     fi
 
 
-    detect_openclash_arch
+detect_openclash_arch
 
 
-    if [ -z "$DOWNLOAD_URL" ]; then
+# ========================================================
+# OpenClash Release 信息
+# ========================================================
 
-        _oc_error "DOWNLOAD_URL 为空"
+if ! get_openclash_release; then
 
-        return 1
-    fi
+    _oc_error "OpenClash版本获取失败"
+
+    return 1
+fi
 
 
-    if [ -z "$PACKAGE_EXT" ]; then
+if [ -z "$DOWNLOAD_URL" ]; then
 
-        _oc_error "PACKAGE_EXT 为空"
+    _oc_error "OpenClash 下载地址为空"
 
-        return 1
-    fi
+    return 1
+fi
+
+
+if [ -z "$PACKAGE_EXT" ]; then
+
+    _oc_error "OpenClash 软件包格式为空"
+
+    return 1
+fi
+
+
+_oc_ok "OpenClash Release 信息获取完成"
+
+
+if [ -n "$RELEASE_TAG" ]; then
+
+    _oc_info "OpenClash Version : $RELEASE_TAG"
+
+fi
+
+
+_oc_info "Package Format    : $PACKAGE_EXT"
 
 
     if [ -n "$RELEASE_TAG" ]; then
 
-        _oc_info "OpenClash Version : $RELEASE_TAG"
 
-    fi
-
-
-    _oc_info "Package Format    : $PACKAGE_EXT"
 
 
     printf "\n"
