@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # ============================================================
-# OpenClash Smart Select V2.5
+# OpenClash Smart Select V2.5.1
 #
 # 功能：
 # 1. 自动识别「节点选择」Selector
@@ -21,8 +21,10 @@
 # 15. 自动识别 OpenClash 本地代理认证
 # 16. 测速期间临时 GLOBAL → 智能优选
 # 17. 测速完成自动恢复 GLOBAL / 模式 / 智能优选
+# 18. 兼容 GL.iNet 精简 jq
+# 19. 不依赖 jq test/match/sub/gsub 正则功能
 #
-# OpenWrt / BusyBox / ash Compatible
+# OpenWrt / GL.iNet / BusyBox / ash Compatible
 # ============================================================
 
 
@@ -80,7 +82,7 @@ TAB="$(printf '\t')"
 
 
 # ============================================================
-# 状态
+# 状态变量
 # ============================================================
 
 API=""
@@ -172,7 +174,6 @@ valid_positive_integer() {
         ''|*[!0-9]*)
 
             printf '%s\n' "$DEFAULT"
-
             ;;
 
         *)
@@ -186,7 +187,6 @@ valid_positive_integer() {
                 printf '%s\n' "$DEFAULT"
 
             fi
-
             ;;
 
     esac
@@ -208,6 +208,7 @@ MAX_DELAY="$(valid_positive_integer "$MAX_DELAY" 800)"
 DELAY_TIMEOUT="$(valid_positive_integer "$DELAY_TIMEOUT" 5000)"
 
 LB_SLOT_COUNT="$(valid_positive_integer "$LB_SLOT_COUNT" 5)"
+
 
 [ "$LB_SLOT_COUNT" -gt 5 ] && LB_SLOT_COUNT=5
 
@@ -263,7 +264,6 @@ install_package() {
     if command -v opkg >/dev/null 2>&1; then
 
         opkg install "$PKG" >/dev/null 2>&1
-
         return $?
 
     fi
@@ -272,7 +272,6 @@ install_package() {
     if command -v apk >/dev/null 2>&1; then
 
         apk add "$PKG" >/dev/null 2>&1
-
         return $?
 
     fi
@@ -379,7 +378,6 @@ detect_api() {
             *[!0-9]*)
 
                 continue
-
                 ;;
 
         esac
@@ -390,14 +388,12 @@ detect_api() {
             *" $PORT "*)
 
                 continue
-
                 ;;
 
         esac
 
 
         CHECKED="$CHECKED $PORT"
-
 
         API="http://127.0.0.1:${PORT}"
 
@@ -495,12 +491,22 @@ find_selector_group() {
 
 
 # ============================================================
-# 主智能优选
+# 主智能优选查找
 #
-# 排除：
+# GL.iNet 精简 jq 兼容版
+#
+# 不使用：
+# test()
+# match()
+# sub()
+# gsub()
+#
+# 自动排除：
 # 智能优选1
 # 智能优选2
-# ...
+# 智能优选3
+# 智能优选4
+# 智能优选5
 # ============================================================
 
 find_main_target_group() {
@@ -514,22 +520,43 @@ find_main_target_group() {
             (.key | contains($keyword))
             and
             ((.value.type // "" | ascii_downcase) == "selector")
-            and
-            (
-                (
-                    .key
-                    | test("智能优选[0-9]+$")
-                )
-                | not
-            )
         )
         | .key
         ' |
-    head -n 1
+    while IFS= read -r GROUP
+    do
+
+        case "$GROUP" in
+
+            *智能优选1|\
+            *智能优选2|\
+            *智能优选3|\
+            *智能优选4|\
+            *智能优选5)
+
+                continue
+                ;;
+
+            *)
+
+                printf '%s\n' "$GROUP"
+                break
+                ;;
+
+        esac
+
+    done
 }
+
 
 # ============================================================
 # 智能优选1~5
+#
+# Shell 再进行结尾匹配
+# 防止：
+# 智能优选1
+# 误匹配
+# 智能优选10
 # ============================================================
 
 find_lb_slot_group() {
@@ -551,7 +578,20 @@ find_lb_slot_group() {
         )
         | .key
         ' |
-    head -n 1
+    while IFS= read -r GROUP
+    do
+
+        case "$GROUP" in
+
+            *"智能优选${SLOT}")
+
+                printf '%s\n' "$GROUP"
+                break
+                ;;
+
+        esac
+
+    done
 }
 
 
@@ -645,13 +685,11 @@ resolve_leaf() {
                 [ "$NOW" = "$CURRENT" ] && break
 
                 CURRENT="$NOW"
-
                 ;;
 
             *)
 
                 break
-
                 ;;
 
         esac
@@ -704,7 +742,6 @@ detect_proxy_auth() {
     PROXY_AUTH_ENABLED="0"
 
     PROXY_AUTH=""
-
 
     return 0
 }
@@ -778,7 +815,7 @@ restore_test_state() {
             "$TARGET_GROUP" \
             "$ORIGINAL_TARGET_SELECTION" \
             >/dev/null 2>&1 ||
-        RESTORE_OK=0
+            RESTORE_OK=0
 
     fi
 
@@ -789,7 +826,7 @@ restore_test_state() {
             "GLOBAL" \
             "$ORIGINAL_GLOBAL_SELECTION" \
             >/dev/null 2>&1 ||
-        RESTORE_OK=0
+            RESTORE_OK=0
 
     fi
 
@@ -798,7 +835,7 @@ restore_test_state() {
 
         set_mode "$ORIGINAL_MODE" \
             >/dev/null 2>&1 ||
-        RESTORE_OK=0
+            RESTORE_OK=0
 
     fi
 
@@ -876,7 +913,7 @@ clear 2>/dev/null || true
 
 line
 
-printf "${GREEN}            OpenClash 智能节点优选 V2.5${RESET}\n"
+printf "${GREEN}          OpenClash 智能节点优选 V2.5.1${RESET}\n"
 
 printf "${PURPLE}     延迟 → 串行测速 → 综合评分 → Top5负载均衡${RESET}\n"
 
@@ -1067,7 +1104,7 @@ fi
 
 
 # ============================================================
-# 必要策略组
+# 必要策略组检查
 # ============================================================
 
 [ -z "$MAIN_GROUP" ] &&
@@ -1137,7 +1174,7 @@ MAIN_HAS_TARGET="$(
 
 
 # ============================================================
-# GLOBAL
+# GLOBAL 检查
 # ============================================================
 
 GLOBAL_OK="$(
@@ -1254,7 +1291,6 @@ else
         ''|null|*[!0-9]*)
 
             MIXED_PORT=0
-
             ;;
 
     esac
@@ -1265,7 +1301,6 @@ else
         ''|null|*[!0-9]*)
 
             HTTP_PORT=0
-
             ;;
 
     esac
@@ -1276,7 +1311,6 @@ else
         ''|null|*[!0-9]*)
 
             SOCKS_PORT=0
-
             ;;
 
     esac
@@ -1443,7 +1477,6 @@ case "$NODE_COUNT" in
     ''|*[!0-9]*)
 
         NODE_COUNT=0
-
         ;;
 
 esac
@@ -1712,13 +1745,11 @@ do
         *\?*)
 
             TEST_URL="${SPEED_URL}&cb=${CACHE_ID}"
-
             ;;
 
         *)
 
             TEST_URL="${SPEED_URL}?cb=${CACHE_ID}"
-
             ;;
 
     esac
@@ -1760,7 +1791,6 @@ do
         ''|*[!0-9]*)
 
             HTTP_CODE=0
-
             ;;
 
     esac
@@ -1771,7 +1801,6 @@ do
         ''|*[!0-9.]*)
 
             SIZE_DOWN=0
-
             ;;
 
     esac
@@ -1782,7 +1811,6 @@ do
         ''|*[!0-9.]*)
 
             SPEED_BPS=0
-
             ;;
 
     esac
@@ -1798,7 +1826,6 @@ do
         ''|*[!0-9]*)
 
             SIZE_INT=0
-
             ;;
 
     esac
@@ -1809,14 +1836,13 @@ do
         ''|*[!0-9]*)
 
             SPEED_INT=0
-
             ;;
 
     esac
 
 
     # ========================================================
-    # HTTP
+    # HTTP 检查
     # ========================================================
 
     case "$HTTP_CODE" in
@@ -1831,14 +1857,16 @@ do
                 "$HTTP_CODE"
 
             continue
-
             ;;
 
     esac
 
 
     # ========================================================
-    # CURL
+    # curl 返回码
+    #
+    # 0  = 正常完成
+    # 28 = 达到超时时间
     # ========================================================
 
     case "$CURL_RC" in
@@ -1856,9 +1884,20 @@ do
                 DOWN_MB="$(
                     jq -nr \
                         --argjson b "$SIZE_INT" '
-                        (($b / 1000000) * 100 | round) / 100
-                    '
+                        ($b / 1000000)
+                        '
                 )"
+
+
+                DOWN_MB_FMT="$(
+                    printf '%.2f' \
+                        "$DOWN_MB" \
+                        2>/dev/null
+                )"
+
+
+                [ -z "$DOWN_MB_FMT" ] &&
+                    DOWN_MB_FMT="$DOWN_MB"
 
 
                 printf "      ${RED}%s秒超时，数据不足，跳过${RESET}" \
@@ -1866,7 +1905,7 @@ do
 
 
                 printf " | 已下载：%s MB\n" \
-                    "$DOWN_MB"
+                    "$DOWN_MB_FMT"
 
 
                 continue
@@ -1901,16 +1940,14 @@ do
 
             printf "\n"
 
-
             continue
-
             ;;
 
     esac
 
 
     # ========================================================
-    # 最低数据
+    # 最低有效数据检查
     # ========================================================
 
     if [ "$SIZE_INT" -lt "$MIN_VALID_BYTES" ] ||
@@ -1925,7 +1962,7 @@ do
 
 
     # ========================================================
-    # Mbps
+    # B/s → Mbps
     # ========================================================
 
     SPEED_MBPS="$(
@@ -1950,9 +1987,20 @@ do
     DOWN_MB="$(
         jq -nr \
             --argjson b "$SIZE_INT" '
-            (($b / 1000000) * 100 | round) / 100
+            ($b / 1000000)
         '
     )"
+
+
+    DOWN_MB_FMT="$(
+        printf '%.2f' \
+            "$DOWN_MB" \
+            2>/dev/null
+    )"
+
+
+    [ -z "$DOWN_MB_FMT" ] &&
+        DOWN_MB_FMT="$DOWN_MB"
 
 
     printf "      速度：${GREEN}%s Mbps${RESET}" \
@@ -1960,7 +2008,7 @@ do
 
 
     printf " | 下载：%s MB\n" \
-        "$DOWN_MB"
+        "$DOWN_MB_FMT"
 
 
     printf "%s\t%s\t%s\n" \
@@ -2194,31 +2242,26 @@ if [ "$LB_AVAILABLE" = "1" ]; then
             1)
 
                 SLOT_GROUP="$LB_GROUP_1"
-
                 ;;
 
             2)
 
                 SLOT_GROUP="$LB_GROUP_2"
-
                 ;;
 
             3)
 
                 SLOT_GROUP="$LB_GROUP_3"
-
                 ;;
 
             4)
 
                 SLOT_GROUP="$LB_GROUP_4"
-
                 ;;
 
             5)
 
                 SLOT_GROUP="$LB_GROUP_5"
-
                 ;;
 
         esac
@@ -2235,7 +2278,7 @@ if [ "$LB_AVAILABLE" = "1" ]; then
             LB_NODE
         do
 
-            # 已使用则跳过
+            # 已经被前面的槽位使用
             if grep -Fxq \
                 "$LB_NODE" \
                 "$LB_USED_FILE" \
@@ -2247,7 +2290,7 @@ if [ "$LB_AVAILABLE" = "1" ]; then
             fi
 
 
-            # 必须存在于当前 Selector
+            # 必须存在于对应 Selector
             HAS_NODE="$(
                 group_has_node \
                     "$SLOT_GROUP" \
@@ -2282,7 +2325,6 @@ if [ "$LB_AVAILABLE" = "1" ]; then
 
                 SLOT_FOUND=1
 
-
                 break
 
             fi
@@ -2299,7 +2341,6 @@ if [ "$LB_AVAILABLE" = "1" ]; then
 
 
         SLOT=$((SLOT + 1))
-
 
     done
 
@@ -2378,7 +2419,6 @@ do
         CURRENT_DELAY="$T_DELAY"
 
         CURRENT_SPEED_MBPS="$T_SPEED_MBPS"
-
 
         break
 
@@ -2557,6 +2597,10 @@ printf "\n"
 
 # ============================================================
 # 不切主节点
+#
+# 注意：
+# Top5 已经在上一步更新
+# 主智能优选仍保持原节点
 # ============================================================
 
 if [ "$SHOULD_SWITCH" != "1" ]; then
@@ -2585,7 +2629,6 @@ if [ "$SHOULD_SWITCH" != "1" ]; then
 
 
     printf "\n"
-
 
     exit 0
 
@@ -2725,6 +2768,5 @@ fi
 
 
 printf "\n"
-
 
 exit 0
