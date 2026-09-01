@@ -3569,8 +3569,6 @@ fi
 _oc_info "Package Format    : $PACKAGE_EXT"
 
 
-    if [ -n "$RELEASE_TAG" ]; then
-
 
 
 
