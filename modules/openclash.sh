@@ -658,17 +658,33 @@ get_openclash_release_from_github()
     return 1
 }
 
-
 # ============================================================
-# GitHub API 代理兜底
+# GitHub Release 并行获取
+#
+# DIRECT + GH01-GH06 同时请求
+# 每一路独立保存 JSON
+# 主进程检查结果
+# 第一个完整有效结果胜出
+#
+# BusyBox / OpenWrt /bin/sh Compatible
 # ============================================================
 
-get_openclash_release_from_proxy()
+get_openclash_release_parallel()
 {
-    _oc_info "正在尝试 GitHub API 代理兜底..."
+    RELEASE_DIR="/tmp/openpro_openclash_release.d"
 
+    rm -rf "$RELEASE_DIR"
+    mkdir -p "$RELEASE_DIR" || return 1
+
+    _oc_info "正在并行获取 OpenClash Release..."
+    _oc_info "线路：DIRECT + GH01-GH06"
+
+    # ========================================================
+    # 同时启动 7 路请求
+    # ========================================================
 
     for NODE_NAME in \
+        DIRECT \
         GH01 \
         GH02 \
         GH03 \
@@ -687,46 +703,176 @@ get_openclash_release_from_proxy()
                 }'
         )"
 
+        if [ "$NODE_NAME" = "DIRECT" ]; then
 
-        [ -n "$NODE_PREFIX" ] || continue
+            API_URL="$OPENCLASH_RELEASE_API"
 
+        else
 
-        API_URL="$(
-            build_openclash_url \
-                "$NODE_PREFIX" \
-                "$OPENCLASH_RELEASE_API"
-        )"
+            [ -n "$NODE_PREFIX" ] || continue
 
-
-        _oc_info "尝试 API 线路：$NODE_NAME"
-
-
-        if download_openclash_release_json \
-            "$API_URL" \
-            "$OPENCLASH_RELEASE_TMP"
-        then
-
-            if parse_openclash_github_release \
-                "$OPENCLASH_RELEASE_TMP"
-            then
-
-                rm -f "$OPENCLASH_RELEASE_TMP"
-
-                _oc_ok "API 代理获取成功：$NODE_NAME"
-
-                return 0
-            fi
+            API_URL="$(
+                build_openclash_url \
+                    "$NODE_PREFIX" \
+                    "$OPENCLASH_RELEASE_API"
+            )"
 
         fi
 
 
-        rm -f "$OPENCLASH_RELEASE_TMP"
+        (
+            JSON_FILE="$RELEASE_DIR/${NODE_NAME}.json"
+            OK_FILE="$RELEASE_DIR/${NODE_NAME}.ok"
+
+            rm -f "$JSON_FILE" "$OK_FILE"
+
+
+            if download_openclash_release_json \
+                "$API_URL" \
+                "$JSON_FILE"
+            then
+
+                # ------------------------------------------------
+                # 这里只验证 JSON 是否确实包含 Release 信息
+                # 不修改父进程 DOWNLOAD_URL 等变量
+                # ------------------------------------------------
+
+                TEST_TAG="$(
+                    sed -n \
+                        's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                        "$JSON_FILE" |
+                    head -n 1
+                )"
+
+
+                if [ -n "$TEST_TAG" ]; then
+
+                    # 必须存在 OpenClash 软件包
+                    if grep -q \
+                        'luci-app-openclash' \
+                        "$JSON_FILE" \
+                        2>/dev/null
+                    then
+
+                        printf '%s\n' "$NODE_NAME" \
+                            > "$OK_FILE"
+
+                    fi
+
+                fi
+
+            fi
+
+        ) &
 
     done
 
 
-    return 1
+    # ========================================================
+    # 等待第一条有效线路
+    #
+    # 每 0.1 秒检查一次
+    # 最大等待 OPENCLASH_RELEASE_TIMEOUT 秒
+    # ========================================================
+
+    WAIT_COUNT=0
+    MAX_WAIT=$((OPENCLASH_RELEASE_TIMEOUT * 10))
+
+    WINNER=""
+
+
+    while [ "$WAIT_COUNT" -lt "$MAX_WAIT" ]
+    do
+
+        # 按下面顺序只是处理“同一时刻完成”的情况
+        # 实际上仍然是全部并行请求
+
+        for NODE_NAME in \
+            DIRECT \
+            GH01 \
+            GH02 \
+            GH03 \
+            GH04 \
+            GH05 \
+            GH06
+        do
+
+            OK_FILE="$RELEASE_DIR/${NODE_NAME}.ok"
+
+            if [ -s "$OK_FILE" ]; then
+
+                WINNER="$NODE_NAME"
+
+                break 2
+            fi
+
+        done
+
+
+        sleep 0.1
+
+        WAIT_COUNT=$((WAIT_COUNT + 1))
+
+    done
+
+
+    # ========================================================
+    # 没有任何线路成功
+    # ========================================================
+
+    if [ -z "$WINNER" ]; then
+
+        wait 2>/dev/null
+
+        rm -rf "$RELEASE_DIR"
+
+        _oc_warn "DIRECT + GH01-GH06 Release 获取全部失败"
+
+        return 1
+    fi
+
+
+    # ========================================================
+    # 使用胜出线路 JSON
+    # ========================================================
+
+    WINNER_JSON="$RELEASE_DIR/${WINNER}.json"
+
+
+    if ! parse_openclash_github_release \
+        "$WINNER_JSON"
+    then
+
+        wait 2>/dev/null
+
+        rm -rf "$RELEASE_DIR"
+
+        _oc_warn "Release JSON 解析失败：$WINNER"
+
+        return 1
+    fi
+
+
+    # ========================================================
+    # 等待后台任务退出，避免残留进程
+    # ========================================================
+
+    wait 2>/dev/null
+
+
+    _oc_ok "Release 获取线路：$WINNER"
+
+    _oc_info "Latest Version : $RELEASE_TAG"
+
+    _oc_info "Package Type   : $PACKAGE_EXT"
+
+
+    rm -rf "$RELEASE_DIR"
+
+
+    return 0
 }
+
 
 
 # ============================================================
@@ -734,17 +880,16 @@ get_openclash_release_from_proxy()
 #
 # 顺序：
 #
-# ① 上层已经提供变量
-# ② Worker × 3
-# ③ GitHub 官方 API
-# ④ GH01-GH06 API 代理
+# ① 上层已有 Release → 直接使用
+# ② Worker
+# ③ DIRECT + GH01-GH06 并行抢答
 # ============================================================
 
 get_openclash_release()
 {
-    # --------------------------------------------------------
-    # 如果上层已经成功获取，就直接使用
-    # --------------------------------------------------------
+    # ========================================================
+    # 上层已经提供
+    # ========================================================
 
     if openclash_release_ready; then
 
@@ -764,36 +909,23 @@ get_openclash_release()
     _oc_info "正在获取最新 OpenClash Release..."
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # ① Worker
-    # --------------------------------------------------------
+    # ========================================================
 
     if get_openclash_release_from_worker; then
 
         return 0
-
     fi
 
 
-    # --------------------------------------------------------
-    # ② GitHub 官方 API
-    # --------------------------------------------------------
+    # ========================================================
+    # ② DIRECT + GH01-GH06 并行
+    # ========================================================
 
-    if get_openclash_release_from_github; then
-
-        return 0
-
-    fi
-
-
-    # --------------------------------------------------------
-    # ③ GitHub API 代理
-    # --------------------------------------------------------
-
-    if get_openclash_release_from_proxy; then
+    if get_openclash_release_parallel; then
 
         return 0
-
     fi
 
 
