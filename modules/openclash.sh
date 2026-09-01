@@ -42,6 +42,13 @@
 # 28. 自动添加 Smart Select 定时任务
 #     每 30 分钟自动运行一次
 #
+# 29. 四阶段安装进度
+#     [1/4] 安装 OpenClash
+#     [2/4] 安装内核
+#     [3/4] 替换文件
+#     [4/4] 配置脚本
+#     + 总体安装进度
+#
 # BusyBox / OpenWrt /bin/sh Compatible
 # ============================================================
 
@@ -81,6 +88,31 @@ LATEST_META_VERSION=""
 
 OPENCLASH_CORE_CPU_MODEL=""
 OPENCLASH_RELEASE_BRANCH="master"
+
+
+# ============================================================
+# 四阶段总体进度变量
+# ============================================================
+
+OC_STAGE_1=0
+OC_STAGE_2=0
+OC_STAGE_3=0
+OC_STAGE_4=0
+
+
+# ============================================================
+# OpenClash Release 获取配置
+# ============================================================
+
+OPENCLASH_RELEASE_WORKER="https://auth.12334123.xyz/openclash"
+
+OPENCLASH_RELEASE_API="https://api.github.com/repos/vernesong/OpenClash/releases/latest"
+
+OPENCLASH_RELEASE_TMP="/tmp/openpro_openclash_release.json"
+
+OPENCLASH_RELEASE_TIMEOUT=12
+
+OPENCLASH_RELEASE_RETRY=3
 
 
 # ============================================================
@@ -269,7 +301,6 @@ check_openclash_core_runtime()
 {
     MISSING=""
 
-
     for CMD in \
         bash \
         lua \
@@ -329,6 +360,527 @@ check_openclash()
 
 
 # ============================================================
+# 判断 Release 信息是否完整
+# ============================================================
+
+openclash_release_ready()
+{
+    [ -n "$DOWNLOAD_URL" ] &&
+    [ -n "$PACKAGE_EXT" ]
+}
+
+
+# ============================================================
+# 从 Worker JSON 解析 Release
+# ============================================================
+
+parse_openclash_worker_release()
+{
+    FILE="$1"
+
+    [ -s "$FILE" ] || return 1
+
+
+    RELEASE_TAG="$(
+        sed -n \
+            's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+            "$FILE" |
+        head -n 1
+    )"
+
+
+    RELEASE_IPK="$(
+        sed -n \
+            's/.*"ipk"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+            "$FILE" |
+        head -n 1
+    )"
+
+
+    RELEASE_APK="$(
+        sed -n \
+            's/.*"apk"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+            "$FILE" |
+        head -n 1
+    )"
+
+
+    if command -v apk >/dev/null 2>&1 &&
+       [ -n "$RELEASE_APK" ]
+    then
+
+        DOWNLOAD_URL="$RELEASE_APK"
+        PACKAGE_EXT="apk"
+
+    elif command -v opkg >/dev/null 2>&1 &&
+         [ -n "$RELEASE_IPK" ]
+    then
+
+        DOWNLOAD_URL="$RELEASE_IPK"
+        PACKAGE_EXT="ipk"
+
+    elif [ -n "$RELEASE_IPK" ]; then
+
+        DOWNLOAD_URL="$RELEASE_IPK"
+        PACKAGE_EXT="ipk"
+
+    elif [ -n "$RELEASE_APK" ]; then
+
+        DOWNLOAD_URL="$RELEASE_APK"
+        PACKAGE_EXT="apk"
+
+    else
+
+        return 1
+    fi
+
+
+    [ -n "$RELEASE_TAG" ] || return 1
+    [ -n "$DOWNLOAD_URL" ] || return 1
+    [ -n "$PACKAGE_EXT" ] || return 1
+
+
+    return 0
+}
+
+
+# ============================================================
+# 从 GitHub 官方 API JSON 解析 Release
+# ============================================================
+
+parse_openclash_github_release()
+{
+    FILE="$1"
+
+    [ -s "$FILE" ] || return 1
+
+
+    RELEASE_TAG="$(
+        sed -n \
+            's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+            "$FILE" |
+        head -n 1
+    )"
+
+
+    RELEASE_APK="$(
+        grep -o \
+            'https://[^"]*luci-app-openclash[^"]*\.apk' \
+            "$FILE" 2>/dev/null |
+        head -n 1
+    )"
+
+
+    RELEASE_IPK="$(
+        grep -o \
+            'https://[^"]*luci-app-openclash[^"]*_all\.ipk' \
+            "$FILE" 2>/dev/null |
+        head -n 1
+    )"
+
+
+    if [ -z "$RELEASE_IPK" ]; then
+
+        RELEASE_IPK="$(
+            grep -o \
+                'https://[^"]*luci-app-openclash[^"]*\.ipk' \
+                "$FILE" 2>/dev/null |
+            head -n 1
+        )"
+
+    fi
+
+
+    if command -v apk >/dev/null 2>&1 &&
+       [ -n "$RELEASE_APK" ]
+    then
+
+        DOWNLOAD_URL="$RELEASE_APK"
+        PACKAGE_EXT="apk"
+
+    elif command -v opkg >/dev/null 2>&1 &&
+         [ -n "$RELEASE_IPK" ]
+    then
+
+        DOWNLOAD_URL="$RELEASE_IPK"
+        PACKAGE_EXT="ipk"
+
+    elif [ -n "$RELEASE_IPK" ]; then
+
+        DOWNLOAD_URL="$RELEASE_IPK"
+        PACKAGE_EXT="ipk"
+
+    elif [ -n "$RELEASE_APK" ]; then
+
+        DOWNLOAD_URL="$RELEASE_APK"
+        PACKAGE_EXT="apk"
+
+    else
+
+        return 1
+    fi
+
+
+    [ -n "$RELEASE_TAG" ] || return 1
+    [ -n "$DOWNLOAD_URL" ] || return 1
+    [ -n "$PACKAGE_EXT" ] || return 1
+
+
+    return 0
+}
+
+
+# ============================================================
+# CURL 获取 JSON
+# ============================================================
+
+download_openclash_release_json()
+{
+    URL="$1"
+    OUTPUT="$2"
+
+    rm -f "$OUTPUT"
+
+
+    curl -4 \
+        -L \
+        -f \
+        -sS \
+        --connect-timeout 5 \
+        --max-time "$OPENCLASH_RELEASE_TIMEOUT" \
+        -A "Open-Pro-Installer" \
+        -H "Accept: application/json" \
+        -o "$OUTPUT" \
+        "$URL" \
+        >/dev/null 2>&1
+
+
+    [ $? -eq 0 ] &&
+    [ -s "$OUTPUT" ]
+}
+
+
+# ============================================================
+# 通过 Worker 获取 Release
+# ============================================================
+
+get_openclash_release_from_worker()
+{
+    _oc_info "正在连接 Open-Pro Worker..."
+
+
+    TRY=1
+
+    while [ "$TRY" -le "$OPENCLASH_RELEASE_RETRY" ]
+    do
+
+        _oc_info "Worker 尝试：${TRY}/${OPENCLASH_RELEASE_RETRY}"
+
+
+        if download_openclash_release_json \
+            "$OPENCLASH_RELEASE_WORKER" \
+            "$OPENCLASH_RELEASE_TMP"
+        then
+
+            if parse_openclash_worker_release \
+                "$OPENCLASH_RELEASE_TMP"
+            then
+
+                rm -f "$OPENCLASH_RELEASE_TMP"
+
+                _oc_ok "Worker 获取成功"
+
+                return 0
+            fi
+
+        fi
+
+
+        rm -f "$OPENCLASH_RELEASE_TMP"
+
+
+        if [ "$TRY" -lt "$OPENCLASH_RELEASE_RETRY" ]; then
+
+            sleep 1
+
+        fi
+
+
+        TRY=$((TRY + 1))
+
+    done
+
+
+    _oc_warn "Worker 获取失败"
+
+
+    return 1
+}
+
+
+# ============================================================
+# GitHub 官方 API 获取 Release
+# ============================================================
+
+get_openclash_release_from_github()
+{
+    _oc_info "正在尝试 GitHub 官方 API..."
+
+
+    if download_openclash_release_json \
+        "$OPENCLASH_RELEASE_API" \
+        "$OPENCLASH_RELEASE_TMP"
+    then
+
+        if parse_openclash_github_release \
+            "$OPENCLASH_RELEASE_TMP"
+        then
+
+            rm -f "$OPENCLASH_RELEASE_TMP"
+
+            _oc_ok "GitHub 官方 API 获取成功"
+
+            return 0
+        fi
+
+    fi
+
+
+    rm -f "$OPENCLASH_RELEASE_TMP"
+
+
+    _oc_warn "GitHub 官方 API 获取失败"
+
+
+    return 1
+}
+
+
+# ============================================================
+# GitHub Release 并行获取
+# ============================================================
+
+get_openclash_release_parallel()
+{
+    RELEASE_DIR="/tmp/openpro_openclash_release.d"
+
+    rm -rf "$RELEASE_DIR"
+    mkdir -p "$RELEASE_DIR" || return 1
+
+    _oc_info "正在并行获取 OpenClash Release..."
+    _oc_info "线路：DIRECT + GH01-GH06"
+
+
+    for NODE_NAME in \
+        DIRECT \
+        GH01 \
+        GH02 \
+        GH03 \
+        GH04 \
+        GH05 \
+        GH06
+    do
+
+        NODE_PREFIX="$(
+            printf '%s\n' "$OPENCLASH_DOWNLOAD_NODES" |
+            awk -F '|' \
+                -v node="$NODE_NAME" \
+                '$1 == node {
+                    print $2
+                    exit
+                }'
+        )"
+
+
+        if [ "$NODE_NAME" = "DIRECT" ]; then
+
+            API_URL="$OPENCLASH_RELEASE_API"
+
+        else
+
+            [ -n "$NODE_PREFIX" ] || continue
+
+            API_URL="$(
+                build_openclash_url \
+                    "$NODE_PREFIX" \
+                    "$OPENCLASH_RELEASE_API"
+            )"
+
+        fi
+
+
+        (
+            JSON_FILE="$RELEASE_DIR/${NODE_NAME}.json"
+            OK_FILE="$RELEASE_DIR/${NODE_NAME}.ok"
+
+            rm -f "$JSON_FILE" "$OK_FILE"
+
+
+            if download_openclash_release_json \
+                "$API_URL" \
+                "$JSON_FILE"
+            then
+
+                TEST_TAG="$(
+                    sed -n \
+                        's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                        "$JSON_FILE" |
+                    head -n 1
+                )"
+
+
+                if [ -n "$TEST_TAG" ]; then
+
+                    if grep -q \
+                        'luci-app-openclash' \
+                        "$JSON_FILE" \
+                        2>/dev/null
+                    then
+
+                        printf '%s\n' "$NODE_NAME" \
+                            > "$OK_FILE"
+
+                    fi
+
+                fi
+
+            fi
+
+        ) &
+
+    done
+
+
+    WAIT_COUNT=0
+    MAX_WAIT=$((OPENCLASH_RELEASE_TIMEOUT * 10))
+
+    WINNER=""
+
+
+    while [ "$WAIT_COUNT" -lt "$MAX_WAIT" ]
+    do
+
+        for NODE_NAME in \
+            DIRECT \
+            GH01 \
+            GH02 \
+            GH03 \
+            GH04 \
+            GH05 \
+            GH06
+        do
+
+            OK_FILE="$RELEASE_DIR/${NODE_NAME}.ok"
+
+            if [ -s "$OK_FILE" ]; then
+
+                WINNER="$NODE_NAME"
+
+                break 2
+            fi
+
+        done
+
+
+        sleep 0.1
+
+        WAIT_COUNT=$((WAIT_COUNT + 1))
+
+    done
+
+
+    if [ -z "$WINNER" ]; then
+
+        wait 2>/dev/null
+
+        rm -rf "$RELEASE_DIR"
+
+        _oc_warn "DIRECT + GH01-GH06 Release 获取全部失败"
+
+        return 1
+    fi
+
+
+    WINNER_JSON="$RELEASE_DIR/${WINNER}.json"
+
+
+    if ! parse_openclash_github_release \
+        "$WINNER_JSON"
+    then
+
+        wait 2>/dev/null
+
+        rm -rf "$RELEASE_DIR"
+
+        _oc_warn "Release JSON 解析失败：$WINNER"
+
+        return 1
+    fi
+
+
+    wait 2>/dev/null
+
+
+    _oc_ok "Release 获取线路：$WINNER"
+
+    _oc_info "Latest Version : $RELEASE_TAG"
+
+    _oc_info "Package Type   : $PACKAGE_EXT"
+
+
+    rm -rf "$RELEASE_DIR"
+
+
+    return 0
+}
+
+
+# ============================================================
+# OpenClash Release 智能获取
+# ============================================================
+
+get_openclash_release()
+{
+    if openclash_release_ready; then
+
+        _oc_ok "已获取 OpenClash Release 信息"
+
+        return 0
+    fi
+
+
+    DOWNLOAD_URL=""
+    PACKAGE_EXT=""
+    RELEASE_TAG=""
+
+
+    printf "\n"
+
+    _oc_info "正在获取最新 OpenClash Release..."
+
+
+    if get_openclash_release_from_worker; then
+
+        return 0
+    fi
+
+
+    if get_openclash_release_parallel; then
+
+        return 0
+    fi
+
+
+    printf "\n"
+
+    _oc_error "所有 OpenClash Release 获取方式均失败"
+
+
+    return 1
+}
+
+
+# ============================================================
 # 获取已安装版本
 # ============================================================
 
@@ -376,9 +928,13 @@ build_openclash_url()
 
 
     if [ -z "$PREFIX" ]; then
+
         printf '%s' "$ORIGINAL_URL"
+
     else
+
         printf '%s%s' "$PREFIX" "$ORIGINAL_URL"
+
     fi
 }
 
@@ -469,7 +1025,9 @@ oc_test_is_error_page()
 
 
     if [ ! -s "$FILE" ]; then
+
         return 1
+
     fi
 
 
@@ -477,14 +1035,14 @@ oc_test_is_error_page()
         grep -Eqi \
         '<html|<!doctype|bad gateway|502 bad gateway|404 not found|403 forbidden|access denied'
     then
+
         return 0
+
     fi
 
 
     return 1
 }
-
-
 # ============================================================
 # 单线路测速
 # ============================================================
@@ -998,21 +1556,17 @@ prepare_openclash_routes()
 
 # ============================================================
 # 保存全流程共享测速结果
-#
-# 来源：第一次下载 OpenClash 软件包时生成的 OC_ROUTE_FILE
-# 格式：score|name|prefix|ttfb|speed
-#
-# 后续 Meta Core / openclash-swap / Smart Select 全部复用，
-# 整个安装流程不再重复执行 GH01-GH06 + DIRECT 测速。
 # ============================================================
 
 cache_openclash_routes_for_reuse()
 {
     cleanup_openclash_script_routes
 
+
     if [ ! -s "$OC_ROUTE_FILE" ]; then
         return 1
     fi
+
 
     while IFS='|' read -r \
         ROUTE_SCORE \
@@ -1022,7 +1576,9 @@ cache_openclash_routes_for_reuse()
         ROUTE_TTFB \
         ROUTE_SPEED
     do
+
         [ -n "$ROUTE_NAME" ] || continue
+
 
         printf '%s|%s|%s|%s|%s\n' \
             "$ROUTE_SCORE" \
@@ -1031,7 +1587,9 @@ cache_openclash_routes_for_reuse()
             "$ROUTE_TTFB" \
             "$ROUTE_SPEED" \
             >> "$OC_SCRIPT_ROUTE_FILE"
+
     done < "$OC_ROUTE_FILE"
+
 
     [ -s "$OC_SCRIPT_ROUTE_FILE" ]
 }
@@ -1144,6 +1702,7 @@ download_openclash_from_url()
 
         RESULT=$?
 
+
     elif command -v wget >/dev/null 2>&1; then
 
         download_openclash_wget \
@@ -1151,6 +1710,7 @@ download_openclash_from_url()
             "$OUTPUT"
 
         RESULT=$?
+
 
     else
 
@@ -1181,7 +1741,7 @@ download_openclash_from_url()
 
 
 # ============================================================
-# 智能下载
+# 智能下载 OpenClash
 # ============================================================
 
 smart_download_openclash()
@@ -1197,8 +1757,6 @@ smart_download_openclash()
     fi
 
 
-    # 第一次测速结果保存为全流程共享排名。
-    # 后续 Meta Core / 26 / 27 / openclash-swap 均直接复用。
     if ! cache_openclash_routes_for_reuse; then
 
         _oc_warn "共享测速结果缓存失败，后续扩展功能可能无法复用线路"
@@ -1276,6 +1834,7 @@ smart_download_openclash()
 
             DOWNLOAD_SUCCESS=1
         fi
+
     fi
 
 
@@ -1289,9 +1848,6 @@ smart_download_openclash()
 # ============================================================
 # 26 / 27
 # 复用第一次 OpenClash 软件包测速结果
-#
-# 不再执行 prepare_openclash_routes，不再重新测速。
-# 缓存格式：score|name|prefix|ttfb|speed
 # ============================================================
 
 prepare_openclash_script_routes()
@@ -1345,13 +1901,7 @@ prepare_openclash_script_routes()
 
 
 # ============================================================
-# 26 / 27
 # 使用共享测速结果下载普通 Shell 文件
-#
-# 不再次测速
-#
-# $1 = GitHub 原始 URL
-# $2 = 输出文件
 # ============================================================
 
 smart_download_openclash_script_cached()
@@ -1459,10 +2009,6 @@ smart_download_openclash_script_cached()
     done < "$OC_SCRIPT_ROUTE_FILE"
 
 
-    # ========================================================
-    # DIRECT 最终兜底
-    # ========================================================
-
     if [ "$DOWNLOAD_SUCCESS" -ne 1 ] &&
        [ "$DIRECT_TRIED" -ne 1 ]
     then
@@ -1498,6 +2044,7 @@ smart_download_openclash_script_cached()
                 _oc_ok "GitHub 官方直连下载成功"
 
                 DOWNLOAD_SUCCESS=1
+
             fi
 
         fi
@@ -1511,13 +2058,6 @@ smart_download_openclash_script_cached()
 
 # ============================================================
 # 26. 下载并运行 OpenClash Swap
-#
-# 下载 openclash-swap 时：
-# 使用共享测速排名
-#
-# openclash-swap 内部下载配置时：
-# 通过 OPENPRO_SCRIPT_ROUTE_FILE
-# 再次复用完全相同的线路排名
 # ============================================================
 
 run_openclash_swap()
@@ -1590,8 +2130,6 @@ run_openclash_swap()
 
 # ============================================================
 # 27. 安装 OpenClash Smart Select
-#
-# 继续复用同一份 GH01-GH06 + DIRECT 测速排名
 # ============================================================
 
 install_openclash_smart_select()
@@ -1783,7 +2321,309 @@ setup_openclash_smart_select_cron()
 
 
 # ============================================================
-# 安装进度条
+# 四阶段进度条：生成进度条
+# ============================================================
+
+openclash_make_bar()
+{
+    PERCENT="$1"
+    WIDTH=24
+
+
+    case "$PERCENT" in
+        ''|*[!0-9]*)
+            PERCENT=0
+            ;;
+    esac
+
+
+    [ "$PERCENT" -lt 0 ] &&
+        PERCENT=0
+
+    [ "$PERCENT" -gt 100 ] &&
+        PERCENT=100
+
+
+    FILLED=$((PERCENT * WIDTH / 100))
+    EMPTY=$((WIDTH - FILLED))
+
+    BAR=""
+
+
+    I=0
+
+    while [ "$I" -lt "$FILLED" ]
+    do
+
+        BAR="${BAR}#"
+
+        I=$((I + 1))
+
+    done
+
+
+    I=0
+
+    while [ "$I" -lt "$EMPTY" ]
+    do
+
+        BAR="${BAR}-"
+
+        I=$((I + 1))
+
+    done
+
+
+    printf '%s' "$BAR"
+}
+
+
+# ============================================================
+# 四阶段进度条：单阶段
+# ============================================================
+
+openclash_stage_line()
+{
+    STEP="$1"
+    NAME="$2"
+    PERCENT="$3"
+
+
+    BAR="$(
+        openclash_make_bar "$PERCENT"
+    )"
+
+
+    printf '[%s/4] %-14s [\033[1;92m%s\033[0m] %3d%%\n' \
+        "$STEP" \
+        "$NAME" \
+        "$BAR" \
+        "$PERCENT"
+}
+
+
+# ============================================================
+# 四阶段进度条：总体进度
+# ============================================================
+
+openclash_total_line()
+{
+    TOTAL_PERCENT=$(
+        (
+            OC_STAGE_1 +
+            OC_STAGE_2 +
+            OC_STAGE_3 +
+            OC_STAGE_4
+        ) / 4
+    )
+
+
+    TOTAL_BAR="$(
+        openclash_make_bar "$TOTAL_PERCENT"
+    )"
+
+
+    printf '总体进度             [\033[1;96m%s\033[0m] %3d%%\n' \
+        "$TOTAL_BAR" \
+        "$TOTAL_PERCENT"
+}
+
+
+# ============================================================
+# 四阶段进度条：完整状态
+# ============================================================
+
+show_openclash_stage_progress()
+{
+    printf "\n"
+
+    printf "============================================================\n"
+    printf "                    OpenClash 安装进度\n"
+    printf "============================================================\n"
+
+
+    openclash_stage_line \
+        1 \
+        "安装 OpenClash" \
+        "$OC_STAGE_1"
+
+
+    openclash_stage_line \
+        2 \
+        "安装内核" \
+        "$OC_STAGE_2"
+
+
+    openclash_stage_line \
+        3 \
+        "替换文件" \
+        "$OC_STAGE_3"
+
+
+    openclash_stage_line \
+        4 \
+        "配置脚本" \
+        "$OC_STAGE_4"
+
+
+    printf "------------------------------------------------------------\n"
+
+
+    openclash_total_line
+
+
+    printf "============================================================\n"
+
+    printf "\n"
+}
+
+
+# ============================================================
+# 四阶段进度条：设置阶段百分比
+# ============================================================
+
+set_openclash_stage_progress()
+{
+    STAGE="$1"
+    PERCENT="$2"
+
+
+    case "$PERCENT" in
+        ''|*[!0-9]*)
+            PERCENT=0
+            ;;
+    esac
+
+
+    [ "$PERCENT" -lt 0 ] &&
+        PERCENT=0
+
+    [ "$PERCENT" -gt 100 ] &&
+        PERCENT=100
+
+
+    case "$STAGE" in
+
+        1)
+
+            OC_STAGE_1="$PERCENT"
+
+            ;;
+
+
+        2)
+
+            OC_STAGE_2="$PERCENT"
+
+            ;;
+
+
+        3)
+
+            OC_STAGE_3="$PERCENT"
+
+            ;;
+
+
+        4)
+
+            OC_STAGE_4="$PERCENT"
+
+            ;;
+
+    esac
+}
+
+
+# ============================================================
+# 四阶段进度条：初始化
+# ============================================================
+
+reset_openclash_stage_progress()
+{
+    OC_STAGE_1=0
+    OC_STAGE_2=0
+    OC_STAGE_3=0
+    OC_STAGE_4=0
+}
+
+
+# ============================================================
+# 四阶段进度条：阶段开始
+# ============================================================
+
+openclash_stage_start()
+{
+    STAGE="$1"
+
+
+    case "$STAGE" in
+
+        1)
+
+            NAME="安装 OpenClash"
+
+            ;;
+
+
+        2)
+
+            NAME="安装内核"
+
+            ;;
+
+
+        3)
+
+            NAME="替换文件"
+
+            ;;
+
+
+        4)
+
+            NAME="配置脚本"
+
+            ;;
+
+
+        *)
+
+            return 1
+
+            ;;
+
+    esac
+
+
+    printf "\n"
+
+    printf '\033[1;96m[%s/4]\033[0m \033[1;97m%s\033[0m\n' \
+        "$STAGE" \
+        "$NAME"
+}
+
+
+# ============================================================
+# 四阶段进度条：阶段完成
+# ============================================================
+
+openclash_stage_done()
+{
+    STAGE="$1"
+
+
+    set_openclash_stage_progress \
+        "$STAGE" \
+        100
+
+
+    show_openclash_stage_progress
+}
+
+
+# ============================================================
+# 原 OpenClash 软件包安装动态进度条
 # ============================================================
 
 openclash_progress_bar()
@@ -1796,6 +2636,7 @@ openclash_progress_bar()
     EMPTY=$((WIDTH - FILLED))
 
     BAR=""
+
 
     I=0
 
@@ -1936,15 +2777,15 @@ install_openclash_with_progress()
         printf "\n"
 
         return 0
+
     fi
 
 
     printf "\n"
 
+
     return "$RESULT"
 }
-
-
 # ============================================================
 # CPU / Core 架构
 # ============================================================
@@ -2090,6 +2931,7 @@ detect_openclash_core_cpu_model()
             "openclash.config.core_version=$OPENCLASH_CORE_CPU_MODEL" \
             >/dev/null 2>&1
 
+
         uci commit openclash \
             >/dev/null 2>&1
 
@@ -2165,7 +3007,9 @@ get_meta_core_version()
 
 
     if [ ! -x "$META_CORE_PATH" ]; then
+
         return 1
+
     fi
 
 
@@ -2177,7 +3021,9 @@ get_meta_core_version()
 
 
     if [ -z "$META_CORE_FULL_VERSION" ]; then
+
         return 1
+
     fi
 
 
@@ -2258,17 +3104,23 @@ get_latest_meta_core_version()
 
 
     if [ ! -f "$VERSION_SCRIPT" ]; then
+
         return 1
+
     fi
 
 
     if ! command -v lua >/dev/null 2>&1; then
+
         return 1
+
     fi
 
 
     if ! command -v jsonfilter >/dev/null 2>&1; then
+
         return 1
+
     fi
 
 
@@ -2285,7 +3137,9 @@ get_latest_meta_core_version()
 
 
     if [ ! -s /tmp/openclash_version_history.json ]; then
+
         return 1
+
     fi
 
 
@@ -2379,6 +3233,7 @@ run_official_meta_core_update()
         _oc_error "没有找到官方 openclash_core.sh"
 
         return 1
+
     fi
 
 
@@ -2436,7 +3291,9 @@ run_official_meta_core_update()
         then
 
             if [ "$CORE_PERCENT" -lt 94 ]; then
+
                 CORE_PERCENT=$((CORE_PERCENT + 5))
+
             fi
 
 
@@ -2447,7 +3304,9 @@ run_official_meta_core_update()
         then
 
             if [ "$CORE_PERCENT" -lt 88 ]; then
+
                 CORE_PERCENT=$((CORE_PERCENT + 4))
+
             fi
 
 
@@ -2458,14 +3317,18 @@ run_official_meta_core_update()
         then
 
             if [ "$CORE_PERCENT" -lt 80 ]; then
+
                 CORE_PERCENT=$((CORE_PERCENT + 3))
+
             fi
 
 
         else
 
             if [ "$CORE_PERCENT" -lt 50 ]; then
+
                 CORE_PERCENT=$((CORE_PERCENT + 1))
+
             fi
 
         fi
@@ -2505,12 +3368,10 @@ run_official_meta_core_update()
 
 # ============================================================
 # 自动检测并更新 Meta / Mihomo
-# ============================================================
-# 自动检测并更新 Meta / Mihomo
 #
-# 重要：不再重新测速。
+# 不再重新测速。
 # 直接复用第一次 OpenClash 软件包下载时生成的
-# OC_SCRIPT_ROUTE_FILE 排名，并针对 Core URL 动态拼接代理。
+# OC_SCRIPT_ROUTE_FILE 排名。
 # ============================================================
 
 auto_update_openclash_core()
@@ -2528,6 +3389,7 @@ auto_update_openclash_core()
         _oc_warn "没有找到 OpenClash 官方 Core 更新脚本"
 
         return 0
+
     fi
 
 
@@ -2541,11 +3403,14 @@ auto_update_openclash_core()
         _oc_warn "当前环境无法自动更新 Meta Core"
 
         return 1
+
     fi
 
 
     if ! detect_openclash_core_cpu_model; then
+
         return 1
+
     fi
 
 
@@ -2580,18 +3445,42 @@ auto_update_openclash_core()
 
     CORE_ROUTE_AVAILABLE=0
 
+
     if [ -s "$OC_SCRIPT_ROUTE_FILE" ]; then
 
         CORE_ROUTE_AVAILABLE=1
 
-        CORE_BEST_LINE="$(sed -n '1p' "$OC_SCRIPT_ROUTE_FILE")"
-        CORE_BEST_NAME="$(printf '%s\n' "$CORE_BEST_LINE" | cut -d '|' -f 2)"
-        CORE_BEST_TTFB="$(printf '%s\n' "$CORE_BEST_LINE" | cut -d '|' -f 4)"
-        CORE_BEST_SPEED="$(printf '%s\n' "$CORE_BEST_LINE" | cut -d '|' -f 5)"
+
+        CORE_BEST_LINE="$(
+            sed -n '1p' \
+                "$OC_SCRIPT_ROUTE_FILE"
+        )"
+
+
+        CORE_BEST_NAME="$(
+            printf '%s\n' "$CORE_BEST_LINE" |
+            cut -d '|' -f 2
+        )"
+
+
+        CORE_BEST_TTFB="$(
+            printf '%s\n' "$CORE_BEST_LINE" |
+            cut -d '|' -f 4
+        )"
+
+
+        CORE_BEST_SPEED="$(
+            printf '%s\n' "$CORE_BEST_LINE" |
+            cut -d '|' -f 5
+        )"
+
 
         _oc_ok "共享最佳线路：$CORE_BEST_NAME"
+
         _oc_info "首包时间：${CORE_BEST_TTFB} ms"
+
         _oc_info "下载速度：$(oc_speed_to_mb "$CORE_BEST_SPEED") MB/s"
+
 
     else
 
@@ -2636,6 +3525,7 @@ auto_update_openclash_core()
                 _oc_ok "最新 Meta Core：$LATEST_META_VERSION"
 
                 break
+
             fi
 
         done < "$OC_SCRIPT_ROUTE_FILE"
@@ -2668,6 +3558,7 @@ auto_update_openclash_core()
         cleanup_core_update
 
         return 0
+
     fi
 
 
@@ -2717,6 +3608,7 @@ auto_update_openclash_core()
             then
 
                 ROUTE_URL="$CORE_TEST_URL"
+
                 DIRECT_CORE_TRIED=1
 
             else
@@ -2731,7 +3623,8 @@ auto_update_openclash_core()
 
 
             ROUTE_SPEED_MB="$(
-                oc_speed_to_mb "$ROUTE_SPEED"
+                oc_speed_to_mb \
+                    "$ROUTE_SPEED"
             )"
 
 
@@ -2762,15 +3655,20 @@ auto_update_openclash_core()
 
                         CORE_UPDATE_SUCCESS=1
 
+
                         core_update_progress_success \
                             "$ROUTE_NAME"
+
 
                         _oc_ok "Meta / Mihomo 内核更新成功"
 
                         _oc_info "当前版本：$NEW_META_VERSION"
 
+
                         break
+
                     fi
+
 
                 else
 
@@ -2780,14 +3678,18 @@ auto_update_openclash_core()
 
                         CORE_UPDATE_SUCCESS=1
 
+
                         core_update_progress_success \
                             "$ROUTE_NAME"
+
 
                         _oc_ok "Meta / Mihomo 内核安装/更新成功"
 
                         _oc_info "当前版本：$NEW_META_VERSION"
 
+
                         break
+
                     fi
 
                 fi
@@ -2802,6 +3704,10 @@ auto_update_openclash_core()
 
     fi
 
+
+    # ========================================================
+    # DIRECT 最终兜底
+    # ========================================================
 
     if [ "$CORE_UPDATE_SUCCESS" -ne 1 ] &&
        [ "$DIRECT_CORE_TRIED" -ne 1 ]
@@ -2834,10 +3740,12 @@ auto_update_openclash_core()
 
                     CORE_UPDATE_SUCCESS=1
 
+
                     core_update_progress_success \
                         "DIRECT"
 
                 fi
+
 
             else
 
@@ -2846,6 +3754,7 @@ auto_update_openclash_core()
                 then
 
                     CORE_UPDATE_SUCCESS=1
+
 
                     core_update_progress_success \
                         "DIRECT"
@@ -2858,6 +3767,10 @@ auto_update_openclash_core()
 
     fi
 
+
+    # ========================================================
+    # 最终验证
+    # ========================================================
 
     printf "\n"
 
@@ -2889,13 +3802,17 @@ auto_update_openclash_core()
 
             fi
 
+
         elif [ -n "$META_CORE_VERSION" ]; then
 
             if [ -z "$OLD_META_VERSION" ]; then
+
                 CORE_UPDATE_SUCCESS=1
+
             fi
 
         fi
+
 
     else
 
@@ -2941,6 +3858,7 @@ reload_luci()
 
         _oc_info "正在刷新 LuCI..."
 
+
         /etc/init.d/uhttpd reload \
             >/dev/null 2>&1
 
@@ -2967,6 +3885,7 @@ interrupt_openclash()
         kill "$PROGRESS_PID" \
             >/dev/null 2>&1
 
+
         wait "$PROGRESS_PID" \
             >/dev/null 2>&1
 
@@ -2978,6 +3897,7 @@ interrupt_openclash()
         kill "$CORE_UPDATE_PID" \
             >/dev/null 2>&1
 
+
         wait "$CORE_UPDATE_PID" \
             >/dev/null 2>&1
 
@@ -2985,8 +3905,11 @@ interrupt_openclash()
 
 
     cleanup_openclash_package
+
     cleanup_openclash_temp
+
     cleanup_core_update
+
     cleanup_openclash_script_routes
 
 
@@ -2995,22 +3918,43 @@ interrupt_openclash()
 
     return 130
 }
-
-
 # ============================================================
 # 主安装函数
+#
+# 四阶段：
+#
+# [1/4] 安装 OpenClash
+# [2/4] 安装内核
+# [3/4] 替换文件
+# [4/4] 配置脚本
+#
+# 总体进度 = 四个阶段平均值
 # ============================================================
 
 install_openclash()
 {
     printf "\n"
 
-    printf "======================================\n"
-    printf "        OpenClash Installer\n"
-    printf "======================================\n"
+    printf "============================================================\n"
+    printf "                  OpenClash Installer\n"
+    printf "============================================================\n"
 
     printf "\n"
 
+
+    # ========================================================
+    # 初始化四阶段进度
+    # ========================================================
+
+    reset_openclash_stage_progress
+
+
+    show_openclash_stage_progress
+
+
+    # ========================================================
+    # Root
+    # ========================================================
 
     if [ "$(id -u 2>/dev/null)" != "0" ]; then
 
@@ -3019,6 +3963,10 @@ install_openclash()
         return 1
     fi
 
+
+    # ========================================================
+    # 基础环境
+    # ========================================================
 
     if ! check_openclash_runtime; then
 
@@ -3051,9 +3999,68 @@ install_openclash()
     detect_openclash_arch
 
 
+    # ========================================================
+    # 清理旧临时文件
+    # ========================================================
+
+    cleanup_openclash_temp
+    cleanup_core_update
+    cleanup_openclash_script_routes
+    cleanup_openclash_logs
+
+
+    trap 'interrupt_openclash' INT TERM
+
+
+    # ========================================================
+    #
+    # [1/4]
+    # 安装 OpenClash
+    #
+    # ========================================================
+
+    openclash_stage_start 1
+
+
+    set_openclash_stage_progress \
+        1 \
+        5
+
+
+    # ========================================================
+    # 获取 OpenClash Release
+    # ========================================================
+
+    _oc_info "正在获取 OpenClash Release 信息..."
+
+
+    if ! get_openclash_release; then
+
+        printf "\n"
+
+        _oc_error "OpenClash版本获取失败"
+
+
+        set_openclash_stage_progress \
+            1 \
+            0
+
+
+        show_openclash_stage_progress
+
+
+        trap - INT TERM
+
+
+        return 1
+    fi
+
+
     if [ -z "$DOWNLOAD_URL" ]; then
 
-        _oc_error "DOWNLOAD_URL 为空"
+        _oc_error "OpenClash 下载地址为空"
+
+        trap - INT TERM
 
         return 1
     fi
@@ -3061,10 +4068,15 @@ install_openclash()
 
     if [ -z "$PACKAGE_EXT" ]; then
 
-        _oc_error "PACKAGE_EXT 为空"
+        _oc_error "OpenClash 软件包格式为空"
+
+        trap - INT TERM
 
         return 1
     fi
+
+
+    _oc_ok "OpenClash Release 信息获取完成"
 
 
     if [ -n "$RELEASE_TAG" ]; then
@@ -3077,8 +4089,14 @@ install_openclash()
     _oc_info "Package Format    : $PACKAGE_EXT"
 
 
-    printf "\n"
+    set_openclash_stage_progress \
+        1 \
+        15
 
+
+    # ========================================================
+    # 下载 OpenClash
+    # ========================================================
 
     OPENCLASH_PKG="/tmp/openclash.${PACKAGE_EXT}"
 
@@ -3087,17 +4105,10 @@ install_openclash()
     rm -f "$INSTALL_LOG"
 
 
-    cleanup_openclash_temp
-    cleanup_core_update
-    cleanup_openclash_script_routes
+    printf "\n"
 
+    _oc_info "正在下载 OpenClash 软件包..."
 
-    trap 'interrupt_openclash' INT TERM
-
-
-    # ========================================================
-    # OpenClash 下载
-    # ========================================================
 
     if ! smart_download_openclash \
         "$DOWNLOAD_URL" \
@@ -3114,7 +4125,17 @@ install_openclash()
         cleanup_openclash_package
         cleanup_openclash_temp
 
+
+        set_openclash_stage_progress \
+            1 \
+            15
+
+
+        show_openclash_stage_progress
+
+
         trap - INT TERM
+
 
         return 1
     fi
@@ -3130,16 +4151,25 @@ install_openclash()
 
 
     if [ -n "$SIZE" ]; then
+
         _oc_info "File Size : $SIZE"
+
     fi
 
 
+    set_openclash_stage_progress \
+        1 \
+        45
+
+
+    # ========================================================
+    # 安装 OpenClash 软件包
+    # ========================================================
+
     printf "\n"
 
+    _oc_info "正在安装 OpenClash..."
 
-    # ========================================================
-    # 安装
-    # ========================================================
 
     case "$PACKAGE_EXT" in
 
@@ -3149,17 +4179,22 @@ install_openclash()
 
                 _oc_error "当前系统没有 APK 包管理器"
 
+
                 cleanup_openclash_package
+
 
                 trap - INT TERM
 
+
                 return 1
+
             fi
 
 
             install_openclash_with_progress \
                 "$OPENCLASH_PKG" \
                 "apk"
+
 
             INSTALL_RESULT=$?
 
@@ -3172,17 +4207,22 @@ install_openclash()
 
                 _oc_error "当前系统没有 OPKG 包管理器"
 
+
                 cleanup_openclash_package
+
 
                 trap - INT TERM
 
+
                 return 1
+
             fi
 
 
             install_openclash_with_progress \
                 "$OPENCLASH_PKG" \
                 "ipk"
+
 
             INSTALL_RESULT=$?
 
@@ -3193,9 +4233,12 @@ install_openclash()
 
             _oc_error "未知软件包格式：$PACKAGE_EXT"
 
+
             cleanup_openclash_package
 
+
             trap - INT TERM
+
 
             return 1
 
@@ -3203,6 +4246,10 @@ install_openclash()
 
     esac
 
+
+    # ========================================================
+    # 安装失败
+    # ========================================================
 
     if [ "$INSTALL_RESULT" -ne 0 ]; then
 
@@ -3227,7 +4274,17 @@ install_openclash()
         cleanup_openclash_package
         cleanup_openclash_temp
 
+
+        set_openclash_stage_progress \
+            1 \
+            60
+
+
+        show_openclash_stage_progress
+
+
         trap - INT TERM
+
 
         return 1
     fi
@@ -3236,12 +4293,16 @@ install_openclash()
     cleanup_openclash_package
 
 
-    printf "\n"
+    set_openclash_stage_progress \
+        1 \
+        85
 
 
     # ========================================================
     # 验证 OpenClash
     # ========================================================
+
+    printf "\n"
 
     _oc_info "正在验证 OpenClash 安装结果..."
 
@@ -3265,7 +4326,17 @@ install_openclash()
         cleanup_openclash_logs
         cleanup_openclash_temp
 
+
+        set_openclash_stage_progress \
+            1 \
+            85
+
+
+        show_openclash_stage_progress
+
+
         trap - INT TERM
+
 
         return 1
     fi
@@ -3288,25 +4359,62 @@ install_openclash()
 
 
     # ========================================================
+    # 第一阶段完成
+    # ========================================================
+
+    openclash_stage_done 1
+
+
+    # ========================================================
+    #
+    # [2/4]
+    # 安装 Meta / Mihomo Core
+    #
+    # ========================================================
+
+    openclash_stage_start 2
+
+
+    set_openclash_stage_progress \
+        2 \
+        5
+
+
+    # ========================================================
     # 第一次检测 Core
     # ========================================================
 
     check_openclash_core
 
 
+    set_openclash_stage_progress \
+        2 \
+        15
+
+
     # ========================================================
-    # 自动检查 / 安装 / 更新 Meta Core
+    # 自动安装 / 更新 Meta Core
     # ========================================================
 
     if auto_update_openclash_core; then
 
         _oc_ok "Meta Core 检查/更新完成"
 
+
+        set_openclash_stage_progress \
+            2 \
+            90
+
     else
 
         _oc_warn "Meta Core 自动更新存在异常"
 
         _oc_info "OpenClash 本体已安装，不影响进入 LuCI 后继续处理"
+
+
+        set_openclash_stage_progress \
+            2 \
+            80
 
     fi
 
@@ -3315,12 +4423,37 @@ install_openclash()
     # 再次验证 Core
     # ========================================================
 
-    check_openclash_core
+    if check_openclash_core; then
+
+        set_openclash_stage_progress \
+            2 \
+            100
+
+    else
+
+        _oc_warn "Meta / Mihomo Core 最终验证未通过"
+
+
+        set_openclash_stage_progress \
+            2 \
+            90
+
+    fi
 
 
     # ========================================================
-    # 26 / 27
-    # 复用首次 GH01-GH06 + DIRECT 测速结果，不再重新测速
+    # 第二阶段完成
+    #
+    # OpenClash 本体已经安装成功时，
+    # Core 异常属于非致命问题。
+    # 因此阶段继续向后执行。
+    # ========================================================
+
+    openclash_stage_done 2
+
+
+    # ========================================================
+    # 获取共享线路
     # ========================================================
 
     EXT_ROUTE_READY=0
@@ -3332,7 +4465,9 @@ install_openclash()
 
     else
 
-        _oc_warn "首次测速结果不可用，扩展功能无法复用线路"
+        _oc_warn "首次测速结果不可用"
+
+        _oc_info "扩展功能无法复用线路"
 
         _oc_info "OpenClash 本体和 Meta Core 不受影响"
 
@@ -3340,14 +4475,39 @@ install_openclash()
 
 
     # ========================================================
-    # 26. OpenClash Swap
+    #
+    # [3/4]
+    # 替换 OpenClash 文件
+    #
+    # ========================================================
+
+    openclash_stage_start 3
+
+
+    set_openclash_stage_progress \
+        3 \
+        10
+
+
+    # ========================================================
+    # OpenClash Swap
     # ========================================================
 
     if [ "$EXT_ROUTE_READY" -eq 1 ]; then
 
+        set_openclash_stage_progress \
+            3 \
+            25
+
+
         if run_openclash_swap; then
 
             _oc_ok "OpenClash Swap 执行完成"
+
+
+            set_openclash_stage_progress \
+                3 \
+                90
 
         else
 
@@ -3355,27 +4515,72 @@ install_openclash()
 
             _oc_info "OpenClash 本体和 Meta Core 不受影响"
 
+
+            set_openclash_stage_progress \
+                3 \
+                90
+
         fi
+
 
     else
 
         _oc_warn "没有共享测速结果，跳过 OpenClash Swap"
 
+
+        set_openclash_stage_progress \
+            3 \
+            90
+
     fi
 
 
     # ========================================================
-    # 27. OpenClash Smart Select
+    # 第三阶段完成
     # ========================================================
+
+    openclash_stage_done 3
+
+
+    # ========================================================
+    #
+    # [4/4]
+    # 配置脚本
+    #
+    # Smart Select + Cron
+    #
+    # ========================================================
+
+    openclash_stage_start 4
+
+
+    set_openclash_stage_progress \
+        4 \
+        5
+
 
     SMART_SELECT_INSTALLED=0
 
 
+    # ========================================================
+    # 安装 Smart Select
+    # ========================================================
+
     if [ "$EXT_ROUTE_READY" -eq 1 ]; then
+
+        set_openclash_stage_progress \
+            4 \
+            20
+
 
         if install_openclash_smart_select; then
 
             SMART_SELECT_INSTALLED=1
+
+
+            set_openclash_stage_progress \
+                4 \
+                65
 
         else
 
@@ -3383,24 +4588,45 @@ install_openclash()
 
             _oc_info "OpenClash 本体和 Meta Core 不受影响"
 
+
+            set_openclash_stage_progress \
+                4 \
+                65
+
         fi
+
 
     else
 
         _oc_warn "没有共享测速结果，跳过 OpenClash Smart Select"
 
+
+        set_openclash_stage_progress \
+            4 \
+            65
+
     fi
 
 
     # ========================================================
-    # 28. 每 30 分钟自动运行 Smart Select
+    # 配置每 30 分钟定时任务
     # ========================================================
 
     if [ "$SMART_SELECT_INSTALLED" -eq 1 ]; then
 
+        set_openclash_stage_progress \
+            4 \
+            75
+
+
         if setup_openclash_smart_select_cron; then
 
             _oc_ok "OpenClash Smart Select 自动任务配置完成"
+
+
+            set_openclash_stage_progress \
+                4 \
+                95
 
         else
 
@@ -3408,38 +4634,97 @@ install_openclash()
 
             _oc_info "不会影响 OpenClash 正常使用"
 
+
+            set_openclash_stage_progress \
+                4 \
+                95
+
         fi
+
 
     else
 
         _oc_warn "Smart Select 未成功安装，跳过 Cron 配置"
 
+
+        set_openclash_stage_progress \
+            4 \
+            95
+
     fi
 
 
-    # 26 / 27 / 28 已全部处理完
+    # ========================================================
+    # 清理共享测速缓存
+    # ========================================================
+
     cleanup_openclash_script_routes
 
 
     # ========================================================
-    # LuCI
+    # 刷新 LuCI
     # ========================================================
 
     reload_luci
 
 
-    trap - INT TERM
+    # ========================================================
+    # 第四阶段完成
+    # ========================================================
+
+    openclash_stage_done 4
 
 
     # ========================================================
-    # 完成
+    # 所有阶段最终状态
+    # ========================================================
+
+    OC_STAGE_1=100
+    OC_STAGE_2=100
+    OC_STAGE_3=100
+    OC_STAGE_4=100
+
+
+    printf "\n"
+
+    printf "\033[1;92m"
+
+    printf "============================================================\n"
+    printf "                 OpenClash 安装全部完成\n"
+    printf "============================================================\n"
+
+    printf "\033[0m"
+
+
+    show_openclash_stage_progress
+
+
+    # ========================================================
+    # 最终验证 OpenClash
+    # ========================================================
+
+    if ! check_openclash; then
+
+        _oc_error "最终验证失败：OpenClash 软件包不存在"
+
+        trap - INT TERM
+
+        return 1
+    fi
+
+
+    get_installed_openclash_version
+
+
+    # ========================================================
+    # 最终结果
     # ========================================================
 
     printf "\n"
 
-    printf "======================================\n"
-    printf "        OpenClash Installed\n"
-    printf "======================================\n"
+    printf "============================================================\n"
+    printf "                  OpenClash Installed\n"
+    printf "============================================================\n"
 
     printf "\n"
 
@@ -3468,6 +4753,10 @@ install_openclash()
 
         _oc_info "Smart Select : 已安装"
 
+    else
+
+        _oc_warn "Smart Select : 未安装"
+
     fi
 
 
@@ -3489,6 +4778,24 @@ install_openclash()
     printf "内核：OpenClash → 版本更新\n"
 
     printf "\n"
+
+
+    # ========================================================
+    # 清理
+    # ========================================================
+
+    cleanup_openclash_package
+
+    cleanup_openclash_temp
+
+    cleanup_core_update
+
+    cleanup_openclash_logs
+
+    cleanup_openclash_script_routes
+
+
+    trap - INT TERM
 
 
     return 0
