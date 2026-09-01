@@ -470,9 +470,185 @@ save_release_cache()
     return 0
 }
 
+# ============================================================
+# Worker 请求 + 错误诊断
+#
+# 返回：
+# 0 = 成功
+# 1 = curl / 网络错误
+# 2 = HTTP 状态异常
+# 3 = 返回内容为空
+# ============================================================
+
+download_worker_release_json()
+{
+    URL="$1"
+    OUTPUT="$2"
+
+    rm -f "$OUTPUT"
+
+    if ! command -v curl >/dev/null 2>&1; then
+        _gh_warn "Worker 请求失败：系统没有 curl"
+        return 1
+    fi
+
+
+    HTTP_CODE="$(
+        curl \
+            -L \
+            -sS \
+            --connect-timeout 10 \
+            --max-time 15 \
+            -o "$OUTPUT" \
+            -w '%{http_code}' \
+            "$URL" \
+            2>/tmp/openpro_worker_curl_error
+    )"
+
+    CURL_RESULT=$?
+
+
+    # ========================================================
+    # curl 本身失败
+    # ========================================================
+
+    if [ "$CURL_RESULT" -ne 0 ]; then
+
+        case "$CURL_RESULT" in
+
+            6)
+                _gh_warn "Worker DNS解析失败：curl=6"
+                ;;
+
+            7)
+                _gh_warn "Worker 连接服务器失败：curl=7"
+                ;;
+
+            28)
+                _gh_warn "Worker 请求超时：curl=28"
+                ;;
+
+            35)
+                _gh_warn "Worker TLS握手失败：curl=35"
+                ;;
+
+            60)
+                _gh_warn "Worker SSL证书验证失败：curl=60"
+                ;;
+
+            *)
+                _gh_warn "Worker 网络请求失败：curl=$CURL_RESULT"
+                ;;
+
+        esac
+
+
+        if [ -s /tmp/openpro_worker_curl_error ]; then
+
+            WORKER_CURL_ERROR="$(
+                tail -n 1 /tmp/openpro_worker_curl_error
+            )"
+
+            [ -n "$WORKER_CURL_ERROR" ] &&
+                _gh_warn "curl：$WORKER_CURL_ERROR"
+
+        fi
+
+
+        rm -f \
+            "$OUTPUT" \
+            /tmp/openpro_worker_curl_error \
+            2>/dev/null
+
+        return 1
+    fi
+
+
+    rm -f /tmp/openpro_worker_curl_error \
+        2>/dev/null
+
+
+    # ========================================================
+    # HTTP 状态码检查
+    # ========================================================
+
+    case "$HTTP_CODE" in
+
+        200)
+            ;;
+
+        400)
+            _gh_warn "Worker HTTP异常：400 Bad Request"
+            return 2
+            ;;
+
+        401)
+            _gh_warn "Worker HTTP异常：401 Unauthorized"
+            return 2
+            ;;
+
+        403)
+            _gh_warn "Worker HTTP异常：403 Forbidden"
+            return 2
+            ;;
+
+        404)
+            _gh_warn "Worker HTTP异常：404 Not Found"
+            return 2
+            ;;
+
+        429)
+            _gh_warn "Worker HTTP异常：429 Too Many Requests"
+            return 2
+            ;;
+
+        500)
+            _gh_warn "Worker HTTP异常：500 Internal Server Error"
+            return 2
+            ;;
+
+        502)
+            _gh_warn "Worker HTTP异常：502 Bad Gateway"
+            return 2
+            ;;
+
+        503)
+            _gh_warn "Worker HTTP异常：503 Service Unavailable"
+            return 2
+            ;;
+
+        504)
+            _gh_warn "Worker HTTP异常：504 Gateway Timeout"
+            return 2
+            ;;
+
+        *)
+            _gh_warn "Worker HTTP异常：$HTTP_CODE"
+            return 2
+            ;;
+
+    esac
+
+
+    # ========================================================
+    # 返回文件检查
+    # ========================================================
+
+    if [ ! -s "$OUTPUT" ]; then
+
+        _gh_warn "Worker 返回空数据"
+
+        rm -f "$OUTPUT" 2>/dev/null
+
+        return 3
+    fi
+
+
+    return 0
+}
 
 # ============================================================
-# Worker
+# Worker 获取 OpenClash Release
 # ============================================================
 
 get_release_from_worker()
@@ -483,32 +659,89 @@ get_release_from_worker()
     _gh_info "正在连接 Open-Pro Worker..."
 
 
-    if ! download_release_json \
+    # ========================================================
+    # 请求 Worker
+    # ========================================================
+
+    if ! download_worker_release_json \
         "$OPENCLASH_WORKER" \
         "$WORKER_JSON"
     then
 
-        _gh_warn "Worker 连接失败"
-
         return 1
     fi
 
+
+    # ========================================================
+    # JSON 基础验证
+    # ========================================================
 
     if ! validate_worker_json \
         "$WORKER_JSON"
     then
 
-        _gh_warn "Worker 返回数据无效"
+        _gh_warn "Worker JSON格式异常"
+
+
+        # 如果 Worker 返回了内容，显示一小部分方便排错
+        if [ -s "$WORKER_JSON" ]; then
+
+            WORKER_PREVIEW="$(
+                head -c 200 "$WORKER_JSON" 2>/dev/null |
+                tr '\n' ' '
+            )"
+
+
+            if [ -n "$WORKER_PREVIEW" ]; then
+
+                _gh_warn "Worker 返回：$WORKER_PREVIEW"
+
+            fi
+
+        fi
+
 
         return 1
     fi
 
 
+    # ========================================================
+    # Release 解析
+    # ========================================================
+
     if ! parse_worker_release \
         "$WORKER_JSON"
     then
 
-        _gh_warn "Worker Release 解析失败"
+        _gh_warn "Worker Release解析失败"
+
+        return 1
+    fi
+
+
+    # ========================================================
+    # 最终变量检查
+    # ========================================================
+
+    if [ -z "$RELEASE_TAG" ]; then
+
+        _gh_warn "Worker 数据异常：缺少 version"
+
+        return 1
+    fi
+
+
+    if [ -z "$DOWNLOAD_URL" ]; then
+
+        _gh_warn "Worker 数据异常：缺少软件包下载地址"
+
+        return 1
+    fi
+
+
+    if [ -z "$PACKAGE_EXT" ]; then
+
+        _gh_warn "Worker 数据异常：无法判断 IPK/APK"
 
         return 1
     fi
@@ -516,9 +749,9 @@ get_release_from_worker()
 
     _gh_ok "Worker 获取成功"
 
+
     return 0
 }
-
 
 # ============================================================
 # 并行 API 请求
