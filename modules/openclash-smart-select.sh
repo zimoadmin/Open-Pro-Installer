@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # ============================================================
-# OpenClash Smart Select V2.5.1
+# OpenClash Smart Select V2.5.2
 #
 # 功能：
 # 1. 自动识别「节点选择」Selector
@@ -23,6 +23,9 @@
 # 17. 测速完成自动恢复 GLOBAL / 模式 / 智能优选
 # 18. 兼容 GL.iNet 精简 jq
 # 19. 不依赖 jq test/match/sub/gsub 正则功能
+# 20. 下载前代理204验证，失败候选自动递补
+# 21. 排名节点复检两次，至少一次成功才进入冠军和Top5分配
+# 22. 仅释放本实例取得的锁
 #
 # OpenWrt / GL.iNet / BusyBox / ash Compatible
 # ============================================================
@@ -120,6 +123,7 @@ PROXY_AUTH=""
 
 TMP_DIR=""
 LOCK_DIR="/tmp/openclash-smart-select.lock"
+LOCK_ACQUIRED=0
 
 TEST_STATE_DIRTY=0
 CLEANED=0
@@ -764,6 +768,7 @@ speed_download() {
     if [ "$PROXY_AUTH_ENABLED" = "1" ]; then
 
         curl \
+            --noproxy "" \
             -x "$LOCAL_PROXY" \
             --proxy-user "$PROXY_AUTH" \
             --http1.1 \
@@ -780,6 +785,7 @@ speed_download() {
     else
 
         curl \
+            --noproxy "" \
             -x "$LOCAL_PROXY" \
             --http1.1 \
             -L \
@@ -799,6 +805,55 @@ speed_download() {
 # ============================================================
 # 恢复测速状态
 # ============================================================
+
+# curl成功且HTTP恰好为204才通过，不跟随重定向。
+check_proxy_204() {
+    CHECK_204_HTTP="$(
+        if [ "$PROXY_AUTH_ENABLED" = "1" ]; then
+            curl --noproxy "" -x "$LOCAL_PROXY" \
+                --proxy-user "$PROXY_AUTH" \
+                -sS -o /dev/null --connect-timeout 3 --max-time 6 \
+                -H "Cache-Control: no-cache" -w '%{http_code}' \
+                "$DELAY_URL" 2>"${TMP_DIR}/check-204.err"
+        else
+            curl --noproxy "" -x "$LOCAL_PROXY" \
+                -sS -o /dev/null --connect-timeout 3 --max-time 6 \
+                -H "Cache-Control: no-cache" -w '%{http_code}' \
+                "$DELAY_URL" 2>"${TMP_DIR}/check-204.err"
+        fi
+    )"
+    CHECK_204_RC=$?
+    [ "$CHECK_204_RC" -eq 0 ] && [ "$CHECK_204_HTTP" = "204" ]
+}
+
+verify_ranked_nodes() {
+    : > "${SCORE_FILE}.verified" || return 1
+    while IFS="$TAB" read -r VERIFY_SCORE VERIFY_DELAY VERIFY_BPS VERIFY_MBPS VERIFY_NODE
+    do
+        [ -n "$VERIFY_NODE" ] || continue
+        if ! select_proxy "$TARGET_GROUP" "$VERIFY_NODE"; then
+            warn "复检切换失败，淘汰：$VERIFY_NODE"
+            continue
+        fi
+        sleep 1
+        VERIFY_OK=0
+        VERIFY_TRY=1
+        while [ "$VERIFY_TRY" -le 2 ]; do
+            if check_proxy_204; then VERIFY_OK=$((VERIFY_OK + 1)); fi
+            VERIFY_TRY=$((VERIFY_TRY + 1))
+        done
+        if [ "$VERIFY_OK" -gt 0 ]; then
+            printf '204复检 %s/2 通过：%s\n' "$VERIFY_OK" "$VERIFY_NODE"
+            printf '%s\t%s\t%s\t%s\t%s\n' \
+                "$VERIFY_SCORE" "$VERIFY_DELAY" "$VERIFY_BPS" \
+                "$VERIFY_MBPS" "$VERIFY_NODE" >> "${SCORE_FILE}.verified"
+        else
+            warn "204复检 0/2，淘汰：$VERIFY_NODE"
+        fi
+    done < "$SCORE_FILE"
+    mv "${SCORE_FILE}.verified" "$SCORE_FILE" || return 1
+    [ -s "$SCORE_FILE" ]
+}
 
 restore_test_state() {
 
@@ -889,9 +944,10 @@ cleanup() {
     fi
 
 
-    rmdir "$LOCK_DIR" \
-        >/dev/null 2>&1 ||
-        true
+    if [ "$LOCK_ACQUIRED" = "1" ]; then
+        rmdir "$LOCK_DIR" >/dev/null 2>&1 || true
+        LOCK_ACQUIRED=0
+    fi
 }
 
 
@@ -913,9 +969,9 @@ clear 2>/dev/null || true
 
 line
 
-printf "${GREEN}          OpenClash 智能节点优选 V2.5.1${RESET}\n"
+printf "${GREEN}          OpenClash 智能节点优选 V2.5.2${RESET}\n"
 
-printf "${PURPLE}     延迟 → 串行测速 → 综合评分 → Top5负载均衡${RESET}\n"
+printf "${PURPLE}     延迟 → 204验证 → 串行测速 → 评分复检 → Top5负载均衡${RESET}\n"
 
 line
 
@@ -958,6 +1014,8 @@ if ! mkdir "$LOCK_DIR" >/dev/null 2>&1; then
     die "已有一个 openclash-smart-select 正在运行"
 
 fi
+
+LOCK_ACQUIRED=1
 
 
 # ============================================================
@@ -1672,13 +1730,12 @@ FIRST_NODE="$(
 # 进入测试状态
 # ============================================================
 
+TEST_STATE_DIRTY=1
+
 select_proxy \
     "$TARGET_GROUP" \
     "$FIRST_NODE" ||
     die "无法设置智能优选测试节点"
-
-
-TEST_STATE_DIRTY=1
 
 
 select_proxy \
@@ -1697,6 +1754,29 @@ sleep 1
 # ============================================================
 # 开始测速
 # ============================================================
+
+# 从完整延迟排名中补足通过204的候选。
+: > "$CANDIDATE_FILE"
+PREFLIGHT_COUNT=0
+while IFS="$TAB" read -r PREFLIGHT_DELAY PREFLIGHT_NODE
+do
+    if ! select_proxy "$TARGET_GROUP" "$PREFLIGHT_NODE"; then
+        warn "节点切换失败，跳过：$PREFLIGHT_NODE"
+        continue
+    fi
+    sleep 1
+    if check_proxy_204; then
+        printf '204通过 | %sms | %s\n' "$PREFLIGHT_DELAY" "$PREFLIGHT_NODE"
+        printf '%s\t%s\n' "$PREFLIGHT_DELAY" "$PREFLIGHT_NODE" >> "$CANDIDATE_FILE"
+        PREFLIGHT_COUNT=$((PREFLIGHT_COUNT + 1))
+        [ "$PREFLIGHT_COUNT" -ge "$TOP_N" ] && break
+    else
+        printf '204失败 | curl=%s HTTP=%s | %s\n' \
+            "$CHECK_204_RC" "$CHECK_204_HTTP" "$PREFLIGHT_NODE"
+    fi
+done < "$DELAY_FILE"
+CANDIDATE_COUNT="$PREFLIGHT_COUNT"
+[ "$CANDIDATE_COUNT" -gt 0 ] || die "没有通过代理204验证的节点"
 
 : > "$SPEED_FILE"
 
@@ -1736,6 +1816,12 @@ do
 
     sleep 1
 
+
+    if ! check_proxy_204; then
+        printf '      204失效，跳过下载 | curl=%s HTTP=%s\n' \
+            "$CHECK_204_RC" "$CHECK_204_HTTP"
+        continue
+    fi
 
     CACHE_ID="$(date +%s)-${COUNT}"
 
@@ -2028,14 +2114,7 @@ done < "$CANDIDATE_FILE"
 printf "\n"
 
 
-info "正在恢复 OpenClash 原设置..."
-
-
-restore_test_state ||
-    die "测速结束，但恢复 OpenClash 设置失败"
-
-
-success "原设置恢复完成"
+# 排名复检完成后统一恢复。
 
 
 [ ! -s "$SPEED_FILE" ] &&
@@ -2217,6 +2296,13 @@ line
 printf "\n"
 
 
+info "正在按排名复检节点，每个节点检查204两次..."
+RANK_VERIFY_OK=0
+verify_ranked_nodes && RANK_VERIFY_OK=1
+info "正在恢复 OpenClash 原设置..."
+restore_test_state || die "复检结束，但恢复 OpenClash 设置失败"
+success "原设置恢复完成"
+[ "$RANK_VERIFY_OK" = "1" ] || die "全部排名节点204复检失败，保留原选择"
 printf "[7/8] 更新负载均衡 Top5...\n"
 
 
@@ -2770,3 +2856,4 @@ fi
 printf "\n"
 
 exit 0
+
