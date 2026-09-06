@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # ============================================================
-# OpenClash Smart Select V2.5.2
+# OpenClash Smart Select V2.5.3
 #
 # 功能：
 # 1. 自动识别「节点选择」Selector
@@ -23,8 +23,8 @@
 # 17. 测速完成自动恢复 GLOBAL / 模式 / 智能优选
 # 18. 兼容 GL.iNet 精简 jq
 # 19. 不依赖 jq test/match/sub/gsub 正则功能
-# 20. 下载前代理204验证，失败候选自动递补
-# 21. 排名节点复检两次，至少一次成功才进入冠军和Top5分配
+# 20. 同一轮切换后验证204并立即下载，失败候选自动递补
+# 21. 按排名复检两次，满足冠军和Top5实际槽位后停止
 # 22. 仅释放本实例取得的锁
 #
 # OpenWrt / GL.iNet / BusyBox / ash Compatible
@@ -826,12 +826,43 @@ check_proxy_204() {
     [ "$CHECK_204_RC" -eq 0 ] && [ "$CHECK_204_HTTP" = "204" ]
 }
 
+# 按下游同样的顺序匹配槽位，不能仅凭已通过节点数量提前停止。
+verified_needs_met() {
+    [ -s "${SCORE_FILE}.verified" ] || return 1
+    [ "$LB_AVAILABLE" = "1" ] || return 0
+    : > "${SCORE_FILE}.used" || return 1
+    NEED_SLOT=1
+    while [ "$NEED_SLOT" -le "$LB_SLOT_COUNT" ]; do
+        case "$NEED_SLOT" in
+            1) NEED_GROUP="$LB_GROUP_1" ;;
+            2) NEED_GROUP="$LB_GROUP_2" ;;
+            3) NEED_GROUP="$LB_GROUP_3" ;;
+            4) NEED_GROUP="$LB_GROUP_4" ;;
+            5) NEED_GROUP="$LB_GROUP_5" ;;
+        esac
+        NEED_FOUND=0
+        while IFS="$TAB" read -r NEED_SCORE NEED_DELAY NEED_BPS NEED_MBPS NEED_NODE; do
+            grep -Fxq -- "$NEED_NODE" "${SCORE_FILE}.used" && continue
+            [ "$(group_has_node "$NEED_GROUP" "$NEED_NODE")" = "1" ] || continue
+            printf '%s\n' "$NEED_NODE" >> "${SCORE_FILE}.used"
+            NEED_FOUND=1
+            break
+        done < "${SCORE_FILE}.verified"
+        [ "$NEED_FOUND" = "1" ] || return 1
+        NEED_SLOT=$((NEED_SLOT + 1))
+    done
+    return 0
+}
+
 verify_ranked_nodes() {
+    cp "$SCORE_FILE" "${SCORE_FILE}.baseline" || return 1
+    CURRENT_RECHECK_FAILED=0
     : > "${SCORE_FILE}.verified" || return 1
     while IFS="$TAB" read -r VERIFY_SCORE VERIFY_DELAY VERIFY_BPS VERIFY_MBPS VERIFY_NODE
     do
         [ -n "$VERIFY_NODE" ] || continue
         if ! select_proxy "$TARGET_GROUP" "$VERIFY_NODE"; then
+            [ "$VERIFY_NODE" = "$CURRENT_EFFECTIVE_NODE" ] && CURRENT_RECHECK_FAILED=1
             warn "复检切换失败，淘汰：$VERIFY_NODE"
             continue
         fi
@@ -847,7 +878,9 @@ verify_ranked_nodes() {
             printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$VERIFY_SCORE" "$VERIFY_DELAY" "$VERIFY_BPS" \
                 "$VERIFY_MBPS" "$VERIFY_NODE" >> "${SCORE_FILE}.verified"
+            verified_needs_met && break
         else
+            [ "$VERIFY_NODE" = "$CURRENT_EFFECTIVE_NODE" ] && CURRENT_RECHECK_FAILED=1
             warn "204复检 0/2，淘汰：$VERIFY_NODE"
         fi
     done < "$SCORE_FILE"
@@ -969,7 +1002,7 @@ clear 2>/dev/null || true
 
 line
 
-printf "${GREEN}          OpenClash 智能节点优选 V2.5.2${RESET}\n"
+printf "${GREEN}          OpenClash 智能节点优选 V2.5.3${RESET}\n"
 
 printf "${PURPLE}     延迟 → 204验证 → 串行测速 → 评分复检 → Top5负载均衡${RESET}\n"
 
@@ -1662,7 +1695,7 @@ success "延迟测试完成"
 printf "\n"
 
 
-printf "${BLUE}延迟最低前 %s 个节点${RESET}\n" \
+printf "${BLUE}延迟预览前 %s 个节点（204失败后继续递补）${RESET}\n" \
     "$CANDIDATE_COUNT"
 
 
@@ -1755,46 +1788,24 @@ sleep 1
 # 开始测速
 # ============================================================
 
-# 从完整延迟排名中补足通过204的候选。
-: > "$CANDIDATE_FILE"
-PREFLIGHT_COUNT=0
-while IFS="$TAB" read -r PREFLIGHT_DELAY PREFLIGHT_NODE
-do
-    if ! select_proxy "$TARGET_GROUP" "$PREFLIGHT_NODE"; then
-        warn "节点切换失败，跳过：$PREFLIGHT_NODE"
-        continue
-    fi
-    sleep 1
-    if check_proxy_204; then
-        printf '204通过 | %sms | %s\n' "$PREFLIGHT_DELAY" "$PREFLIGHT_NODE"
-        printf '%s\t%s\n' "$PREFLIGHT_DELAY" "$PREFLIGHT_NODE" >> "$CANDIDATE_FILE"
-        PREFLIGHT_COUNT=$((PREFLIGHT_COUNT + 1))
-        [ "$PREFLIGHT_COUNT" -ge "$TOP_N" ] && break
-    else
-        printf '204失败 | curl=%s HTTP=%s | %s\n' \
-            "$CHECK_204_RC" "$CHECK_204_HTTP" "$PREFLIGHT_NODE"
-    fi
-done < "$DELAY_FILE"
-CANDIDATE_COUNT="$PREFLIGHT_COUNT"
-[ "$CANDIDATE_COUNT" -gt 0 ] || die "没有通过代理204验证的节点"
-
 : > "$SPEED_FILE"
 
 
 COUNT=0
-
+CANDIDATE_COUNT=0
 
 while IFS="$TAB" read -r \
     DELAY \
     NODE
 do
 
+    [ "$CANDIDATE_COUNT" -ge "$TOP_N" ] && break
     COUNT=$((COUNT + 1))
 
 
     printf "${YELLOW}[%s/%s]${RESET} %s\n" \
         "$COUNT" \
-        "$CANDIDATE_COUNT" \
+        "$TOP_N" \
         "$NODE"
 
 
@@ -1822,6 +1833,9 @@ do
             "$CHECK_204_RC" "$CHECK_204_HTTP"
         continue
     fi
+
+    CANDIDATE_COUNT=$((CANDIDATE_COUNT + 1))
+    printf "      204通过，立即下载测速\n"
 
     CACHE_ID="$(date +%s)-${COUNT}"
 
@@ -2104,7 +2118,7 @@ do
         >> "$SPEED_FILE"
 
 
-done < "$CANDIDATE_FILE"
+done < "$DELAY_FILE"
 
 
 # ============================================================
@@ -2296,7 +2310,7 @@ line
 printf "\n"
 
 
-info "正在按排名复检节点，每个节点检查204两次..."
+info "正在按排名复检204，满足冠军和Top5需求后停止..."
 RANK_VERIFY_OK=0
 verify_ranked_nodes && RANK_VERIFY_OK=1
 info "正在恢复 OpenClash 原设置..."
@@ -2511,8 +2525,9 @@ do
     fi
 
 
-done < "$SCORE_FILE"
+done < "${SCORE_FILE}.baseline"
 
+[ "$CURRENT_RECHECK_FAILED" = "1" ] && CURRENT_SCORE=""
 
 IMPROVEMENT=""
 
