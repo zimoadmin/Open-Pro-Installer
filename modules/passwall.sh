@@ -176,9 +176,12 @@ pw_install_with_progress()
     P3=0
     P4=0
     P5=0
-    TOTAL=5
+    TOTAL=20
 
-    pw_init_progress
+    if [ "${PW_PROGRESS_READY:-0}" != "1" ]; then
+        pw_init_progress
+    fi
+    PW_PROGRESS_READY=0
 
     pw_draw_progress \
         "$P1" "$P2" "$P3" "$P4" "$P5" "$TOTAL"
@@ -292,7 +295,7 @@ pw_install_with_progress()
 
 detect_passwall_system()
 {
-    _pw_info "正在检测设备信息..."
+    # _pw_info "正在检测设备信息..."
 
     PW_MODEL="unknown"
     PW_OPENWRT_VERSION="unknown"
@@ -663,8 +666,9 @@ detect_passwall_system()
 
     printf "\n"
     printf "======================================\n"
-    printf "          设备检测结果\n"
+    printf "        PassWall Installer\n"
     printf "======================================\n"
+    printf "包管理器 : %s\n" "$PW_PKG_MANAGER"
     printf "机型     : %s\n" "$PW_MODEL"
     printf "平台     : %s\n" "$PW_PLATFORM"
     printf "OpenWrt  : %s\n" "$PW_OPENWRT_VERSION"
@@ -900,10 +904,10 @@ match_passwall_feed()
     fi
 
 
-    _pw_ok "已自动匹配软件源"
-    _pw_info "$PW_FEED_NAME"
+    # _pw_ok "已自动匹配软件源"
+    # _pw_info "$PW_FEED_NAME"
 
-    printf "\n"
+    # printf "\n"
 
     return 0
 }
@@ -915,7 +919,7 @@ match_passwall_feed()
 
 backup_passwall_feeds()
 {
-    _pw_info "正在备份原始软件源..."
+    # _pw_info "正在备份原始软件源..."
 
     rm -rf "$PW_BACKUP_DIR"
 
@@ -951,7 +955,7 @@ backup_passwall_feeds()
     fi
 
 
-    _pw_ok "原始软件源备份完成"
+    # _pw_ok "原始软件源备份完成"
 
     return 0
 }
@@ -963,7 +967,7 @@ backup_passwall_feeds()
 
 add_passwall_temp_feeds()
 {
-    _pw_info "正在添加 PassWall 临时软件源..."
+    # _pw_info "正在添加 PassWall 临时软件源..."
 
     mkdir -p /etc/opkg || return 1
 
@@ -1000,7 +1004,7 @@ add_passwall_temp_feeds()
         >> "$PW_CUSTOMFEEDS"
 
 
-    _pw_ok "临时软件源添加完成"
+    # _pw_ok "临时软件源添加完成"
 
     return 0
 }
@@ -1291,11 +1295,7 @@ interrupt_passwall()
 
 install_passwall()
 {
-    printf "\n"
-    printf "======================================\n"
-    printf "          PassWall Installer\n"
-    printf "======================================\n"
-    printf "\n"
+    PW_PROGRESS_READY=0
 
 
     # ========================================================
@@ -1335,9 +1335,7 @@ install_passwall()
     fi
 
 
-    _pw_info "Package Manager : $PW_PKG_MANAGER"
 
-    printf "\n"
 
 
     # ========================================================
@@ -1379,6 +1377,12 @@ install_passwall()
     # 备份源
     # ========================================================
 
+    if ! check_passwall; then
+        pw_init_progress
+        PW_PROGRESS_READY=1
+        pw_draw_progress 10 0 0 0 0 2
+    fi
+
     if ! backup_passwall_feeds; then
 
         _pw_error "软件源备份失败"
@@ -1387,6 +1391,10 @@ install_passwall()
 
     fi
 
+
+    if [ "$PW_PROGRESS_READY" = "1" ]; then
+        pw_draw_progress 30 0 0 0 0 6
+    fi
 
     trap 'cleanup_passwall' EXIT
     trap 'interrupt_passwall' INT TERM
@@ -1408,6 +1416,10 @@ install_passwall()
     fi
 
 
+    if [ "$PW_PROGRESS_READY" = "1" ]; then
+        pw_draw_progress 50 0 0 0 0 10
+    fi
+
     clean_passwall_lists
 
 
@@ -1415,9 +1427,9 @@ install_passwall()
     # 更新列表
     # ========================================================
 
-    printf "\n"
+    # printf "\n"
 
-    _pw_info "正在更新软件列表..."
+    # _pw_info "正在更新软件列表..."
 
     rm -f "$PW_UPDATE_LOG"
 
@@ -1449,16 +1461,20 @@ install_passwall()
 
     rm -f "$PW_UPDATE_LOG"
 
-    _pw_ok "软件列表更新完成"
+    if [ "$PW_PROGRESS_READY" = "1" ]; then
+        pw_draw_progress 80 0 0 0 0 16
+    fi
 
-    printf "\n"
+    # _pw_ok "软件列表更新完成"
+
+    # printf "\n"
 
 
     # ========================================================
     # 查询 PassWall
     # ========================================================
 
-    _pw_info "正在查询 luci-app-passwall..."
+    # _pw_info "正在查询 luci-app-passwall..."
 
 
     if ! pw_package_exists "luci-app-passwall"; then
@@ -1477,7 +1493,7 @@ install_passwall()
     fi
 
 
-    _pw_ok "已找到 luci-app-passwall"
+    # _pw_ok "已找到 luci-app-passwall"
 
 
     PW_VERSION="$(
@@ -1486,22 +1502,22 @@ install_passwall()
     )"
 
 
-    if [ -n "$PW_VERSION" ]; then
+    # if [ -n "$PW_VERSION" ]; then
 
-        _pw_info "PassWall Version : $PW_VERSION"
+        # _pw_info "PassWall Version : $PW_VERSION"
 
-    fi
+    # fi
 
 
     # ========================================================
     # 安装 PassWall
     # ========================================================
 
-    printf "\n"
+    # printf "\n"
 
-    _pw_info "开始安装 PassWall..."
+    # _pw_info "开始安装 PassWall..."
 
-    printf "\n"
+    # printf "\n"
 
 
     if ! pw_install_with_progress \
