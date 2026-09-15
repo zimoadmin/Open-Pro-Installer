@@ -162,10 +162,30 @@ swap_progress_bar()
 
 
 # 校验值仅用于发现内容变化，不输出配置内容。
+openpro_config_fingerprint()
+{
+    [ -f "$1" ] || return 1
+    for OPENPRO_HASH_CMD in cksum md5sum sha256sum; do
+        if command -v "$OPENPRO_HASH_CMD" >/dev/null 2>&1; then
+            OPENPRO_HASH_VALUE="$("$OPENPRO_HASH_CMD" < "$1" 2>/dev/null)" || continue
+            [ -n "$OPENPRO_HASH_VALUE" ] || continue
+            printf '%s\n' "$OPENPRO_HASH_VALUE"
+            return 0
+        fi
+    done
+    if command -v busybox >/dev/null 2>&1; then
+        OPENPRO_HASH_VALUE="$(busybox md5sum < "$1" 2>/dev/null)" || return 1
+        [ -n "$OPENPRO_HASH_VALUE" ] || return 1
+        printf '%s\n' "$OPENPRO_HASH_VALUE"
+        return 0
+    fi
+    return 1
+}
+
 swap_fingerprint()
 {
     [ -f "$1" ] || return 1
-    cksum < "$1" 2>/dev/null
+    openpro_config_fingerprint "$1"
 }
 
 swap_diag_file()
@@ -1032,8 +1052,7 @@ for CMD in \
     tr \
     cp \
     chmod \
-    cmp \
-    cksum
+    cmp
 do
 
     if ! command -v "$CMD" >/dev/null 2>&1; then
