@@ -84,6 +84,8 @@ OC_TEST_FILE="/tmp/openpro_openclash_speedtest"
 OC_TEST_DIR="/tmp/openpro_openclash_speedtest.d"
 
 OC_CORE_UPDATE_LOG="/tmp/openpro_openclash_core_update.log"
+OC_SWAP_LOG="/tmp/openpro_openclash_swap.log"
+OC_SWAP_REPORT="/tmp/openpro_openclash_swap_expected.$$"
 
 PROGRESS_PID=""
 CORE_UPDATE_PID=""
@@ -521,6 +523,7 @@ cleanup_core_update()
 cleanup_openclash_script_routes()
 {
     rm -f \
+        "$OC_SWAP_REPORT" \
         "$OC_SCRIPT_ROUTE_FILE" \
         2>/dev/null
 
@@ -546,6 +549,7 @@ check_openclash_runtime()
         tail \
         wc \
         du \
+        cksum \
         uci
     do
 
@@ -2677,9 +2681,57 @@ smart_download_openclash_script_cached()
 # [3/4] OpenClash Swap
 # ============================================================
 
+# 不读取配置内容到日志，仅比较本次下载与当前文件的校验值。
+verify_openclash_swap()
+{
+    OC_VERIFY_PHASE="$1"
+    if [ ! -s "$OC_SWAP_REPORT" ]; then
+        printf '[诊断] phase=%s result=missing_report（可能下载到旧版替换脚本）\n' \
+            "$OC_VERIFY_PHASE" >> "$OC_SWAP_LOG"
+        return 1
+    fi
+    OC_VERIFY_TARGET="$(sed -n '1p' "$OC_SWAP_REPORT")"
+    OC_VERIFY_EXPECTED="$(sed -n '2p' "$OC_SWAP_REPORT")"
+    if [ -z "$OC_VERIFY_TARGET" ] || [ -z "$OC_VERIFY_EXPECTED" ] ||
+       [ ! -f "$OC_VERIFY_TARGET" ]; then
+        printf '[诊断] phase=%s result=invalid_report_or_missing_target\n' \
+            "$OC_VERIFY_PHASE" >> "$OC_SWAP_LOG"
+        return 1
+    fi
+    OC_VERIFY_ACTUAL="$(cksum < "$OC_VERIFY_TARGET" 2>/dev/null)" || {
+        printf '[诊断] phase=%s result=checksum_failed\n' \
+            "$OC_VERIFY_PHASE" >> "$OC_SWAP_LOG"
+        return 1
+    }
+    printf '[诊断] phase=%s expected=%s actual=%s\n' \
+        "$OC_VERIFY_PHASE" "$OC_VERIFY_EXPECTED" "$OC_VERIFY_ACTUAL" >> "$OC_SWAP_LOG"
+    if [ "$OC_VERIFY_ACTUAL" != "$OC_VERIFY_EXPECTED" ]; then
+        printf '[诊断] phase=%s result=content_changed\n' "$OC_VERIFY_PHASE" >> "$OC_SWAP_LOG"
+        return 1
+    fi
+    printf '[诊断] phase=%s result=match\n' "$OC_VERIFY_PHASE" >> "$OC_SWAP_LOG"
+    return 0
+}
+
+openclash_swap_abort()
+{
+    # 曾显示完成但随后变化时，也撤销第三阶段的完成状态。
+    openclash_set_stage 3 0
+    _oc_error "$1"
+    printf '详细日志：%s\n' "$OC_SWAP_LOG"
+    tail -n 40 "$OC_SWAP_LOG" 2>/dev/null
+    cleanup_openclash_temp
+    cleanup_core_update
+    cleanup_openclash_script_routes
+    trap - INT TERM
+    return 1
+}
+
 run_openclash_swap()
 {
     SWAP_TMP="/tmp/openclash-swap.$$"
+    rm -f "$OC_SWAP_REPORT"
+    : > "$OC_SWAP_LOG" || return 1
 
     openclash_set_stage 3 10
 
@@ -2688,6 +2740,7 @@ run_openclash_swap()
         "$SWAP_TMP"
     then
 
+        printf "[诊断] phase=download_swap_script result=failed\n" >> "$OC_SWAP_LOG"
         rm -f "$SWAP_TMP" 2>/dev/null
 
         return 1
@@ -2712,10 +2765,12 @@ run_openclash_swap()
     openclash_set_stage 3 60
 
     OPENPRO_SCRIPT_ROUTE_FILE="$OC_SCRIPT_ROUTE_FILE" \
+        OPENPRO_SWAP_REPORT="$OC_SWAP_REPORT" \
         sh "$SWAP_TMP" \
-        >/tmp/openpro_openclash_swap.log 2>&1
+        >>"$OC_SWAP_LOG" 2>&1
 
     SWAP_RESULT=$?
+    printf "\n[诊断] phase=swap_process exit=%s\n" "$SWAP_RESULT" >> "$OC_SWAP_LOG"
 
     rm -f \
         "$SWAP_TMP" \
@@ -2723,6 +2778,7 @@ run_openclash_swap()
 
     if [ "$SWAP_RESULT" -eq 0 ]; then
 
+        verify_openclash_swap after_swap_return || return 1
         openclash_set_stage 3 100
 
         return 0
@@ -3234,16 +3290,17 @@ install_openclash()
 
         else
 
-            # Swap 属于增强功能
-            # 不影响 OpenClash 本体
-            openclash_set_stage 3 100
+            openclash_swap_abort "OpenClash 文件替换失败或校验不一致，已停止后续安装"
+            return 1
 
         fi
 
     else
 
-        # 没有线路缓存时跳过
-        openclash_set_stage 3 100
+        : > "$OC_SWAP_LOG"
+        printf '[诊断] phase=prepare_swap result=no_shared_routes\n' >> "$OC_SWAP_LOG"
+        openclash_swap_abort "缺少文件替换下载线路，未执行替换"
+        return 1
 
     fi
 
@@ -3282,7 +3339,17 @@ install_openclash()
 
     openclash_set_stage 4 95
 
+    if ! verify_openclash_swap before_luci_refresh; then
+        openclash_swap_abort "替换后、LuCI 刷新前配置内容发生变化"
+        return 1
+    fi
+
     reload_luci
+
+    if ! verify_openclash_swap after_luci_refresh; then
+        openclash_swap_abort "LuCI 刷新后配置内容发生变化"
+        return 1
+    fi
 
     openclash_set_stage 4 100
 
@@ -3292,7 +3359,7 @@ install_openclash()
 
     OC_STAGE_1=100
     OC_STAGE_2=100
-    OC_STAGE_3=100
+    # 第三阶段只保留已通过内容校验的状态。
     OC_STAGE_4=100
 
     show_openclash_stage_progress
