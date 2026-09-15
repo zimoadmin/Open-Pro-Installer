@@ -2943,13 +2943,6 @@ interrupt_openclash()
 
 install_openclash()
 {
-    printf "\n"
-
-    printf "======================================\n"
-    printf "        OpenClash Installer\n"
-    printf "======================================\n"
-
-    printf "\n"
 
     # ========================================================
     # Root
