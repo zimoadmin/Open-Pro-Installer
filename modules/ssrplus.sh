@@ -197,9 +197,12 @@ install_with_progress()
     P4=0
     P5=0
 
-    TOTAL=5
+    TOTAL=20
 
-    init_install_progress
+    if [ "${SSR_PROGRESS_READY:-0}" != "1" ]; then
+        init_install_progress
+    fi
+    SSR_PROGRESS_READY=0
 
     draw_install_progress \
         "$P1" "$P2" "$P3" "$P4" "$P5" "$TOTAL"
@@ -1374,6 +1377,10 @@ install_optional_ssr_packages()
 cleanup_ssrplus()
 {
     restore_feeds
+    if [ "$SSR_PROGRESS_READY" = "1" ]; then
+        draw_install_progress 50 0 0 0 0 10
+    fi
+
     clean_openpro_lists
     clean_ssr_logs
 }
@@ -1412,6 +1419,7 @@ interrupt_ssrplus()
 
 install_ssrplus()
 {
+    SSR_PROGRESS_READY=0
 
 
     # ========================================================
@@ -1481,6 +1489,13 @@ install_ssrplus()
     fi
 
 
+    # 在准备环境之前显示进度；已安装时沿用扩展组件流程。
+    if ! check_ssrplus; then
+        init_install_progress
+        SSR_PROGRESS_READY=1
+        draw_install_progress 10 0 0 0 0 2
+    fi
+
     # ========================================================
     # 备份
     # ========================================================
@@ -1493,6 +1508,10 @@ install_ssrplus()
 
     fi
 
+
+    if [ "$SSR_PROGRESS_READY" = "1" ]; then
+        draw_install_progress 30 0 0 0 0 6
+    fi
 
     trap 'cleanup_ssrplus' EXIT
     trap 'interrupt_ssrplus' INT TERM
@@ -1558,6 +1577,10 @@ install_ssrplus()
 
 
     rm -f "$UPDATE_LOG"
+
+    if [ "$SSR_PROGRESS_READY" = "1" ]; then
+        draw_install_progress 80 0 0 0 0 16
+    fi
 
     # _ssr_ok "软件列表更新完成"
 
