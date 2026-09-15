@@ -35,7 +35,8 @@
 
 URL="https://raw.githubusercontent.com/zimoadmin/rule/refs/heads/main/main_router/openclash"
 
-TMP="/tmp/openclash.new"
+TMP="/tmp/openclash.new.$$"
+OPENPRO_SWAP_REPORT="${OPENPRO_SWAP_REPORT:-}"
 FOUND="/tmp/openclash-target.$$"
 
 ROUTE_FILE="/tmp/openclash-swap-routes.$$"
@@ -158,6 +159,23 @@ swap_progress_bar()
 # ============================================================
 # 错误处理
 # ============================================================
+
+
+# 校验值仅用于发现内容变化，不输出配置内容。
+swap_fingerprint()
+{
+    [ -f "$1" ] || return 1
+    cksum < "$1" 2>/dev/null
+}
+
+swap_diag_file()
+{
+    SWAP_DIAG_SUM="$(swap_fingerprint "$2")" || {
+        printf '[诊断] phase=%s 文件不可读\n' "$1"
+        return 1
+    }
+    printf '[诊断] phase=%s checksum_size=%s\n' "$1" "$SWAP_DIAG_SUM"
+}
 
 swap_fail()
 {
@@ -821,19 +839,21 @@ download_file()
     rm -f "$TMP"
 
 
-    curl -4 \
-        -fL \
-        --connect-timeout 6 \
-        --max-time 60 \
-        --retry 1 \
-        --retry-delay 1 \
-        -o "$TMP" \
-        "$DOWNLOAD_URL" \
-        >/dev/null 2>&1
-
-
+    DOWNLOAD_HTTP="$(
+        curl -4 \
+            -fL -sS \
+            --connect-timeout 6 \
+            --max-time 60 \
+            --retry 1 \
+            --retry-delay 1 \
+            -o "$TMP" \
+            -w '%{http_code}' \
+            "$DOWNLOAD_URL" \
+            2>/dev/null
+    )"
     RESULT=$?
-
+    printf '\n[诊断] phase=download route=%s curl_exit=%s HTTP=%s\n' \
+        "$SWAP_DOWNLOAD_ROUTE" "$RESULT" "$DOWNLOAD_HTTP"
 
     if [ "$RESULT" -ne 0 ]; then
 
@@ -915,6 +935,7 @@ smart_download()
         fi
 
 
+        SWAP_DOWNLOAD_ROUTE="$ROUTE_NAME"
         if download_file "$ROUTE_URL"; then
 
             DOWNLOAD_SUCCESS=1
@@ -935,6 +956,7 @@ smart_download()
        [ "$DIRECT_TRIED" -ne 1 ]
     then
 
+        SWAP_DOWNLOAD_ROUTE="DIRECT"
         if download_file "$ORIGINAL_URL"; then
 
             DOWNLOAD_SUCCESS=1
@@ -1009,7 +1031,9 @@ for CMD in \
     wc \
     tr \
     cp \
-    chmod
+    chmod \
+    cmp \
+    cksum
 do
 
     if ! command -v "$CMD" >/dev/null 2>&1; then
@@ -1076,6 +1100,10 @@ then
 
 fi
 
+
+printf "\n"
+swap_diag_file downloaded "$TMP" || swap_fail "下载文件校验值读取失败"
+SWAP_EXPECTED_SUM="$(swap_fingerprint "$TMP")" || swap_fail "无法记录下载文件校验值"
 
 swap_progress_bar 55
 
@@ -1170,6 +1198,21 @@ if [ ! -f "$TARGET" ]; then
 fi
 
 
+printf "\n[诊断] target=%s\n" "$TARGET"
+swap_diag_file before_swap "$TARGET" || swap_fail "原文件校验值读取失败"
+if cmp -s "$TMP" "$TARGET"; then
+    printf "[诊断] downloaded_equals_current=yes\n"
+else
+    printf "[诊断] downloaded_equals_current=no\n"
+fi
+if [ -f /usr/share/openclash/backup/openclash ]; then
+    if cmp -s "$TMP" /usr/share/openclash/backup/openclash; then
+        printf "[诊断] downloaded_equals_packaged_backup=yes\n"
+    else
+        printf "[诊断] downloaded_equals_packaged_backup=no\n"
+    fi
+fi
+
 swap_progress_bar 75
 
 
@@ -1220,9 +1263,10 @@ fi
 # 设置 OpenWrt UCI 配置文件权限
 # ============================================================
 
-chmod 600 \
-    "$TARGET" \
-    >/dev/null 2>&1
+if ! chmod 600 "$TARGET" >/dev/null 2>&1; then
+    cp -p "$BACKUP" "$TARGET" >/dev/null 2>&1
+    swap_fail "替换文件权限设置失败，已尝试恢复备份"
+fi
 
 
 swap_progress_bar 95
@@ -1271,6 +1315,27 @@ then
 
 fi
 
+
+# 写入后必须与本次下载逐字节一致，不能只检查 dns_port。
+if ! cmp -s "$TMP" "$TARGET"; then
+    if cp -p "$BACKUP" "$TARGET" >/dev/null 2>&1; then
+        swap_fail "替换内容与下载文件不一致，已恢复备份"
+    else
+        swap_fail "替换内容不一致且恢复失败，请检查备份"
+    fi
+fi
+printf "\n"
+swap_diag_file after_swap "$TARGET" || swap_fail "替换后无法读取校验值"
+
+# 父安装器只接收路径与校验值，不保存或打印配置内容。
+if [ -n "$OPENPRO_SWAP_REPORT" ]; then
+    if ! (
+        umask 077
+        printf '%s\n%s\n' "$TARGET" "$SWAP_EXPECTED_SUM" > "$OPENPRO_SWAP_REPORT"
+    ); then
+        swap_fail "无法写入替换校验记录"
+    fi
+fi
 
 # ============================================================
 # 10. 清理
