@@ -549,7 +549,6 @@ check_openclash_runtime()
         tail \
         wc \
         du \
-        cksum \
         uci
     do
 
@@ -2682,6 +2681,26 @@ smart_download_openclash_script_cached()
 # ============================================================
 
 # 不读取配置内容到日志，仅比较本次下载与当前文件的校验值。
+openpro_config_fingerprint()
+{
+    [ -f "$1" ] || return 1
+    for OPENPRO_HASH_CMD in cksum md5sum sha256sum; do
+        if command -v "$OPENPRO_HASH_CMD" >/dev/null 2>&1; then
+            OPENPRO_HASH_VALUE="$("$OPENPRO_HASH_CMD" < "$1" 2>/dev/null)" || continue
+            [ -n "$OPENPRO_HASH_VALUE" ] || continue
+            printf '%s\n' "$OPENPRO_HASH_VALUE"
+            return 0
+        fi
+    done
+    if command -v busybox >/dev/null 2>&1; then
+        OPENPRO_HASH_VALUE="$(busybox md5sum < "$1" 2>/dev/null)" || return 1
+        [ -n "$OPENPRO_HASH_VALUE" ] || return 1
+        printf '%s\n' "$OPENPRO_HASH_VALUE"
+        return 0
+    fi
+    return 1
+}
+
 verify_openclash_swap()
 {
     OC_VERIFY_PHASE="$1"
@@ -2698,7 +2717,7 @@ verify_openclash_swap()
             "$OC_VERIFY_PHASE" >> "$OC_SWAP_LOG"
         return 1
     fi
-    OC_VERIFY_ACTUAL="$(cksum < "$OC_VERIFY_TARGET" 2>/dev/null)" || {
+    OC_VERIFY_ACTUAL="$(openpro_config_fingerprint "$OC_VERIFY_TARGET")" || {
         printf '[诊断] phase=%s result=checksum_failed\n' \
             "$OC_VERIFY_PHASE" >> "$OC_SWAP_LOG"
         return 1
