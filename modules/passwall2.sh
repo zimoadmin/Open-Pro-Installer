@@ -203,9 +203,12 @@ pw2_install_with_progress()
     P3=0
     P4=0
     P5=0
-    TOTAL=5
+    TOTAL=20
 
-    pw2_init_progress
+    if [ "${PW2_PROGRESS_READY:-0}" != "1" ]; then
+        pw2_init_progress
+    fi
+    PW2_PROGRESS_READY=0
 
     pw2_draw_progress \
         "$P1" "$P2" "$P3" "$P4" "$P5" "$TOTAL"
@@ -363,7 +366,7 @@ pw2_install_with_progress()
 
 detect_passwall2_system()
 {
-    _pw2_info "正在检测设备信息..."
+    # _pw2_info "正在检测设备信息..."
 
     PW2_MODEL="unknown"
     PW2_OPENWRT_VERSION="unknown"
@@ -816,8 +819,9 @@ detect_passwall2_system()
 
     printf "\n"
     printf "======================================\n"
-    printf "          设备检测结果\n"
+    printf "        PassWall2 Installer\n"
     printf "======================================\n"
+    printf "包管理器 : %s\n" "$PW2_PKG_MANAGER"
     printf "机型     : %s\n" "$PW2_MODEL"
     printf "平台     : %s\n" "$PW2_PLATFORM"
     printf "OpenWrt  : %s\n" "$PW2_OPENWRT_VERSION"
@@ -1053,10 +1057,10 @@ match_passwall2_feed()
     fi
 
 
-    _pw2_ok "已自动匹配软件源"
-    _pw2_info "$PW2_FEED_NAME"
+    # _pw2_ok "已自动匹配软件源"
+    # _pw2_info "$PW2_FEED_NAME"
 
-    printf "\n"
+    # printf "\n"
 
     return 0
 }
@@ -1068,7 +1072,7 @@ match_passwall2_feed()
 
 backup_passwall2_feeds()
 {
-    _pw2_info "正在备份原始软件源..."
+    # _pw2_info "正在备份原始软件源..."
 
     rm -rf "$PW2_BACKUP_DIR"
 
@@ -1126,7 +1130,7 @@ backup_passwall2_feeds()
     fi
 
 
-    _pw2_ok "原始软件源备份完成"
+    # _pw2_ok "原始软件源备份完成"
 
     return 0
 }
@@ -1138,7 +1142,7 @@ backup_passwall2_feeds()
 
 add_passwall2_temp_feeds()
 {
-    _pw2_info "正在添加 PassWall2 临时软件源..."
+    # _pw2_info "正在添加 PassWall2 临时软件源..."
 
 
     mkdir -p /etc/opkg || {
@@ -1197,7 +1201,7 @@ add_passwall2_temp_feeds()
         >> "$PW2_CUSTOMFEEDS"
 
 
-    _pw2_ok "临时软件源添加完成"
+    # _pw2_ok "临时软件源添加完成"
 
     return 0
 }
@@ -1586,11 +1590,7 @@ interrupt_passwall2()
 
 install_passwall2()
 {
-    printf "\n"
-    printf "======================================\n"
-    printf "         PassWall2 Installer\n"
-    printf "======================================\n"
-    printf "\n"
+    PW2_PROGRESS_READY=0
 
 
     # ========================================================
@@ -1631,9 +1631,7 @@ install_passwall2()
     fi
 
 
-    _pw2_info "Package Manager : $PW2_PKG_MANAGER"
 
-    printf "\n"
 
 
     # ========================================================
@@ -1662,6 +1660,12 @@ install_passwall2()
     # 备份原始软件源
     # ========================================================
 
+    if ! check_passwall2; then
+        pw2_init_progress
+        PW2_PROGRESS_READY=1
+        pw2_draw_progress 10 0 0 0 0 2
+    fi
+
     if ! backup_passwall2_feeds; then
 
         _pw2_error "软件源备份失败"
@@ -1674,6 +1678,10 @@ install_passwall2()
     # ========================================================
     # 安全恢复
     # ========================================================
+
+    if [ "$PW2_PROGRESS_READY" = "1" ]; then
+        pw2_draw_progress 30 0 0 0 0 6
+    fi
 
     trap 'cleanup_passwall2' EXIT
     trap 'interrupt_passwall2' INT TERM
@@ -1696,6 +1704,10 @@ install_passwall2()
     fi
 
 
+    if [ "$PW2_PROGRESS_READY" = "1" ]; then
+        pw2_draw_progress 50 0 0 0 0 10
+    fi
+
     clean_passwall2_lists
 
 
@@ -1703,9 +1715,9 @@ install_passwall2()
     # 更新软件列表
     # ========================================================
 
-    printf "\n"
+    # printf "\n"
 
-    _pw2_info "正在更新软件列表..."
+    # _pw2_info "正在更新软件列表..."
 
     rm -f "$PW2_UPDATE_LOG"
 
@@ -1738,9 +1750,13 @@ install_passwall2()
 
     rm -f "$PW2_UPDATE_LOG"
 
-    _pw2_ok "软件列表更新完成"
+    if [ "$PW2_PROGRESS_READY" = "1" ]; then
+        pw2_draw_progress 80 0 0 0 0 16
+    fi
 
-    printf "\n"
+    # _pw2_ok "软件列表更新完成"
+
+    # printf "\n"
 
 
     # ========================================================
@@ -1757,7 +1773,7 @@ install_passwall2()
         # 查询 PassWall2
         # ====================================================
 
-        _pw2_info "正在查询 luci-app-passwall2..."
+        # _pw2_info "正在查询 luci-app-passwall2..."
 
 
         if ! pw2_package_exists "luci-app-passwall2"; then
@@ -1778,7 +1794,7 @@ install_passwall2()
         fi
 
 
-        _pw2_ok "已找到 luci-app-passwall2"
+        # _pw2_ok "已找到 luci-app-passwall2"
 
 
         # ====================================================
@@ -1791,22 +1807,22 @@ install_passwall2()
         )"
 
 
-        if [ -n "$PW2_VERSION" ]; then
+        # if [ -n "$PW2_VERSION" ]; then
 
-            _pw2_info "PassWall2 Version : $PW2_VERSION"
+            # _pw2_info "PassWall2 Version : $PW2_VERSION"
 
-        fi
+        # fi
 
 
         # ====================================================
         # 开始安装
         # ====================================================
 
-        printf "\n"
+        # printf "\n"
 
-        _pw2_info "开始安装 PassWall2..."
+        # _pw2_info "开始安装 PassWall2..."
 
-        printf "\n"
+        # printf "\n"
 
 
         if ! pw2_install_with_progress \
