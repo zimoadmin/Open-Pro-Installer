@@ -358,7 +358,7 @@ install_with_progress()
 
 detect_system()
 {
-    _ssr_info "正在检测设备信息..."
+    # _ssr_info "正在检测设备信息..."
 
     MODEL="unknown"
     OPENWRT_VERSION="unknown"
@@ -727,8 +727,9 @@ detect_system()
 
     printf "\n"
     printf "======================================\n"
-    printf "          设备检测结果\n"
+    printf "        SSR Plus+ Installer\n"
     printf "======================================\n"
+    printf "包管理器 : %s\n" "$PKG_MANAGER"
     printf "机型     : %s\n" "$MODEL"
     printf "平台     : %s\n" "$PLATFORM"
     printf "OpenWrt  : %s\n" "$OPENWRT_VERSION"
@@ -963,10 +964,10 @@ match_feed()
     fi
 
 
-    _ssr_ok "已自动匹配软件源"
-    _ssr_info "$FEED_NAME"
+    # _ssr_ok "已自动匹配软件源"
+    # _ssr_info "$FEED_NAME"
 
-    printf "\n"
+    # printf "\n"
 
     return 0
 }
@@ -978,7 +979,7 @@ match_feed()
 
 backup_feeds()
 {
-    _ssr_info "正在备份原始软件源..."
+    # _ssr_info "正在备份原始软件源..."
 
     rm -rf "$BACKUP_DIR"
 
@@ -1016,7 +1017,7 @@ backup_feeds()
     fi
 
 
-    _ssr_ok "原始软件源备份完成"
+    # _ssr_ok "原始软件源备份完成"
 
     return 0
 }
@@ -1028,7 +1029,7 @@ backup_feeds()
 
 add_temp_feeds()
 {
-    _ssr_info "正在添加 SSR Plus+ 临时软件源..."
+    # _ssr_info "正在添加 SSR Plus+ 临时软件源..."
 
 
     mkdir -p /etc/opkg || return 1
@@ -1065,7 +1066,7 @@ add_temp_feeds()
         >> "$CUSTOMFEEDS"
 
 
-    _ssr_ok "临时软件源添加完成"
+    # _ssr_ok "临时软件源添加完成"
 
     return 0
 }
@@ -1411,11 +1412,6 @@ interrupt_ssrplus()
 
 install_ssrplus()
 {
-    printf "\n"
-    printf "======================================\n"
-    printf "        SSR Plus+ Installer\n"
-    printf "======================================\n"
-    printf "\n"
 
 
     # ========================================================
@@ -1455,9 +1451,7 @@ install_ssrplus()
     fi
 
 
-    _ssr_info "Package Manager : $PKG_MANAGER"
 
-    printf "\n"
 
 
     # ========================================================
@@ -1528,9 +1522,9 @@ install_ssrplus()
     # 更新软件列表
     # ========================================================
 
-    printf "\n"
+    # printf "\n"
 
-    _ssr_info "正在更新软件列表..."
+    # _ssr_info "正在更新软件列表..."
 
     rm -f "$UPDATE_LOG"
 
@@ -1565,9 +1559,9 @@ install_ssrplus()
 
     rm -f "$UPDATE_LOG"
 
-    _ssr_ok "软件列表更新完成"
+    # _ssr_ok "软件列表更新完成"
 
-    printf "\n"
+    # printf "\n"
 
 
     # ========================================================
@@ -1587,7 +1581,7 @@ install_ssrplus()
         # 查询 SSR Plus+
         # ====================================================
 
-        _ssr_info "正在查询 luci-app-ssr-plus..."
+        # _ssr_info "正在查询 luci-app-ssr-plus..."
 
 
         SSR_PACKAGE="$(
@@ -1614,7 +1608,7 @@ install_ssrplus()
         fi
 
 
-        _ssr_ok "已找到 luci-app-ssr-plus"
+        # _ssr_ok "已找到 luci-app-ssr-plus"
 
 
         # ====================================================
@@ -1631,22 +1625,22 @@ install_ssrplus()
         )"
 
 
-        if [ -n "$SSR_VERSION" ]; then
+        # if [ -n "$SSR_VERSION" ]; then
 
-            _ssr_info "SSR Plus+ Version : $SSR_VERSION"
+            # _ssr_info "SSR Plus+ Version : $SSR_VERSION"
 
-        fi
+        # fi
 
 
         # ====================================================
         # 五阶段安装
         # ====================================================
 
-        printf "\n"
+        # printf "\n"
 
-        _ssr_info "开始安装 SSR Plus+..."
+        # _ssr_info "开始安装 SSR Plus+..."
 
-        printf "\n"
+        # printf "\n"
 
 
         if ! install_with_progress \
