@@ -33,8 +33,12 @@ DIRECT|
 
 _e58_info(){ printf '\033[1;92m[INFO]\033[0m %s\n' "$*"; }
 _e58_ok(){ printf '\033[1;92m[OK]\033[0m %s\n' "$*"; }
-_e58_warn(){ printf '\033[1;93m[WARN]\033[0m %s\n' "$*"; }
-_e58_error(){ printf '\033[1;91m[ERROR]\033[0m %s\n' "$*"; }
+_e58_warn(){
+    openpro_ui_note "WARN" "$*"
+ printf '\033[1;93m[WARN]\033[0m %s\n' "$*"; }
+_e58_error(){
+    openpro_ui_note "ERROR" "$*"
+ printf '\033[1;91m[ERROR]\033[0m %s\n' "$*"; }
 
 _e58_show_log()
 {
@@ -541,14 +545,8 @@ _e58_install_ipk()
     _e58_ok "E5800 屏幕中文包安装完成"
 }
 
-install_e5800_screen_zh()
+install_e5800_screen_zh_body()
 {
-    printf '\n'
-    printf '\033[1;94m╔══════════════════════════════════════╗\033[0m\n'
-    printf '\033[1;94m║\033[1;92m      E5800 屏幕中文一键安装          \033[1;94m║\033[0m\n'
-    printf '\033[1;94m╚══════════════════════════════════════╝\033[0m\n'
-    printf '\n'
-
     [ "$(id -u 2>/dev/null)" = "0" ] || {
         _e58_error "请使用 root 用户运行"
         return 1
@@ -564,18 +562,24 @@ install_e5800_screen_zh()
 
     : > "$E5800_LOG"
 
+    openpro_ui_step 1 10
     _e58_check_runtime || return 1
+    openpro_ui_step 1 30
     _e58_check_device || return 1
+    openpro_ui_step 1 50
     _e58_check_space || return 1
 
+    openpro_ui_step 1 70
     _e58_get_release || {
         _e58_show_log
         _e58_cleanup
         return 1
     }
 
+    openpro_ui_step 2 0
     _e58_prepare_routes "$E5800_ASSET_URL" || true
 
+    openpro_ui_step 2 40
     _e58_download "$E5800_ASSET_URL" || {
         _e58_error "下载失败"
         _e58_show_log
@@ -583,6 +587,7 @@ install_e5800_screen_zh()
         return 1
     }
 
+    openpro_ui_step 3 0
     _e58_install_ipk || {
         _e58_error "安装失败"
         _e58_show_log
@@ -590,12 +595,14 @@ install_e5800_screen_zh()
         return 1
     }
 
+    openpro_ui_step 4 50
     INSTALLED_VERSION="$(
         opkg status "$E5800_PACKAGE" 2>/dev/null |
         sed -n 's/^Version:[[:space:]]*//p' |
         head -n 1
     )"
 
+    openpro_ui_step 5 50
     _e58_cleanup
 
     printf '\n'
@@ -608,4 +615,94 @@ install_e5800_screen_zh()
     printf '\n'
 
     return 0
+}
+
+
+# 详细过程写入日志；面板、警告和错误使用独立输出。
+openpro_ui_draw() {
+    [ "$OPENPRO_UI_ACTIVE" = 1 ] || return 0
+    [ "$OPENPRO_UI_DRAWN" != 1 ] || printf '\033[6A' >&9
+    OPENPRO_UI_TOTAL=0
+    for OPENPRO_UI_I in 1 2 3 4 5; do
+        if [ "$OPENPRO_UI_I" -lt "$OPENPRO_UI_STAGE" ]; then OPENPRO_UI_P=100
+        elif [ "$OPENPRO_UI_I" -eq "$OPENPRO_UI_STAGE" ]; then OPENPRO_UI_P="$OPENPRO_UI_PERCENT"
+        else OPENPRO_UI_P=0; fi
+        OPENPRO_UI_TOTAL=$((OPENPRO_UI_TOTAL + OPENPRO_UI_P))
+        case "$OPENPRO_UI_I" in
+            1) OPENPRO_UI_LABEL="准备安装环境";;
+            2) OPENPRO_UI_LABEL="测速下载安装";;
+            3) OPENPRO_UI_LABEL="安装软件组件";;
+            4) OPENPRO_UI_LABEL="配置与检查";;
+            5) OPENPRO_UI_LABEL="完成安装";;
+        esac
+        OPENPRO_UI_BAR=""
+        OPENPRO_UI_N=0
+        while [ "$OPENPRO_UI_N" -lt 20 ]; do
+            if [ "$OPENPRO_UI_N" -lt $((OPENPRO_UI_P / 5)) ]; then
+                OPENPRO_UI_BAR="$OPENPRO_UI_BAR#"
+            else OPENPRO_UI_BAR="$OPENPRO_UI_BAR-"; fi
+            OPENPRO_UI_N=$((OPENPRO_UI_N + 1))
+        done
+        printf '\033[2K\r[%s/5] %s [%s] %3s%%\n' "$OPENPRO_UI_I" "$OPENPRO_UI_LABEL" "$OPENPRO_UI_BAR" "$OPENPRO_UI_P" >&9
+    done
+    printf '\033[2K\r总体进度：%3s%%\n' "$((OPENPRO_UI_TOTAL / 5))" >&9
+    OPENPRO_UI_DRAWN=1
+}
+openpro_ui_step() {
+    OPENPRO_UI_STAGE="$1"
+    OPENPRO_UI_PERCENT="$2"
+    openpro_ui_draw
+}
+openpro_ui_note() {
+    [ "$OPENPRO_UI_ACTIVE" = 1 ] || return 0
+    if [ "$OPENPRO_UI_DRAWN" = 1 ]; then
+        printf '\033[6A\033[J' >&9
+        OPENPRO_UI_DRAWN=0
+    fi
+    printf '[%s] %s\n' "$1" "$2" >&9
+    openpro_ui_draw
+}
+openpro_ui_begin() {
+    OPENPRO_UI_NAME="$1"
+    OPENPRO_UI_LOG="$2"
+    exec 9>&1
+    OPENPRO_UI_ACTIVE=1
+    OPENPRO_UI_DRAWN=0
+    OPENPRO_UI_STAGE=1
+    OPENPRO_UI_PERCENT=0
+    (
+        [ ! -f /etc/openwrt_release ] || . /etc/openwrt_release
+        OPENPRO_UI_PM=unknown
+        if command -v apk >/dev/null 2>&1; then OPENPRO_UI_PM=apk
+        elif command -v opkg >/dev/null 2>&1; then OPENPRO_UI_PM=opkg; fi
+        [ "$3" != opkg ] || OPENPRO_UI_PM=opkg
+        printf '\n======================================\n%s Installer\n--------------------------------------\n' "$OPENPRO_UI_NAME"
+        printf '包管理器 : %s\n' "$OPENPRO_UI_PM"
+        printf '设备型号 : %s\n' "$(cat /tmp/sysinfo/model 2>/dev/null || printf unknown)"
+        printf 'OpenWrt  : %s\nTarget   : %s\n' "$DISTRIB_RELEASE" "$DISTRIB_TARGET"
+        printf 'CPU 架构 : %s\n软件架构 : %s\n' "$(uname -m)" "$DISTRIB_ARCH"
+        printf '======================================\n'
+    ) >&9
+    openpro_ui_draw
+}
+openpro_ui_end() {
+    if [ "$1" -eq 0 ]; then
+        openpro_ui_step 5 100
+        printf '[OK] %s 安装完成\n' "$OPENPRO_UI_NAME" >&9
+        grep -E '配置备份：|当前配置为停用|Release：|Installed：|如屏幕' "$OPENPRO_UI_LOG" >&9 || :
+    else
+        printf '[ERROR] %s 安装未完成（退出码 %s）\n' "$OPENPRO_UI_NAME" "$1" >&9
+        tail -n 25 "$OPENPRO_UI_LOG" >&9
+    fi
+    printf '详细日志：%s\n' "$OPENPRO_UI_LOG" >&9
+    OPENPRO_UI_ACTIVE=0
+    exec 9>&-
+}
+
+install_e5800_screen_zh() {
+    openpro_ui_begin "E5800 屏幕中文" "/tmp/openpro_e5800_ui.log" "opkg"
+    install_e5800_screen_zh_body "$@" > "$OPENPRO_UI_LOG" 2>&1
+    OPENPRO_UI_RC=$?
+    openpro_ui_end "$OPENPRO_UI_RC"
+    return "$OPENPRO_UI_RC"
 }
