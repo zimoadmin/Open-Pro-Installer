@@ -1382,9 +1382,6 @@ cleanup_ssrplus()
     for SSR_ROUTE_PID in $SSR_ROUTE_PIDS; do wait "$SSR_ROUTE_PID" 2>/dev/null || :; done
     SSR_ROUTE_PIDS=""
     restore_feeds
-    if [ "$SSR_PROGRESS_READY" = "1" ]; then
-        draw_install_progress 50 0 0 0 0 10
-    fi
 
     clean_openpro_lists
     clean_ssr_logs
@@ -1663,34 +1660,15 @@ install_ssrplus()
 
 
     if ! opkg update >"$UPDATE_LOG" 2>&1; then
-
         printf "\n"
-
-        _ssr_error "软件源更新失败"
-
-
-        if [ -s "$UPDATE_LOG" ]; then
-
-            printf "\n"
-            printf "========== OPKG UPDATE ERROR ==========\n"
-
-            cat "$UPDATE_LOG"
-
-            printf "=======================================\n"
-
-        fi
-
-
-        cleanup_ssrplus
-
-        trap - EXIT INT TERM
-
-        return 1
-
+        _ssr_warn "部分依赖源更新失败；继续获取 GitHub 主程序，并检查可用依赖"
+        tail -n 12 "$UPDATE_LOG"
+        # 不继续使用这次失败的临时源索引，也不关闭签名验证。
+        restore_feeds
+        clean_openpro_lists
+        init_install_progress
+        SSR_PROGRESS_READY=1
     fi
-
-
-    rm -f "$UPDATE_LOG"
 
     if [ "$SSR_PROGRESS_READY" = "1" ]; then
         draw_install_progress 80 0 0 0 0 16
@@ -1706,6 +1684,19 @@ install_ssrplus()
     # ========================================================
 
     if ! ssr_fetch_latest; then
+        cleanup_ssrplus
+        trap - EXIT INT TERM
+        return 1
+    fi
+
+    if ! opkg --noaction install "$SSR_LOCAL_IPK" >"$INSTALL_LOG" 2>&1; then
+        printf "\n"
+        _ssr_error "SSR Plus+ 依赖预检失败，尚未执行安装"
+        cat "$INSTALL_LOG"
+        if [ -s "$UPDATE_LOG" ]; then
+            printf '\n========== 软件源更新记录 ==========\n'
+            tail -n 25 "$UPDATE_LOG"
+        fi
         cleanup_ssrplus
         trap - EXIT INT TERM
         return 1
