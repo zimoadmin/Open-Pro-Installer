@@ -1378,6 +1378,9 @@ install_optional_ssr_packages()
 
 cleanup_ssrplus()
 {
+    for SSR_ROUTE_PID in $SSR_ROUTE_PIDS; do kill "$SSR_ROUTE_PID" 2>/dev/null || :; done
+    for SSR_ROUTE_PID in $SSR_ROUTE_PIDS; do wait "$SSR_ROUTE_PID" 2>/dev/null || :; done
+    SSR_ROUTE_PIDS=""
     restore_feeds
     if [ "$SSR_PROGRESS_READY" = "1" ]; then
         draw_install_progress 50 0 0 0 0 10
@@ -1387,6 +1390,7 @@ cleanup_ssrplus()
     clean_ssr_logs
     if [ -n "$SSR_DOWNLOAD_DIR" ]; then
         rm -f "$SSR_DOWNLOAD_DIR/release.json" "$SSR_LOCAL_IPK"
+        rm -f "$SSR_DOWNLOAD_DIR"/sample_* "$SSR_DOWNLOAD_DIR"/route_* "$SSR_DOWNLOAD_DIR/ranked"
         rmdir "$SSR_DOWNLOAD_DIR" 2>/dev/null || :
         SSR_DOWNLOAD_DIR=""
         SSR_LOCAL_IPK=""
@@ -1425,6 +1429,76 @@ interrupt_ssrplus()
 # 主安装函数
 # ============================================================
 
+# 与 OpenClash 相同的代理线路、6 秒并发测速和 10 MB 综合评分。
+SSR_DOWNLOAD_NODES="
+GH01|https://ghproxy.net/
+GH02|https://gh-proxy.org/
+GH03|https://gh-proxy.com/
+GH04|https://cdn.akaere.online/
+GH05|https://github.mxw.qzz.io/
+GH06|https://gh.07150721.xyz/
+DIRECT|
+"
+SSR_ROUTE_PIDS=""
+
+ssr_test_route()
+(
+    SSR_NODE="$1"
+    SSR_PREFIX="$2"
+    SSR_SAMPLE="$SSR_DOWNLOAD_DIR/sample_$SSR_NODE"
+    SSR_METRICS="$(curl -4 -fLsS --connect-timeout 4 --max-time 6 \
+        -o "$SSR_SAMPLE" -w '%{http_code}|%{time_starttransfer}|%{speed_download}|%{size_download}' \
+        "$SSR_PREFIX$SSR_ASSET_URL" 2>/dev/null)"
+    SSR_TEST_RC=$?
+    case "$SSR_TEST_RC" in 0|28) ;; *) rm -f "$SSR_SAMPLE"; exit 1;; esac
+    if head -c 1024 "$SSR_SAMPLE" 2>/dev/null | grep -Eqi '<html|<!doctype|bad gateway|access denied'; then
+        rm -f "$SSR_SAMPLE"
+        exit 1
+    fi
+    printf '%s\n' "$SSR_METRICS" | awk -F '|' -v node="$SSR_NODE" -v prefix="$SSR_PREFIX" '
+        ($1 == 200 || $1 == 206) && $2 ~ /^[0-9.]+$/ && $3 > 0 && $4 >= 4096 {
+            printf "%.0f|%s|%s\n", $2 * 1000 + 10485760 / $3 * 1000, node, prefix
+        }' > "$SSR_DOWNLOAD_DIR/route_$SSR_NODE"
+    rm -f "$SSR_SAMPLE"
+)
+
+ssr_download_fastest()
+{
+    SSR_ROUTE_PIDS=""
+    for SSR_NODE in GH01 GH02 GH03 GH04 GH05 GH06 DIRECT; do
+        SSR_PREFIX="$(printf '%s\n' "$SSR_DOWNLOAD_NODES" | awk -F '|' -v n="$SSR_NODE" '$1==n {print $2;exit}')"
+        ssr_test_route "$SSR_NODE" "$SSR_PREFIX" &
+        SSR_ROUTE_PIDS="$SSR_ROUTE_PIDS $!"
+    done
+    for SSR_ROUTE_PID in $SSR_ROUTE_PIDS; do wait "$SSR_ROUTE_PID" || :; done
+    SSR_ROUTE_PIDS=""
+    cat "$SSR_DOWNLOAD_DIR"/route_* 2>/dev/null | sort -t '|' -k1,1n > "$SSR_DOWNLOAD_DIR/ranked"
+    # 测速暂时不可用的线路仍放在最后尝试，不丢失可恢复的下载机会。
+    for SSR_NODE in GH01 GH02 GH03 GH04 GH05 GH06 DIRECT; do
+        if ! awk -F '|' -v n="$SSR_NODE" '$2==n {found=1} END {exit !found}' "$SSR_DOWNLOAD_DIR/ranked"; then
+            SSR_PREFIX="$(printf '%s\n' "$SSR_DOWNLOAD_NODES" | awk -F '|' -v n="$SSR_NODE" '$1==n {print $2;exit}')"
+            printf '999999999|%s|%s\n' "$SSR_NODE" "$SSR_PREFIX" >> "$SSR_DOWNLOAD_DIR/ranked"
+        fi
+    done
+    draw_install_progress 100 30 0 0 0 26
+    while IFS='|' read -r SSR_SCORE SSR_NODE SSR_PREFIX; do
+        if curl -4 -fLsS --connect-timeout 8 --max-time 120 \
+            "$SSR_PREFIX$SSR_ASSET_URL" -o "$SSR_LOCAL_IPK" 2>>"$INSTALL_LOG" && [ -s "$SSR_LOCAL_IPK" ]; then
+            SSR_ACTUAL_DIGEST="$(sha256sum "$SSR_LOCAL_IPK" | awk '{print $1}')"
+            if [ "sha256:$SSR_ACTUAL_DIGEST" = "$SSR_ASSET_DIGEST" ]; then
+                SSR_SELECTED_ROUTE="$SSR_NODE"
+                return 0
+            fi
+        fi
+        printf '线路 %s 下载或 SHA256 校验失败，尝试下一条\n' "$SSR_NODE" >> "$INSTALL_LOG"
+        rm -f "$SSR_LOCAL_IPK"
+    done < "$SSR_DOWNLOAD_DIR/ranked"
+    _ssr_error "SSR Plus+ 所有 GitHub 下载线路均失败"
+    return 1
+}
+
+
+
 ssr_fetch_latest()
 {
     command -v curl >/dev/null 2>&1 && command -v jsonfilter >/dev/null 2>&1 &&
@@ -1451,14 +1525,11 @@ ssr_fetch_latest()
     SSR_ASSET_DIGEST="$(jsonfilter -i "$SSR_RELEASE_JSON" -e "@.assets[@.name=\"$SSR_ASSET_NAME\"].digest" 2>/dev/null)"
     SSR_LOCAL_IPK="$SSR_DOWNLOAD_DIR/$SSR_ASSET_NAME"
     draw_install_progress 100 10 0 0 0 22
-    curl -fLsS --connect-timeout 15 --max-time 180 --retry 2 \
-        "$SSR_ASSET_URL" -o "$SSR_LOCAL_IPK" || { _ssr_error "SSR Plus+ 下载失败"; return 1; }
-    [ -s "$SSR_LOCAL_IPK" ] || return 1
-    SSR_ACTUAL_DIGEST="$(sha256sum "$SSR_LOCAL_IPK" | awk '{print $1}')"
-    [ "sha256:$SSR_ACTUAL_DIGEST" = "$SSR_ASSET_DIGEST" ] || {
-        _ssr_error "上游 SHA256 缺失或安装包校验失败"
+    printf '%s\n' "$SSR_ASSET_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' || {
+        _ssr_error "上游未提供有效的 SHA256"
         return 1
     }
+    ssr_download_fastest || return 1
     draw_install_progress 100 100 0 0 0 40
 }
 
