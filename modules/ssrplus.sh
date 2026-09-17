@@ -3,7 +3,7 @@
 # ============================================================
 # Open-Pro-Installer
 # SSR Plus+ Auto Installer
-# Five Stage Progress Edition
+# Verbose Installation Edition
 #
 # 功能：
 # 1. 自动识别设备平台
@@ -11,7 +11,7 @@
 # 3. 自动备份原始软件源
 # 4. 临时添加 SSR Plus+ 软件源
 # 5. 静默更新软件列表
-# 6. 从 fw876/helloworld 最新 Release 获取主程序，五阶段进度安装
+# 6. 从 fw876/helloworld 最新 Release 获取主程序，实时输出安装
 # 7. 自动检测中文语言包
 # 8. 自动扫描所有 shadowsocksr-libev-ssr-*
 # 9. 自动安装缺失组件
@@ -99,271 +99,34 @@ _ssr_ok()
 # 生成进度条
 # ============================================================
 
-make_bar()
+# 实时显示输出，同时保留日志和原始退出码。
+ssr_run_logged()
 {
-    PERCENT="$1"
-    WIDTH="${2:-25}"
-
-    FILLED=$((PERCENT * WIDTH / 100))
-    EMPTY=$((WIDTH - FILLED))
-
-    BAR=""
-
-    I=0
-    while [ "$I" -lt "$FILLED" ]; do
-        BAR="${BAR}#"
-        I=$((I + 1))
-    done
-
-    I=0
-    while [ "$I" -lt "$EMPTY" ]; do
-        BAR="${BAR}-"
-        I=$((I + 1))
-    done
-
-    printf '%s' "$BAR"
-}
-
-
-# ============================================================
-# 绘制五阶段进度
-# ============================================================
-
-draw_install_progress()
-{
-    P1="$1"
-    P2="$2"
-    P3="$3"
-    P4="$4"
-    P5="$5"
-    TOTAL="$6"
-
-    B1="$(make_bar "$P1" 20)"
-    B2="$(make_bar "$P2" 20)"
-    B3="$(make_bar "$P3" 20)"
-    B4="$(make_bar "$P4" 20)"
-    B5="$(make_bar "$P5" 20)"
-    BT="$(make_bar "$TOTAL" 30)"
-
-    printf '\033[6A'
-
-    printf '\033[2K\r[1/5] 准备安装环境  [\033[32m%s\033[0m] %3d%%\n' \
-        "$B1" "$P1"
-
-    printf '\033[2K\r[2/5] 下载软件包    [\033[32m%s\033[0m] %3d%%\n' \
-        "$B2" "$P2"
-
-    printf '\033[2K\r[3/5] 安装软件包    [\033[32m%s\033[0m] %3d%%\n' \
-        "$B3" "$P3"
-
-    printf '\033[2K\r[4/5] 配置软件包    [\033[32m%s\033[0m] %3d%%\n' \
-        "$B4" "$P4"
-
-    printf '\033[2K\r[5/5] 完成安装      [\033[32m%s\033[0m] %3d%%\n' \
-        "$B5" "$P5"
-
-    printf '\033[2K\r总体进度           [\033[32m%s\033[0m] %3d%%\n' \
-        "$BT" "$TOTAL"
-}
-
-
-# ============================================================
-# 初始化进度区域
-# ============================================================
-
-init_install_progress()
-{
-    printf "[1/5] 准备安装环境  [--------------------]   0%%\n"
-    printf "[2/5] 下载软件包    [--------------------]   0%%\n"
-    printf "[3/5] 安装软件包    [--------------------]   0%%\n"
-    printf "[4/5] 配置软件包    [--------------------]   0%%\n"
-    printf "[5/5] 完成安装      [--------------------]   0%%\n"
-    printf "总体进度           [------------------------------]   0%%\n"
-}
-
-
-# ============================================================
-# 五阶段安装
-# ============================================================
-
-install_with_progress()
-{
-    PACKAGE="$1"
-    LOG_FILE="$2"
-
-    rm -f "$LOG_FILE"
-
-    P1=100
-    P2=100
-    P3=0
-    P4=0
-    P5=0
-
-    TOTAL=20
-
-    if [ "${SSR_PROGRESS_READY:-0}" != "1" ]; then
-        init_install_progress
-    fi
-    SSR_PROGRESS_READY=0
-
-    draw_install_progress \
-        "$P1" "$P2" "$P3" "$P4" "$P5" "$TOTAL"
-
-    opkg install "$PACKAGE" >"$LOG_FILE" 2>&1 &
-
+    SSR_RUN_LOG="$1"
+    shift
+    SSR_RUN_DIR="$(mktemp -d /tmp/openpro_ssr_log.XXXXXX)" || return 1
+    mkfifo "$SSR_RUN_DIR/output" || { rmdir "$SSR_RUN_DIR"; return 1; }
+    "$@" >"$SSR_RUN_DIR/output" 2>&1 &
     PROGRESS_PID=$!
-
-
-    while kill -0 "$PROGRESS_PID" 2>/dev/null; do
-
-        HAS_DOWNLOAD=0
-        HAS_INSTALL=0
-        HAS_CONFIG=0
-
-
-        if grep -q '^Downloading ' "$LOG_FILE" 2>/dev/null; then
-            HAS_DOWNLOAD=1
-        fi
-
-
-        if grep -q '^Installing ' "$LOG_FILE" 2>/dev/null; then
-            HAS_INSTALL=1
-        fi
-
-
-        if grep -q '^Configuring ' "$LOG_FILE" 2>/dev/null; then
-            HAS_CONFIG=1
-        fi
-
-
-        # ----------------------------------------------------
-        # 下载阶段
-        # ----------------------------------------------------
-
-        if [ "$HAS_DOWNLOAD" -eq 1 ]; then
-
-            if [ "$P2" -lt 90 ]; then
-                P2=$((P2 + 5))
-            fi
-
-        else
-
-            if [ "$P2" -lt 15 ]; then
-                P2=$((P2 + 3))
-            fi
-
-        fi
-
-
-        # ----------------------------------------------------
-        # 安装阶段
-        # ----------------------------------------------------
-
-        if [ "$HAS_INSTALL" -eq 1 ]; then
-
-            P2=100
-
-            if [ "$P3" -lt 90 ]; then
-                P3=$((P3 + 5))
-            fi
-
-        fi
-
-
-        # ----------------------------------------------------
-        # 配置阶段
-        # ----------------------------------------------------
-
-        if [ "$HAS_CONFIG" -eq 1 ]; then
-
-            P2=100
-            P3=100
-
-            if [ "$P4" -lt 90 ]; then
-                P4=$((P4 + 5))
-            fi
-
-        fi
-
-
-        [ "$P2" -gt 100 ] && P2=100
-        [ "$P3" -gt 100 ] && P3=100
-        [ "$P4" -gt 100 ] && P4=100
-
-
-        TOTAL=$(
-            expr \
-            "$P1" + \
-            "$P2" + \
-            "$P3" + \
-            "$P4" + \
-            "$P5"
-        )
-
-        TOTAL=$((TOTAL / 5))
-
-
-        if [ "$TOTAL" -gt 95 ]; then
-            TOTAL=95
-        fi
-
-
-        draw_install_progress \
-            "$P1" \
-            "$P2" \
-            "$P3" \
-            "$P4" \
-            "$P5" \
-            "$TOTAL"
-
-
-        sleep 1
-
-    done
-
-
+    tee "$SSR_RUN_LOG" <"$SSR_RUN_DIR/output"
     wait "$PROGRESS_PID"
-
-    RESULT=$?
-
+    SSR_RUN_RC=$?
     PROGRESS_PID=""
-
-
-    if [ "$RESULT" -eq 0 ]; then
-
-        P1=100
-        P2=100
-        P3=100
-        P4=100
-        P5=100
-        TOTAL=100
-
-
-        draw_install_progress \
-            "$P1" \
-            "$P2" \
-            "$P3" \
-            "$P4" \
-            "$P5" \
-            "$TOTAL"
-
-
-        return 0
-
-    fi
-
-
-    return "$RESULT"
+    rm -f "$SSR_RUN_DIR/output"
+    rmdir "$SSR_RUN_DIR"
+    SSR_RUN_DIR=""
+    return "$SSR_RUN_RC"
 }
 
-
-# ============================================================
-# 检测系统
-# ============================================================
+install_ssr_package()
+{
+    _ssr_info "安装 GitHub 主程序：$1"
+    ssr_run_logged "$2" opkg install "$1"
+}
 
 detect_system()
 {
-    # _ssr_info "正在检测设备信息..."
+    _ssr_info "正在检测设备信息..."
 
     MODEL="unknown"
     OPENWRT_VERSION="unknown"
@@ -969,8 +732,8 @@ match_feed()
     fi
 
 
-    # _ssr_ok "已自动匹配软件源"
-    # _ssr_info "$FEED_NAME"
+    _ssr_ok "已自动匹配软件源"
+    _ssr_info "$FEED_NAME"
 
     # printf "\n"
 
@@ -984,7 +747,7 @@ match_feed()
 
 backup_feeds()
 {
-    # _ssr_info "正在备份原始软件源..."
+    _ssr_info "正在备份原始软件源..."
 
     rm -rf "$BACKUP_DIR"
 
@@ -1022,7 +785,7 @@ backup_feeds()
     fi
 
 
-    # _ssr_ok "原始软件源备份完成"
+    _ssr_ok "原始软件源备份完成"
 
     return 0
 }
@@ -1034,7 +797,7 @@ backup_feeds()
 
 add_temp_feeds()
 {
-    # _ssr_info "正在添加 SSR Plus+ 临时软件源..."
+    _ssr_info "正在添加 SSR Plus+ 临时软件源..."
 
 
     mkdir -p /etc/opkg || return 1
@@ -1071,7 +834,7 @@ add_temp_feeds()
         >> "$CUSTOMFEEDS"
 
 
-    # _ssr_ok "临时软件源添加完成"
+    _ssr_ok "临时软件源添加完成"
 
     return 0
 }
@@ -1202,8 +965,7 @@ install_optional_package()
     rm -f "$OPTIONAL_LOG"
 
 
-    if opkg install "$OPTIONAL_PKG" \
-        >"$OPTIONAL_LOG" 2>&1
+    if ssr_run_logged "$OPTIONAL_LOG" opkg install "$OPTIONAL_PKG"
     then
 
         if is_package_installed "$OPTIONAL_PKG"; then
@@ -1381,6 +1143,11 @@ cleanup_ssrplus()
     for SSR_ROUTE_PID in $SSR_ROUTE_PIDS; do kill "$SSR_ROUTE_PID" 2>/dev/null || :; done
     for SSR_ROUTE_PID in $SSR_ROUTE_PIDS; do wait "$SSR_ROUTE_PID" 2>/dev/null || :; done
     SSR_ROUTE_PIDS=""
+    if [ -n "$SSR_RUN_DIR" ]; then
+        rm -f "$SSR_RUN_DIR/output"
+        rmdir "$SSR_RUN_DIR" 2>/dev/null || :
+        SSR_RUN_DIR=""
+    fi
     restore_feeds
 
     clean_openpro_lists
@@ -1461,6 +1228,7 @@ ssr_test_route()
 
 ssr_download_fastest()
 {
+    _ssr_info "并发测速 GH01–GH06 和 DIRECT，单条最多 6 秒..."
     SSR_ROUTE_PIDS=""
     for SSR_NODE in GH01 GH02 GH03 GH04 GH05 GH06 DIRECT; do
         SSR_PREFIX="$(printf '%s\n' "$SSR_DOWNLOAD_NODES" | awk -F '|' -v n="$SSR_NODE" '$1==n {print $2;exit}')"
@@ -1477,17 +1245,20 @@ ssr_download_fastest()
             printf '999999999|%s|%s\n' "$SSR_NODE" "$SSR_PREFIX" >> "$SSR_DOWNLOAD_DIR/ranked"
         fi
     done
-    draw_install_progress 100 30 0 0 0 26
+    _ssr_info "测速排名（综合预计耗时，越小越快）："
+    awk -F '|' '{if ($1 == 999999999) printf "%s：测速未通过，作为备用\n", $2; else printf "%s：%s ms\n", $2, $1}' "$SSR_DOWNLOAD_DIR/ranked"
     while IFS='|' read -r SSR_SCORE SSR_NODE SSR_PREFIX; do
+        _ssr_info "正在使用 $SSR_NODE 下载：$SSR_ASSET_NAME"
         if curl -4 -fLsS --connect-timeout 8 --max-time 120 \
             "$SSR_PREFIX$SSR_ASSET_URL" -o "$SSR_LOCAL_IPK" 2>>"$INSTALL_LOG" && [ -s "$SSR_LOCAL_IPK" ]; then
             SSR_ACTUAL_DIGEST="$(sha256sum "$SSR_LOCAL_IPK" | awk '{print $1}')"
             if [ "sha256:$SSR_ACTUAL_DIGEST" = "$SSR_ASSET_DIGEST" ]; then
+                _ssr_ok "$SSR_NODE 下载完成，SHA256 校验通过"
                 SSR_SELECTED_ROUTE="$SSR_NODE"
                 return 0
             fi
         fi
-        printf '线路 %s 下载或 SHA256 校验失败，尝试下一条\n' "$SSR_NODE" >> "$INSTALL_LOG"
+        _ssr_warn "$SSR_NODE 下载或 SHA256 校验失败，尝试下一条"
         rm -f "$SSR_LOCAL_IPK"
     done < "$SSR_DOWNLOAD_DIR/ranked"
     _ssr_error "SSR Plus+ 所有 GitHub 下载线路均失败"
@@ -1498,6 +1269,7 @@ ssr_download_fastest()
 
 ssr_fetch_latest()
 {
+    _ssr_info "获取 fw876/helloworld 最新 Release..."
     command -v curl >/dev/null 2>&1 && command -v jsonfilter >/dev/null 2>&1 &&
         command -v sha256sum >/dev/null 2>&1 || {
         _ssr_error "获取上游安装包需要 curl、jsonfilter 和 sha256sum"
@@ -1521,18 +1293,16 @@ ssr_fetch_latest()
     SSR_EXPECTED_VERSION="${SSR_EXPECTED_VERSION%_all.ipk}"
     SSR_ASSET_DIGEST="$(jsonfilter -i "$SSR_RELEASE_JSON" -e "@.assets[@.name=\"$SSR_ASSET_NAME\"].digest" 2>/dev/null)"
     SSR_LOCAL_IPK="$SSR_DOWNLOAD_DIR/$SSR_ASSET_NAME"
-    draw_install_progress 100 10 0 0 0 22
+    _ssr_info "上游版本：$SSR_RELEASE_TAG；安装包：$SSR_ASSET_NAME"
     printf '%s\n' "$SSR_ASSET_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' || {
         _ssr_error "上游未提供有效的 SHA256"
         return 1
     }
     ssr_download_fastest || return 1
-    draw_install_progress 100 100 0 0 0 40
 }
 
 install_ssrplus()
 {
-    SSR_PROGRESS_READY=0
 
 
     # ========================================================
@@ -1603,9 +1373,6 @@ install_ssrplus()
 
 
     # 已安装时也检查上游最新版本。
-    init_install_progress
-    SSR_PROGRESS_READY=1
-    draw_install_progress 10 0 0 0 0 2
 
     # ========================================================
     # 备份
@@ -1620,9 +1387,6 @@ install_ssrplus()
     fi
 
 
-    if [ "$SSR_PROGRESS_READY" = "1" ]; then
-        draw_install_progress 30 0 0 0 0 6
-    fi
 
     trap 'cleanup_ssrplus' EXIT
     trap 'interrupt_ssrplus' INT TERM
@@ -1654,27 +1418,22 @@ install_ssrplus()
 
     # printf "\n"
 
-    # _ssr_info "正在更新软件列表..."
+    _ssr_info "正在更新软件列表..."
 
     rm -f "$UPDATE_LOG"
 
 
-    if ! opkg update >"$UPDATE_LOG" 2>&1; then
+    if ! ssr_run_logged "$UPDATE_LOG" opkg update; then
         printf "\n"
         _ssr_warn "部分依赖源更新失败；继续获取 GitHub 主程序，并检查可用依赖"
         tail -n 12 "$UPDATE_LOG"
         # 不继续使用这次失败的临时源索引，也不关闭签名验证。
         restore_feeds
         clean_openpro_lists
-        init_install_progress
-        SSR_PROGRESS_READY=1
     fi
 
-    if [ "$SSR_PROGRESS_READY" = "1" ]; then
-        draw_install_progress 80 0 0 0 0 16
-    fi
 
-    # _ssr_ok "软件列表更新完成"
+    _ssr_ok "软件列表更新完成"
 
     # printf "\n"
 
@@ -1689,7 +1448,8 @@ install_ssrplus()
         return 1
     fi
 
-    if ! opkg --noaction install "$SSR_LOCAL_IPK" >"$INSTALL_LOG" 2>&1; then
+    _ssr_info "检查安装包架构和依赖（预演，不执行安装）"
+    if ! ssr_run_logged "$INSTALL_LOG" opkg --noaction install "$SSR_LOCAL_IPK"; then
         printf "\n"
         _ssr_error "SSR Plus+ 依赖预检失败，尚未执行安装"
         cat "$INSTALL_LOG"
@@ -1703,17 +1463,17 @@ install_ssrplus()
     fi
 
         # ====================================================
-        # 五阶段安装
+        # 实时安装
         # ====================================================
 
         # printf "\n"
 
-        # _ssr_info "开始安装 SSR Plus+..."
+    _ssr_info "开始安装 SSR Plus+..."
 
         # printf "\n"
 
 
-        if ! install_with_progress \
+        if ! install_ssr_package \
             "$SSR_LOCAL_IPK" \
             "$INSTALL_LOG"
         then
