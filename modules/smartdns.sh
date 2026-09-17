@@ -1240,9 +1240,18 @@ openpro_ui_draw() {
             else OPENPRO_UI_BAR="$OPENPRO_UI_BAR-"; fi
             OPENPRO_UI_N=$((OPENPRO_UI_N + 1))
         done
-        printf '\033[2K\r[%s/5] %s [%s] %3s%%\n' "$OPENPRO_UI_I" "$OPENPRO_UI_LABEL" "$OPENPRO_UI_BAR" "$OPENPRO_UI_P" >&9
+        printf '\033[2K\r[%s/5] %s [\033[1;92m%s\033[0m] %3s%%\n' "$OPENPRO_UI_I" "$OPENPRO_UI_LABEL" "$OPENPRO_UI_BAR" "$OPENPRO_UI_P" >&9
     done
-    printf '\033[2K\r总体进度：%3s%%\n' "$((OPENPRO_UI_TOTAL / 5))" >&9
+    OPENPRO_UI_TOTAL_PERCENT=$((OPENPRO_UI_TOTAL / 5))
+    OPENPRO_UI_TOTAL_BAR=""
+    OPENPRO_UI_N=0
+    while [ "$OPENPRO_UI_N" -lt 30 ]; do
+        if [ "$OPENPRO_UI_N" -lt $((OPENPRO_UI_TOTAL_PERCENT * 30 / 100)) ]; then
+            OPENPRO_UI_TOTAL_BAR="$OPENPRO_UI_TOTAL_BAR#"
+        else OPENPRO_UI_TOTAL_BAR="$OPENPRO_UI_TOTAL_BAR-"; fi
+        OPENPRO_UI_N=$((OPENPRO_UI_N + 1))
+    done
+    printf '\033[2K\r总体进度：[\033[1;92m%s\033[0m] %3s%%\n' "$OPENPRO_UI_TOTAL_BAR" "$OPENPRO_UI_TOTAL_PERCENT" >&9
     OPENPRO_UI_DRAWN=1
 }
 openpro_ui_step() {
@@ -1291,7 +1300,6 @@ openpro_ui_end() {
         printf '[ERROR] %s 安装未完成（退出码 %s）\n' "$OPENPRO_UI_NAME" "$1" >&9
         tail -n 25 "$OPENPRO_UI_LOG" >&9
     fi
-    printf '详细日志：%s\n' "$OPENPRO_UI_LOG" >&9
     OPENPRO_UI_ACTIVE=0
     exec 9>&-
 }
