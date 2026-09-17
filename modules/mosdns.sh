@@ -49,6 +49,8 @@ MOSDNS_PKG_EXT=""
 MOSDNS_SDK=""
 MOSDNS_VERSION=""
 MOSDNS_WAS_RUNNING=0
+MOSDNS_COMPAT_ARCH=""
+MOSDNS_ARCHIVE_SHA256=""
 
 MOSDNS_GEO_TOOL_PKG=""
 MOSDNS_GEO_TOOL_NAME=""
@@ -254,10 +256,61 @@ mosdns_read_release_assets() {
         sed 's/&amp;/\&/g; s#^#https://github.com#' > "$MOSDNS_ASSET_LIST"
 }
 
+# 仅回退到已在此固件上实测的组合，不把兼容结论推广到其他型号。
+select_mosdns_tested_bundle() {
+    [ "$MOSDNS_PKG_MANAGER" = opkg ] || return 1
+    [ "$MOSDNS_CPU_ARCH" = aarch64 ] || return 1
+    [ "$MOSDNS_ARCH" = aarch64_cortex-a53_neon-vfpv4 ] || return 1
+    [ "$DISTRIB_RELEASE" = 23.05-SNAPSHOT ] || return 1
+    [ "$DISTRIB_REVISION" = r0-3601c2a49 ] || return 1
+    [ "$DISTRIB_TARGET" = ipq53xx/generic ] || return 1
+    case "$(cat /tmp/sysinfo/model 2>/dev/null)" in
+        *BE3600*) ;;
+        *) return 1;;
+    esac
+    [ "$(uname -r)" = 5.4.213 ] || return 1
+    command -v sha256sum >/dev/null 2>&1 || {
+        _mos_error "此兼容包需要 sha256sum 校验，当前系统缺少该命令"
+        return 1
+    }
+    MOSDNS_COMPAT_ARCH=aarch64_cortex-a53
+    MOSDNS_BASE_URL="https://github.com/sbwml/luci-app-mosdns/releases/download/v5.3.4-r14/aarch64_cortex-a53-openwrt-24.10.tar.gz"
+    MOSDNS_ARCHIVE_SHA256="50f13790dd4197b203a7e891c65c72175671e38227f317b98dfdfa68035e30e9"
+    _mos_warn "使用 BE3600 已实测跨版本包：MosDNS v5.3.4-r14 / OpenWrt 24.10 / A53"
+    _mos_info "仅临时接受包架构标签，仍检查依赖；不修改 OPKG 架构配置"
+}
+
+# --add-arch 会替代默认列表，必须同时保留设备原有全部架构。
+mosdns_opkg() {
+    if [ -n "$MOSDNS_COMPAT_ARCH" ]; then
+        MOSDNS_ORIGINAL_ARCHES="$(opkg print-architecture 2>/dev/null |
+            awk '$1=="arch" && $2 ~ /^[a-zA-Z0-9_.-]+$/ && $3 ~ /^[0-9]+$/ {print $2 ":" $3}')"
+        [ -n "$MOSDNS_ORIGINAL_ARCHES" ] || return 1
+        for MOSDNS_ARCH_ENTRY in $MOSDNS_ORIGINAL_ARCHES; do
+            set -- --add-arch "$MOSDNS_ARCH_ENTRY" "$@"
+        done
+        set -- --add-arch "$MOSDNS_COMPAT_ARCH:5" "$@"
+    fi
+    opkg "$@"
+}
+
+backup_mosdns_compat_config() {
+    [ -n "$MOSDNS_COMPAT_ARCH" ] || return 0
+    MOSDNS_BACKUP_DIR="/root/mosdns-backup-$(date +%Y%m%d-%H%M%S)-$$"
+    ( umask 077
+      mkdir "$MOSDNS_BACKUP_DIR" &&
+      tar -czf "$MOSDNS_BACKUP_DIR/config.tar.gz" -C / etc/config etc/opkg.conf &&
+      opkg list-installed > "$MOSDNS_BACKUP_DIR/packages.txt"
+    ) || { _mos_error "配置备份失败，取消安装"; return 1; }
+    _mos_info "配置备份：$MOSDNS_BACKUP_DIR"
+}
+
 prepare_mosdns_download_info() {
     mkdir -p "$MOSDNS_TMP_DIR" || return 1
     EXPECTED_NAME="${MOSDNS_ARCH}-${MOSDNS_SDK}.tar.gz"
     MOSDNS_BASE_URL=""
+    MOSDNS_COMPAT_ARCH=""
+    MOSDNS_ARCHIVE_SHA256=""
     # 自有版本包优先，供厂商 SDK 编译产物使用；其次查上游最新包。
     for MOSDNS_SOURCE in "zimoadmin/Open-Pro-Installer|tags/mosdns-$MOSDNS_SERIES" \
                           "sbwml/luci-app-mosdns|latest"; do
@@ -282,6 +335,9 @@ prepare_mosdns_download_info() {
         else
             _mos_warn "历史 Release 目录暂时无法读取，未能完成历史包查询"
         fi
+    fi
+    if [ -z "$MOSDNS_BASE_URL" ]; then
+        select_mosdns_tested_bundle || :
     fi
     [ -n "$MOSDNS_BASE_URL" ] || {
         _mos_error "没有查到当前固件的精确匹配包：$EXPECTED_NAME"
@@ -397,6 +453,10 @@ verify_mosdns_archive() {
     case "$FILE_SIZE" in ''|*[!0-9]*) FILE_SIZE=0;; esac
     [ "$FILE_SIZE" -ge 1048576 ] || return 1
     mosdns_test_is_error_page "$FILE" && return 1
+    if [ -n "$MOSDNS_ARCHIVE_SHA256" ]; then
+        MOSDNS_ACTUAL_SHA256="$(sha256sum "$FILE" 2>/dev/null | awk '{print $1}')"
+        [ "$MOSDNS_ACTUAL_SHA256" = "$MOSDNS_ARCHIVE_SHA256" ] || return 1
+    fi
     tar -tzf "$FILE" >/dev/null 2>&1
 }
 
@@ -480,7 +540,7 @@ preflight_mosdns_packages() {
         "$MOSDNS_MAIN_PKG" "$MOSDNS_LUCI_PKG" "$MOSDNS_I18N_PKG"
     if [ "$MOSDNS_PKG_MANAGER" = "opkg" ]; then
         MOSDNS_PREFLIGHT_INDEX=0
-        MOSDNS_ALLOWED_ARCHES="$(opkg print-architecture 2>/dev/null |
+        MOSDNS_ALLOWED_ARCHES="$(mosdns_opkg print-architecture 2>/dev/null |
             awk '$1=="arch" && $3+0>0 {print $2}')"
         for MOSDNS_CHECK_FILE do
             MOSDNS_PREFLIGHT_INDEX=$((MOSDNS_PREFLIGHT_INDEX + 1))
@@ -504,7 +564,7 @@ preflight_mosdns_packages() {
             cp "$MOSDNS_CHECK_FILE" "/tmp/mos${MOSDNS_PREFLIGHT_INDEX}.ipk" || return 1
         done
         rm -f "$MOSDNS_CONTROL_ARCHIVE"
-        opkg --noaction install --force-downgrade \
+        mosdns_opkg --noaction install \
             /tmp/mos1.ipk /tmp/mos2.ipk /tmp/mos3.ipk \
             /tmp/mos4.ipk /tmp/mos5.ipk /tmp/mos6.ipk \
             > "$MOSDNS_INSTALL_LOG" 2>&1
@@ -525,7 +585,7 @@ preflight_mosdns_packages() {
 check_mosdns_package_installed() {
     case "$MOSDNS_PKG_MANAGER" in
         apk) apk info -e "$1" >/dev/null 2>&1;;
-        opkg) opkg status "$1" 2>/dev/null | grep -q 'Status:.*installed';;
+        opkg) mosdns_opkg status "$1" 2>/dev/null | grep -q 'Status:.*installed';;
         *) return 1;;
     esac
 }
@@ -614,8 +674,7 @@ install_single_mosdns_package() {
                 return 1
             }
 
-            opkg install \
-                --force-downgrade \
+            mosdns_opkg install \
                 "$SAFE_PACKAGE_FILE" \
                 > "$MOSDNS_INSTALL_LOG" 2>&1
 
@@ -734,6 +793,10 @@ stop_mosdns_service() {
 }
 start_mosdns_service() {
     [ -x /etc/init.d/mosdns ] || { _mos_error "没有找到 MosDNS 服务脚本"; return 1; }
+    if [ "$(uci -q get mosdns.config.enabled)" != "1" ]; then
+        _mos_info "MosDNS 已安装，当前配置为停用；可在 LuCI 中配置后启用"
+        return 0
+    fi
     _mos_info "正在启动 MosDNS..."
     /etc/init.d/mosdns start >/dev/null 2>&1
     sleep 1
@@ -1122,7 +1185,7 @@ verify_mosdns_installation() {
     for PACKAGE_NAME in "$MOSDNS_GEO_TOOL_NAME" v2ray-geoip v2ray-geosite mosdns luci-app-mosdns luci-i18n-mosdns-zh-cn; do
         if check_mosdns_package_installed "$PACKAGE_NAME"; then _mos_ok "$PACKAGE_NAME"; else _mos_error "$PACKAGE_NAME 未正确安装"; VERIFY_FAILED=1; fi
     done
-    if command -v mosdns >/dev/null 2>&1; then _mos_ok "MosDNS 可执行文件正常"; else _mos_error "没有检测到 MosDNS 可执行文件"; VERIFY_FAILED=1; fi
+    if command -v mosdns >/dev/null 2>&1 && mosdns version >/dev/null 2>&1; then _mos_ok "MosDNS 可执行文件运行正常"; else _mos_error "没有检测到 MosDNS 可执行文件"; VERIFY_FAILED=1; fi
     [ "$VERIFY_FAILED" -eq 0 ]
 }
 
@@ -1162,6 +1225,7 @@ install_mosdns() {
     extract_mosdns_archive || { cleanup_mosdns_temp; trap - INT TERM; return 1; }
     locate_mosdns_packages || { cleanup_mosdns_temp; trap - INT TERM; return 1; }
     preflight_mosdns_packages || { cleanup_mosdns_temp; trap - INT TERM; return 1; }
+    backup_mosdns_compat_config || { cleanup_mosdns_temp; trap - INT TERM; return 1; }
     detect_existing_mosdns_service
     stop_mosdns_service
 
