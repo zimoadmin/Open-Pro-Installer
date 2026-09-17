@@ -11,7 +11,7 @@
 # 3. 自动备份原始软件源
 # 4. 临时添加 SSR Plus+ 软件源
 # 5. 静默更新软件列表
-# 6. 五阶段动态进度安装 SSR Plus+
+# 6. 从 fw876/helloworld 最新 Release 获取主程序，五阶段进度安装
 # 7. 自动检测中文语言包
 # 8. 自动扫描所有 shadowsocksr-libev-ssr-*
 # 9. 自动安装缺失组件
@@ -51,6 +51,8 @@ MODEL_LOWER=""
 PKG_MANAGER=""
 
 PROGRESS_PID=""
+SSR_DOWNLOAD_DIR=""
+SSR_LOCAL_IPK=""
 
 
 # ============================================================
@@ -192,7 +194,7 @@ install_with_progress()
     rm -f "$LOG_FILE"
 
     P1=100
-    P2=0
+    P2=100
     P3=0
     P4=0
     P5=0
@@ -1383,6 +1385,12 @@ cleanup_ssrplus()
 
     clean_openpro_lists
     clean_ssr_logs
+    if [ -n "$SSR_DOWNLOAD_DIR" ]; then
+        rm -f "$SSR_DOWNLOAD_DIR/release.json" "$SSR_LOCAL_IPK"
+        rmdir "$SSR_DOWNLOAD_DIR" 2>/dev/null || :
+        SSR_DOWNLOAD_DIR=""
+        SSR_LOCAL_IPK=""
+    fi
 }
 
 
@@ -1416,6 +1424,43 @@ interrupt_ssrplus()
 # ============================================================
 # 主安装函数
 # ============================================================
+
+ssr_fetch_latest()
+{
+    command -v curl >/dev/null 2>&1 && command -v jsonfilter >/dev/null 2>&1 &&
+        command -v sha256sum >/dev/null 2>&1 || {
+        _ssr_error "获取上游安装包需要 curl、jsonfilter 和 sha256sum"
+        return 1
+    }
+    SSR_DOWNLOAD_DIR="$(mktemp -d /tmp/openpro_ssr_release.XXXXXX)" || return 1
+    SSR_RELEASE_JSON="$SSR_DOWNLOAD_DIR/release.json"
+    curl -fLsS --connect-timeout 15 --max-time 90 --retry 2 \
+        https://api.github.com/repos/fw876/helloworld/releases/latest \
+        -o "$SSR_RELEASE_JSON" || { _ssr_error "获取 SSR Plus+ 最新 Release 失败"; return 1; }
+    SSR_RELEASE_TAG="$(jsonfilter -i "$SSR_RELEASE_JSON" -e '@.tag_name' 2>/dev/null)"
+    SSR_ASSET_URL="$(jsonfilter -i "$SSR_RELEASE_JSON" -e '@.assets[*].browser_download_url' 2>/dev/null |
+        grep -E '^https://github.com/fw876/helloworld/releases/download/[^/]+/luci-app-ssr-plus_[^/]+_all\.ipk$')"
+    [ -n "$SSR_RELEASE_TAG" ] && [ -n "$SSR_ASSET_URL" ] &&
+        [ "$(printf '%s\n' "$SSR_ASSET_URL" | wc -l)" -eq 1 ] || {
+        _ssr_error "最新 Release 中没有唯一可用的 SSR Plus+ IPK 包"
+        return 1
+    }
+    SSR_ASSET_NAME="${SSR_ASSET_URL##*/}"
+    SSR_EXPECTED_VERSION="${SSR_ASSET_NAME#luci-app-ssr-plus_}"
+    SSR_EXPECTED_VERSION="${SSR_EXPECTED_VERSION%_all.ipk}"
+    SSR_ASSET_DIGEST="$(jsonfilter -i "$SSR_RELEASE_JSON" -e "@.assets[@.name=\"$SSR_ASSET_NAME\"].digest" 2>/dev/null)"
+    SSR_LOCAL_IPK="$SSR_DOWNLOAD_DIR/$SSR_ASSET_NAME"
+    draw_install_progress 100 10 0 0 0 22
+    curl -fLsS --connect-timeout 15 --max-time 180 --retry 2 \
+        "$SSR_ASSET_URL" -o "$SSR_LOCAL_IPK" || { _ssr_error "SSR Plus+ 下载失败"; return 1; }
+    [ -s "$SSR_LOCAL_IPK" ] || return 1
+    SSR_ACTUAL_DIGEST="$(sha256sum "$SSR_LOCAL_IPK" | awk '{print $1}')"
+    [ "sha256:$SSR_ACTUAL_DIGEST" = "$SSR_ASSET_DIGEST" ] || {
+        _ssr_error "上游 SHA256 缺失或安装包校验失败"
+        return 1
+    }
+    draw_install_progress 100 100 0 0 0 40
+}
 
 install_ssrplus()
 {
@@ -1489,12 +1534,10 @@ install_ssrplus()
     fi
 
 
-    # 在准备环境之前显示进度；已安装时沿用扩展组件流程。
-    if ! check_ssrplus; then
-        init_install_progress
-        SSR_PROGRESS_READY=1
-        draw_install_progress 10 0 0 0 0 2
-    fi
+    # 已安装时也检查上游最新版本。
+    init_install_progress
+    SSR_PROGRESS_READY=1
+    draw_install_progress 10 0 0 0 0 2
 
     # ========================================================
     # 备份
@@ -1588,72 +1631,14 @@ install_ssrplus()
 
 
     # ========================================================
-    # 如果 SSR Plus+ 已经安装
-    #
-    # 不再重新安装主程序，
-    # 直接进入扩展组件检查。
+    # 每次获取上游最新主程序；依赖沿用当前适配软件源。
     # ========================================================
 
-    if check_ssrplus; then
-
-        _ssr_ok "SSR Plus+ 主程序已经安装"
-
-    else
-
-        # ====================================================
-        # 查询 SSR Plus+
-        # ====================================================
-
-        # _ssr_info "正在查询 luci-app-ssr-plus..."
-
-
-        SSR_PACKAGE="$(
-            opkg list 2>/dev/null |
-            awk '
-                $1 == "luci-app-ssr-plus" {
-                    print $1
-                    exit
-                }
-            '
-        )"
-
-
-        if [ "$SSR_PACKAGE" != "luci-app-ssr-plus" ]; then
-
-            _ssr_error "软件源中没有找到 luci-app-ssr-plus"
-
-            cleanup_ssrplus
-
-            trap - EXIT INT TERM
-
-            return 2
-
-        fi
-
-
-        # _ssr_ok "已找到 luci-app-ssr-plus"
-
-
-        # ====================================================
-        # 版本
-        # ====================================================
-
-        SSR_VERSION="$(
-            opkg list luci-app-ssr-plus 2>/dev/null |
-            awk -F ' - ' '
-                NR == 1 {
-                    print $2
-                }
-            '
-        )"
-
-
-        # if [ -n "$SSR_VERSION" ]; then
-
-            # _ssr_info "SSR Plus+ Version : $SSR_VERSION"
-
-        # fi
-
+    if ! ssr_fetch_latest; then
+        cleanup_ssrplus
+        trap - EXIT INT TERM
+        return 1
+    fi
 
         # ====================================================
         # 五阶段安装
@@ -1667,7 +1652,7 @@ install_ssrplus()
 
 
         if ! install_with_progress \
-            "luci-app-ssr-plus" \
+            "$SSR_LOCAL_IPK" \
             "$INSTALL_LOG"
         then
 
@@ -1723,9 +1708,15 @@ install_ssrplus()
         fi
 
 
-        _ssr_ok "SSR Plus+ 主程序安装成功"
+        SSR_INSTALLED_VERSION="$(opkg status luci-app-ssr-plus 2>/dev/null | sed -n 's/^Version: *//p' | head -n 1)"
+        if [ "$SSR_INSTALLED_VERSION" != "$SSR_EXPECTED_VERSION" ]; then
+            _ssr_error "版本验证失败：期望 $SSR_EXPECTED_VERSION，实际 $SSR_INSTALLED_VERSION"
+            cleanup_ssrplus
+            trap - EXIT INT TERM
+            return 1
+        fi
+        _ssr_ok "SSR Plus+ $SSR_RELEASE_TAG 主程序安装成功"
 
-    fi
 
 
     # ========================================================
