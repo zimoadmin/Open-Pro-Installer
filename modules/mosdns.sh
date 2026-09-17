@@ -6,7 +6,7 @@
 #
 # 功能：
 # 1. 自动检测 OpenWrt / OPKG / APK / 精确架构
-# 2. 自动选择 MosDNS 官方 24.10 / 25.12 Release 包
+# 2. 按真实固件版本和包管理器架构精确匹配 Release 包
 # 3. GH01-GH06 + DIRECT 并行真实测速并自动切线
 # 4. 下载后验证 tar.gz，自动解压并定位 6 个组件
 # 5. 按依赖顺序逐个安装并逐包验证
@@ -15,7 +15,7 @@
 # 8. 自动修复旧版 rpcd 无法加载 /usr/share/rpcd/ucode/luci.mosdns
 # 9. 旧 rpcd 自动创建 /usr/libexec/rpcd/luci.mosdns 兼容桥
 # 10. 自动验证 ubus 对象 luci.mosdns
-# 11. 自动归一化 aarch64_cortex-a53_neon-vfpv4 等 Release 架构
+# 11. 保留厂商架构后缀，不添加架构别名或跨版本安装
 # 12. GitHub Release API 自动匹配真实 tar.gz Asset，避免 404
 # 13. 自动检测并从当前软件源补齐 ucode-mod-fs / uci / ubus
 # 14. ucode 模块缺失时阻止数据库更新假启动/无限转圈
@@ -140,73 +140,55 @@ detect_mosdns_cpu() {
 }
 
 detect_mosdns_package_manager() {
-    if command -v apk >/dev/null 2>&1; then
-        MOSDNS_PKG_MANAGER="apk"
-        MOSDNS_PKG_EXT="apk"
-        MOSDNS_SDK="openwrt-25.12"
+    MOSDNS_PKG_MANAGER=""
+    if command -v opkg >/dev/null 2>&1 && command -v apk >/dev/null 2>&1; then
+        _mos_error "同时检测到 OPKG 和 APK，无法安全确定当前包管理器"
+        return 1
     elif command -v opkg >/dev/null 2>&1; then
         MOSDNS_PKG_MANAGER="opkg"
         MOSDNS_PKG_EXT="ipk"
-        MOSDNS_SDK="openwrt-24.10"
+    elif command -v apk >/dev/null 2>&1; then
+        MOSDNS_PKG_MANAGER="apk"
+        MOSDNS_PKG_EXT="apk"
     else
         _mos_error "没有检测到 APK / OPKG 包管理器"
         return 1
     fi
-
-    return 0
-}
-
-normalize_mosdns_arch() {
-    MOSDNS_ARCH_RAW="$MOSDNS_ARCH"
-
-    case "$MOSDNS_ARCH" in
-        aarch64_cortex-a53|aarch64_cortex-a53_*)
-            MOSDNS_ARCH="aarch64_cortex-a53"
-            ;;
-        aarch64_cortex-a72|aarch64_cortex-a72_*)
-            MOSDNS_ARCH="aarch64_cortex-a72"
-            ;;
-        aarch64_cortex-a76|aarch64_cortex-a76_*)
-            MOSDNS_ARCH="aarch64_cortex-a76"
-            ;;
-        aarch64_generic|aarch64_generic_*)
-            MOSDNS_ARCH="aarch64_generic"
-            ;;
-        aarch64|arm64)
-            MOSDNS_ARCH="aarch64_generic"
-            ;;
-        *)
-            ;;
-    esac
+    # 不从包管理器推断固件版本，也不把无版本的 SNAPSHOT 当成稳定版。
+    MOSDNS_SERIES="$(printf '%s\n' "${DISTRIB_RELEASE:-}" |
+        sed -n 's/^\([0-9][0-9]\.[0-9][0-9]\)\([.-].*\)\{0,1\}$/\1/p')"
+    [ -n "$MOSDNS_SERIES" ] || {
+        _mos_error "无法确定固件版本：${DISTRIB_RELEASE:-unknown}，需要对应 SDK 的安装包"
+        return 1
+    }
+    MOSDNS_SDK="openwrt-$MOSDNS_SERIES"
 }
 
 detect_mosdns_arch() {
     MOSDNS_ARCH=""
-
-    if [ -f /etc/openwrt_release ]; then
-        . /etc/openwrt_release
-        MOSDNS_ARCH="${DISTRIB_ARCH:-}"
+    case "$MOSDNS_PKG_MANAGER" in
+        opkg)
+            MOSDNS_ARCH="$(opkg print-architecture 2>/dev/null |
+                awk '$1=="arch" && $2!="all" && $2!="noarch" &&
+                     $3 ~ /^[0-9]+$/ && $3>0 {
+                    if ($3>p) { p=$3; a=$2 }
+                } END { print a }')"
+            ;;
+        apk)
+            MOSDNS_ARCH="$(apk --print-arch 2>/dev/null | head -n 1)"
+            ;;
+    esac
+    case "$MOSDNS_ARCH" in
+        ''|*[!a-zA-Z0-9_.-]*)
+            _mos_error "无法从包管理器确定有效的软件包架构"
+            return 1
+            ;;
+    esac
+    MOSDNS_ARCH_RAW="$MOSDNS_ARCH"
+    _mos_info "适配目标：${DISTRIB_RELEASE} / $MOSDNS_PKG_MANAGER / $MOSDNS_ARCH"
+    if [ -n "${DISTRIB_ARCH:-}" ] && [ "$DISTRIB_ARCH" != "$MOSDNS_ARCH" ]; then
+        _mos_warn "固件声明架构 $DISTRIB_ARCH；以包管理器实际接受的 $MOSDNS_ARCH 为准"
     fi
-
-    if [ -z "$MOSDNS_ARCH" ] && command -v opkg >/dev/null 2>&1; then
-        MOSDNS_ARCH="$(
-            opkg print-architecture 2>/dev/null |
-            awk '$1=="arch" && $2!="all" && $2!="noarch" {
-                if ($3>p) { p=$3; a=$2 }
-            } END { print a }'
-        )"
-    fi
-
-    if [ -z "$MOSDNS_ARCH" ] && command -v apk >/dev/null 2>&1; then
-        MOSDNS_ARCH="$(apk --print-arch 2>/dev/null | head -n 1)"
-    fi
-
-    [ -n "$MOSDNS_ARCH" ] || {
-        _mos_error "无法识别 OpenWrt 软件包架构"
-        return 1
-    }
-
-    normalize_mosdns_arch
 }
 
 check_mosdns_disk_space() {
@@ -228,153 +210,93 @@ check_mosdns_disk_space() {
     return 0
 }
 
-prepare_mosdns_download_info() {
-    mkdir -p "$MOSDNS_TMP_DIR" || return 1
+# 精确匹配公开 Release 的资产名，不猜测缺失的下载地址。
+mosdns_select_asset() {
+    awk -v name="$EXPECTED_NAME" -v offline="mosdns-offline-$EXPECTED_NAME" '
+        {
+            n=$0
+            sub(/^.*\//, "", n)
+            if (n == name || n == offline) { print $0; exit }
+        }
+    ' "$MOSDNS_ASSET_LIST"
+}
 
-    rm -f \
-        "$MOSDNS_RELEASE_JSON" \
-        "$MOSDNS_RELEASE_HTML" \
-        "$MOSDNS_ASSET_LIST" \
-        2>/dev/null
-
-    EXPECTED_NAME="${MOSDNS_ARCH}-${MOSDNS_SDK}.tar.gz"
-    MOSDNS_BASE_URL=""
-
-
-    # ========================================================
-    # 第一层：GitHub API DIRECT
-    # ========================================================
-
-    if curl -4 -fLsS \
-        --connect-timeout 8 \
-        --max-time 30 \
+mosdns_read_release_assets() {
+    MOSDNS_CATALOG_REPO="$1"
+    MOSDNS_CATALOG_REF="$2"
+    : > "$MOSDNS_ASSET_LIST"
+    if curl -4 -fLsS --connect-timeout 8 --max-time 30 \
         -H 'Accept: application/vnd.github+json' \
         -H 'User-Agent: Open-Pro-Installer' \
-        'https://api.github.com/repos/sbwml/luci-app-mosdns/releases/latest' \
-        -o "$MOSDNS_RELEASE_JSON" \
-        >/dev/null 2>&1
+        "https://api.github.com/repos/$MOSDNS_CATALOG_REPO/releases/$MOSDNS_CATALOG_REF" \
+        -o "$MOSDNS_RELEASE_JSON" >/dev/null 2>&1
     then
-        if command -v jsonfilter >/dev/null 2>&1; then
-            jsonfilter \
-                -i "$MOSDNS_RELEASE_JSON" \
-                -e '@.assets[*].browser_download_url' \
-                2>/dev/null \
-                > "$MOSDNS_ASSET_LIST"
-        else
+        tr ',' '\n' < "$MOSDNS_RELEASE_JSON" |
+            sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p' \
+            > "$MOSDNS_ASSET_LIST"
+        return 0
+    fi
+    # API 限流时，读取相同 Release 的网页资产列表。
+    case "$MOSDNS_CATALOG_REF" in
+        latest) MOSDNS_CATALOG_PAGE="https://github.com/$MOSDNS_CATALOG_REPO/releases/latest";;
+        tags/*) MOSDNS_CATALOG_PAGE="https://github.com/$MOSDNS_CATALOG_REPO/releases/tag/${MOSDNS_CATALOG_REF#tags/}";;
+        *) return 1;;
+    esac
+    MOSDNS_EFFECTIVE_URL="$(curl -4 -fLsS --connect-timeout 8 --max-time 30 \
+        -o /dev/null -w '%{url_effective}' "$MOSDNS_CATALOG_PAGE" 2>/dev/null)" || return 1
+    MOSDNS_CATALOG_TAG="$(printf '%s\n' "$MOSDNS_EFFECTIVE_URL" |
+        sed -n 's#^.*/releases/tag/\([^/?#]*\).*$#\1#p')"
+    [ -n "$MOSDNS_CATALOG_TAG" ] || return 1
+    curl -4 -fLsS --connect-timeout 8 --max-time 30 \
+        "https://github.com/$MOSDNS_CATALOG_REPO/releases/expanded_assets/$MOSDNS_CATALOG_TAG" \
+        -o "$MOSDNS_RELEASE_HTML" >/dev/null 2>&1 || return 1
+    grep -o '/[^"]*/releases/download/[^"]*' "$MOSDNS_RELEASE_HTML" |
+        sed 's/&amp;/\&/g; s#^#https://github.com#' > "$MOSDNS_ASSET_LIST"
+}
+
+prepare_mosdns_download_info() {
+    mkdir -p "$MOSDNS_TMP_DIR" || return 1
+    EXPECTED_NAME="${MOSDNS_ARCH}-${MOSDNS_SDK}.tar.gz"
+    MOSDNS_BASE_URL=""
+    # 自有版本包优先，供厂商 SDK 编译产物使用；其次查上游最新包。
+    for MOSDNS_SOURCE in "zimoadmin/Open-Pro-Installer|tags/mosdns-$MOSDNS_SERIES" \
+                          "sbwml/luci-app-mosdns|latest"; do
+        MOSDNS_SOURCE_REPO="${MOSDNS_SOURCE%%|*}"
+        MOSDNS_SOURCE_REF="${MOSDNS_SOURCE#*|}"
+        if mosdns_read_release_assets "$MOSDNS_SOURCE_REPO" "$MOSDNS_SOURCE_REF"; then
+            MOSDNS_BASE_URL="$(mosdns_select_asset)"
+            [ -z "$MOSDNS_BASE_URL" ] || break
+        fi
+    done
+    # 较早固件的包可能仅保留在历史 Release；只接受精确版本和架构。
+    if [ -z "$MOSDNS_BASE_URL" ]; then
+        if curl -4 -fLsS --connect-timeout 8 --max-time 30 \
+            -H 'User-Agent: Open-Pro-Installer' \
+            'https://api.github.com/repos/sbwml/luci-app-mosdns/releases?per_page=100' \
+            -o "$MOSDNS_RELEASE_JSON" >/dev/null 2>&1
+        then
             tr ',' '\n' < "$MOSDNS_RELEASE_JSON" |
                 sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p' \
                 > "$MOSDNS_ASSET_LIST"
-        fi
-    else
-        _mos_warn "GitHub API 不可用或触发限流，切换普通 Release 页面..."
-        rm -f "$MOSDNS_RELEASE_JSON"
-    fi
-
-    # ========================================================
-    # 第二层：普通 GitHub Release 页面兜底
-    # 不消耗 REST API 额度
-    # ========================================================
-
-    if [ ! -s "$MOSDNS_ASSET_LIST" ]; then
-        LATEST_PAGE="https://github.com/sbwml/luci-app-mosdns/releases/latest"
-
-        EFFECTIVE_URL="$(
-            curl \
-                -4 \
-                -L \
-                -sS \
-                --connect-timeout 8 \
-                --max-time 30 \
-                -o /dev/null \
-                -w '%{url_effective}' \
-                "$LATEST_PAGE" \
-                2>/dev/null
-        )"
-
-        RELEASE_TAG="$(
-            printf '%s\n' "$EFFECTIVE_URL" |
-            sed -n 's#^.*/releases/tag/\([^/?#]*\).*$#\1#p'
-        )"
-
-        if [ -n "$RELEASE_TAG" ]; then
-            EXPANDED_URL="https://github.com/sbwml/luci-app-mosdns/releases/expanded_assets/${RELEASE_TAG}"
-
-            if curl -4 -fLsS \
-                --connect-timeout 8 \
-                --max-time 30 \
-                -H 'User-Agent: Open-Pro-Installer' \
-                "$EXPANDED_URL" \
-                -o "$MOSDNS_RELEASE_HTML" \
-                >/dev/null 2>&1
-            then
-                grep -o \
-                    '/sbwml/luci-app-mosdns/releases/download/[^"]*' \
-                    "$MOSDNS_RELEASE_HTML" \
-                    2>/dev/null |
-                    sed 's/&amp;/\&/g' |
-                    while IFS= read -r ASSET_PATH
-                    do
-                        printf 'https://github.com%s\n' "$ASSET_PATH"
-                    done \
-                    > "$MOSDNS_ASSET_LIST"
-            fi
+            MOSDNS_BASE_URL="$(mosdns_select_asset)"
+        else
+            _mos_warn "历史 Release 目录暂时无法读取，未能完成历史包查询"
         fi
     fi
-
-    # ========================================================
-    # 精确匹配真实 Asset
-    # ========================================================
-
-    if [ -s "$MOSDNS_ASSET_LIST" ]; then
-        MOSDNS_BASE_URL="$(
-            awk -v name="$EXPECTED_NAME" '
-                {
-                    n=$0
-                    sub(/^.*\//, "", n)
-                    if (n == name) {
-                        print $0
-                        exit
-                    }
-                }
-            ' "$MOSDNS_ASSET_LIST"
-        )"
-
-        if [ -z "$MOSDNS_BASE_URL" ]; then
-            MOSDNS_BASE_URL="$(
-                grep "/${MOSDNS_ARCH}[^/]*-${MOSDNS_SDK}\.tar\.gz$" \
-                    "$MOSDNS_ASSET_LIST" |
-                head -n 1
-            )"
-        fi
-
-        if [ -z "$MOSDNS_BASE_URL" ] &&
-           [ -n "$MOSDNS_ARCH_RAW" ] &&
-           [ "$MOSDNS_ARCH_RAW" != "$MOSDNS_ARCH" ]
-        then
-            MOSDNS_BASE_URL="$(
-                grep "/${MOSDNS_ARCH_RAW}[^/]*-${MOSDNS_SDK}\.tar\.gz$" \
-                    "$MOSDNS_ASSET_LIST" |
-                head -n 1
-            )"
-        fi
-    fi
-
-    # ========================================================
-    # 最终兜底：标准 latest/download
-    # ========================================================
-
-    if [ -z "$MOSDNS_BASE_URL" ]; then
-        MOSDNS_ARCHIVE_NAME="$EXPECTED_NAME"
-        MOSDNS_BASE_URL="https://github.com/sbwml/luci-app-mosdns/releases/latest/download/${MOSDNS_ARCHIVE_NAME}"
-        _mos_warn "未解析到真实 Asset，尝试标准地址：$MOSDNS_ARCHIVE_NAME"
-    else
-        MOSDNS_ARCHIVE_NAME="$(basename "$MOSDNS_BASE_URL")"
-    fi
-
+    [ -n "$MOSDNS_BASE_URL" ] || {
+        _mos_error "没有查到当前固件的精确匹配包：$EXPECTED_NAME"
+        _mos_warn "目标：${DISTRIB_TARGET:-unknown} / ${DISTRIB_RELEASE:-unknown} / $MOSDNS_ARCH"
+        _mos_warn "需要使用对应固件 SDK 编译并发布到本仓库 mosdns-$MOSDNS_SERIES Release"
+        _mos_warn "未执行跨版本安装、架构别名修改或强制忽略依赖"
+        return 1
+    }
+    case "$MOSDNS_BASE_URL" in
+        https://github.com/sbwml/luci-app-mosdns/releases/download/*|https://github.com/zimoadmin/Open-Pro-Installer/releases/download/*) ;;
+        *) _mos_error "Release 下载地址来源无效"; return 1;;
+    esac
+    MOSDNS_ARCHIVE_NAME="$(basename "$MOSDNS_BASE_URL")"
     MOSDNS_ARCHIVE_FILE="${MOSDNS_TMP_DIR}/${MOSDNS_ARCHIVE_NAME}"
-
-
-    return 0
+    _mos_info "匹配安装包：$MOSDNS_ARCHIVE_NAME"
 }
 
 build_mosdns_url() {
@@ -549,6 +471,55 @@ locate_mosdns_packages() {
     [ "$MISSING" -eq 0 ] || { _mos_error "Release 压缩包缺少必要组件"; return 1; }
     _mos_ok "已识别全部 6 个 MosDNS 组件"
     printf '\n'
+}
+
+# 在停止现有服务前检查整套包；不执行安装脚本，不修改架构配置。
+preflight_mosdns_packages() {
+    _mos_info "正在预检整套组件的架构和依赖..."
+    set -- "$MOSDNS_GEO_TOOL_PKG" "$V2RAY_GEOIP_PKG" "$V2RAY_GEOSITE_PKG" \
+        "$MOSDNS_MAIN_PKG" "$MOSDNS_LUCI_PKG" "$MOSDNS_I18N_PKG"
+    if [ "$MOSDNS_PKG_MANAGER" = "opkg" ]; then
+        MOSDNS_PREFLIGHT_INDEX=0
+        MOSDNS_ALLOWED_ARCHES="$(opkg print-architecture 2>/dev/null |
+            awk '$1=="arch" && $3+0>0 {print $2}')"
+        for MOSDNS_CHECK_FILE do
+            MOSDNS_PREFLIGHT_INDEX=$((MOSDNS_PREFLIGHT_INDEX + 1))
+            MOSDNS_CONTROL_ARCHIVE="$MOSDNS_TMP_DIR/control-check.tar.gz"
+            if ! tar -xzOf "$MOSDNS_CHECK_FILE" ./control.tar.gz > "$MOSDNS_CONTROL_ARCHIVE" 2>/dev/null; then
+                tar -xzOf "$MOSDNS_CHECK_FILE" control.tar.gz > "$MOSDNS_CONTROL_ARCHIVE" 2>/dev/null || {
+                    _mos_error "无法读取 IPK 元数据：$(basename "$MOSDNS_CHECK_FILE")"
+                    return 1
+                }
+            fi
+            MOSDNS_CONTROL="$(tar -xzOf "$MOSDNS_CONTROL_ARCHIVE" ./control 2>/dev/null)" ||
+                MOSDNS_CONTROL="$(tar -xzOf "$MOSDNS_CONTROL_ARCHIVE" control 2>/dev/null)" || return 1
+            MOSDNS_PACKAGE_ARCH="$(printf '%s\n' "$MOSDNS_CONTROL" |
+                sed -n 's/^Architecture:[[:space:]]*//p' | tr -d '\r')"
+            if ! printf '%s\n' "$MOSDNS_ALLOWED_ARCHES" |
+                awk -v arch="$MOSDNS_PACKAGE_ARCH" '$0==arch && arch!="" {found=1} END{exit !found}'
+            then
+                _mos_error "包架构不匹配：$(basename "$MOSDNS_CHECK_FILE") / $MOSDNS_PACKAGE_ARCH"
+                return 1
+            fi
+            cp "$MOSDNS_CHECK_FILE" "/tmp/mos${MOSDNS_PREFLIGHT_INDEX}.ipk" || return 1
+        done
+        rm -f "$MOSDNS_CONTROL_ARCHIVE"
+        opkg --noaction install --force-downgrade \
+            /tmp/mos1.ipk /tmp/mos2.ipk /tmp/mos3.ipk \
+            /tmp/mos4.ipk /tmp/mos5.ipk /tmp/mos6.ipk \
+            > "$MOSDNS_INSTALL_LOG" 2>&1
+        MOSDNS_PREFLIGHT_RESULT=$?
+        cleanup_mosdns_safe_packages
+    else
+        apk add --simulate --allow-untrusted "$@" > "$MOSDNS_INSTALL_LOG" 2>&1
+        MOSDNS_PREFLIGHT_RESULT=$?
+    fi
+    if [ "$MOSDNS_PREFLIGHT_RESULT" -ne 0 ]; then
+        _mos_error "安装预检未通过，尚未停止服务或安装组件"
+        tail -n 30 "$MOSDNS_INSTALL_LOG"
+        return 1
+    fi
+    _mos_ok "包架构及依赖预检通过"
 }
 
 check_mosdns_package_installed() {
@@ -1172,7 +1143,7 @@ install_mosdns() {
 
     cleanup_mosdns_all
     mkdir -p "$MOSDNS_TMP_DIR" || return 1
-    prepare_mosdns_download_info || return 1
+    prepare_mosdns_download_info || { cleanup_mosdns_temp; return 1; }
     printf '\n'
     trap 'interrupt_mosdns' INT TERM
 
@@ -1190,6 +1161,7 @@ install_mosdns() {
 
     extract_mosdns_archive || { cleanup_mosdns_temp; trap - INT TERM; return 1; }
     locate_mosdns_packages || { cleanup_mosdns_temp; trap - INT TERM; return 1; }
+    preflight_mosdns_packages || { cleanup_mosdns_temp; trap - INT TERM; return 1; }
     detect_existing_mosdns_service
     stop_mosdns_service
 
