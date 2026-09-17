@@ -50,7 +50,8 @@ MOSDNS_SDK=""
 MOSDNS_VERSION=""
 MOSDNS_WAS_RUNNING=0
 
-V2DAT_PKG=""
+MOSDNS_GEO_TOOL_PKG=""
+MOSDNS_GEO_TOOL_NAME=""
 V2RAY_GEOIP_PKG=""
 V2RAY_GEOSITE_PKG=""
 MOSDNS_MAIN_PKG=""
@@ -518,16 +519,32 @@ find_mosdns_package() {
 
 locate_mosdns_packages() {
     _mos_info "正在识别 MosDNS 组件..."
-    V2DAT_PKG="$(find_mosdns_package 'v2dat')"
+    MOSDNS_GEO_TOOL_NAME="geo2txt"
+    MOSDNS_GEO_TOOL_PKG="$(find_mosdns_package 'geo2txt')"
+    if [ -z "$MOSDNS_GEO_TOOL_PKG" ]; then
+        MOSDNS_GEO_TOOL_NAME="v2dat"
+        MOSDNS_GEO_TOOL_PKG="$(find_mosdns_package 'v2dat')"
+    fi
     V2RAY_GEOIP_PKG="$(find_mosdns_package 'v2ray-geoip')"
     V2RAY_GEOSITE_PKG="$(find_mosdns_package 'v2ray-geosite')"
     MOSDNS_MAIN_PKG="$(find_mosdns_package 'mosdns')"
     MOSDNS_LUCI_PKG="$(find_mosdns_package 'luci-app-mosdns')"
     MOSDNS_I18N_PKG="$(find_mosdns_package 'luci-i18n-mosdns-zh-cn')"
     MISSING=0
-    for P in V2DAT_PKG V2RAY_GEOIP_PKG V2RAY_GEOSITE_PKG MOSDNS_MAIN_PKG MOSDNS_LUCI_PKG MOSDNS_I18N_PKG; do
+    for P in MOSDNS_GEO_TOOL_PKG V2RAY_GEOIP_PKG V2RAY_GEOSITE_PKG MOSDNS_MAIN_PKG MOSDNS_LUCI_PKG MOSDNS_I18N_PKG; do
         eval "V=\${$P}"
-        [ -n "$V" ] || MISSING=1
+        if [ -z "$V" ]; then
+            case "$P" in
+                MOSDNS_GEO_TOOL_PKG) MISSING_NAME="geo2txt / v2dat";;
+                V2RAY_GEOIP_PKG) MISSING_NAME="v2ray-geoip";;
+                V2RAY_GEOSITE_PKG) MISSING_NAME="v2ray-geosite";;
+                MOSDNS_MAIN_PKG) MISSING_NAME="mosdns";;
+                MOSDNS_LUCI_PKG) MISSING_NAME="luci-app-mosdns";;
+                MOSDNS_I18N_PKG) MISSING_NAME="luci-i18n-mosdns-zh-cn";;
+            esac
+            _mos_error "缺少组件：$MISSING_NAME（.$MOSDNS_PKG_EXT）"
+            MISSING=1
+        fi
     done
     [ "$MISSING" -eq 0 ] || { _mos_error "Release 压缩包缺少必要组件"; return 1; }
     _mos_ok "已识别全部 6 个 MosDNS 组件"
@@ -676,8 +693,8 @@ install_mosdns_packages() {
     mosdns_install_progress "$CURRENT" "$TOTAL"
 
     install_single_mosdns_package \
-        v2dat \
-        "$V2DAT_PKG" \
+        "$MOSDNS_GEO_TOOL_NAME" \
+        "$MOSDNS_GEO_TOOL_PKG" \
         1 \
         "$TOTAL" || return 1
 
@@ -1131,7 +1148,7 @@ get_mosdns_version() {
 verify_mosdns_installation() {
     printf '\n'; _mos_info "正在进行 MosDNS 最终验证..."
     VERIFY_FAILED=0
-    for PACKAGE_NAME in v2dat v2ray-geoip v2ray-geosite mosdns luci-app-mosdns luci-i18n-mosdns-zh-cn; do
+    for PACKAGE_NAME in "$MOSDNS_GEO_TOOL_NAME" v2ray-geoip v2ray-geosite mosdns luci-app-mosdns luci-i18n-mosdns-zh-cn; do
         if check_mosdns_package_installed "$PACKAGE_NAME"; then _mos_ok "$PACKAGE_NAME"; else _mos_error "$PACKAGE_NAME 未正确安装"; VERIFY_FAILED=1; fi
     done
     if command -v mosdns >/dev/null 2>&1; then _mos_ok "MosDNS 可执行文件正常"; else _mos_error "没有检测到 MosDNS 可执行文件"; VERIFY_FAILED=1; fi
