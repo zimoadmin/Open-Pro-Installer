@@ -213,12 +213,27 @@ check_mosdns_disk_space() {
 }
 
 # 精确匹配公开 Release 的资产名，不猜测缺失的下载地址。
+# 同一 CPU 核心的厂商标签可使用标准标签；不跨 A53/A72/A76。
+mosdns_release_arch() {
+    case "$MOSDNS_CPU_ARCH:$MOSDNS_ARCH" in
+        aarch64:aarch64_cortex-a53_neon-vfpv4) printf '%s' aarch64_cortex-a53;;
+        aarch64:aarch64_cortex-a72_neon-vfpv4) printf '%s' aarch64_cortex-a72;;
+        aarch64:aarch64_cortex-a76_neon-vfpv4) printf '%s' aarch64_cortex-a76;;
+        *) printf '%s' "$MOSDNS_ARCH";;
+    esac
+}
+
 mosdns_select_asset() {
-    awk -v name="$EXPECTED_NAME" -v offline="mosdns-offline-$EXPECTED_NAME" '
+    MOSDNS_RELEASE_ARCH="$(mosdns_release_arch)"
+    [ "$MOSDNS_PKG_MANAGER" != apk ] || MOSDNS_RELEASE_ARCH="$MOSDNS_ARCH"
+    awk -v native="$MOSDNS_ARCH" -v cpu="$MOSDNS_RELEASE_ARCH" -v sdk="$MOSDNS_SDK" '
         {
             n=$0
             sub(/^.*\//, "", n)
-            if (n == name || n == offline) { print $0; exit }
+            if (n==native "-" sdk ".tar.gz" || n==cpu "-" sdk ".tar.gz" ||
+                n==sdk "-" native ".tar.gz" || n==sdk "-" cpu ".tar.gz" ||
+                n=="mosdns-offline-" native "-" sdk ".tar.gz" ||
+                n=="mosdns-offline-" cpu "-" sdk ".tar.gz") {print $0; exit}
         }
     ' "$MOSDNS_ASSET_LIST"
 }
@@ -311,9 +326,9 @@ prepare_mosdns_download_info() {
     MOSDNS_BASE_URL=""
     MOSDNS_COMPAT_ARCH=""
     MOSDNS_ARCHIVE_SHA256=""
-    # 自有版本包优先，供厂商 SDK 编译产物使用；其次查上游最新包。
-    for MOSDNS_SOURCE in "zimoadmin/Open-Pro-Installer|tags/mosdns-$MOSDNS_SERIES" \
-                          "sbwml/luci-app-mosdns|latest"; do
+    # 优先查上游最新 Release，再查对应固件的厂商 SDK 产物。
+    for MOSDNS_SOURCE in "sbwml/luci-app-mosdns|latest" \
+                          "zimoadmin/Open-Pro-Installer|tags/mosdns-$MOSDNS_SERIES"; do
         MOSDNS_SOURCE_REPO="${MOSDNS_SOURCE%%|*}"
         MOSDNS_SOURCE_REF="${MOSDNS_SOURCE#*|}"
         if mosdns_read_release_assets "$MOSDNS_SOURCE_REPO" "$MOSDNS_SOURCE_REF"; then
@@ -351,6 +366,17 @@ prepare_mosdns_download_info() {
         *) _mos_error "Release 下载地址来源无效"; return 1;;
     esac
     MOSDNS_ARCHIVE_NAME="$(basename "$MOSDNS_BASE_URL")"
+    MOSDNS_RELEASE_ARCH="$(mosdns_release_arch)"
+    if [ "$MOSDNS_PKG_MANAGER" = opkg ] &&
+       [ "$MOSDNS_RELEASE_ARCH" != "$MOSDNS_ARCH" ] &&
+       [ -z "$MOSDNS_COMPAT_ARCH" ]; then
+        case "$MOSDNS_ARCHIVE_NAME" in
+            "$MOSDNS_RELEASE_ARCH-$MOSDNS_SDK.tar.gz"|"$MOSDNS_SDK-$MOSDNS_RELEASE_ARCH.tar.gz"|"mosdns-offline-$MOSDNS_RELEASE_ARCH-$MOSDNS_SDK.tar.gz")
+                MOSDNS_COMPAT_ARCH="$MOSDNS_RELEASE_ARCH"
+                _mos_warn "自动强制接受同核心架构标签：$MOSDNS_ARCH → $MOSDNS_COMPAT_ARCH"
+                ;;
+        esac
+    fi
     MOSDNS_ARCHIVE_FILE="${MOSDNS_TMP_DIR}/${MOSDNS_ARCHIVE_NAME}"
     _mos_info "匹配安装包：$MOSDNS_ARCHIVE_NAME"
 }
