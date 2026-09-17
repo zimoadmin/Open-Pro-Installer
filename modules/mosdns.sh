@@ -79,9 +79,13 @@ _mos_info() {
     if command -v info >/dev/null 2>&1; then info "$*"; else printf '\033[1;92m[INFO]\033[0m %s\n' "$*"; fi
 }
 _mos_warn() {
+    openpro_ui_note "WARN" "$*"
+
     if command -v warning >/dev/null 2>&1; then warning "$*"; elif command -v warn >/dev/null 2>&1; then warn "$*"; else printf '\033[1;93m[WARN]\033[0m %s\n' "$*"; fi
 }
 _mos_error() {
+    openpro_ui_note "ERROR" "$*"
+
     if command -v error >/dev/null 2>&1; then error "$*"; else printf '\033[1;91m[ERROR]\033[0m %s\n' "$*"; fi
 }
 _mos_ok() { printf '\033[1;92m[OK]\033[0m %s\n' "$*"; }
@@ -618,6 +622,8 @@ check_mosdns_package_installed() {
 
 mosdns_install_progress()
 {
+    if [ "$OPENPRO_UI_ACTIVE" = 1 ]; then openpro_ui_step 3 "$(($1 * 100 / $2))"; return 0; fi
+
     CURRENT="$1"
     TOTAL="$2"
 
@@ -1210,27 +1216,30 @@ verify_mosdns_installation() {
     [ "$VERIFY_FAILED" -eq 0 ]
 }
 
-install_mosdns() {
-    printf '\n======================================\n          MosDNS Installer\n======================================\n\n'
-
+install_mosdns_body() {
     [ "$(id -u 2>/dev/null)" = "0" ] || { _mos_error "请使用 root 用户运行"; return 1; }
     _mos_info "正在准备 MosDNS 安装环境..."
 
+    openpro_ui_step 1 10
     check_mosdns_runtime || return 1
     detect_mosdns_openwrt || return 1
     detect_mosdns_cpu
+    openpro_ui_step 1 30
     detect_mosdns_package_manager || return 1
     detect_mosdns_arch || return 1
+    openpro_ui_step 1 50
     check_mosdns_disk_space || return 1
 
     _mos_ok "环境检测完成"
 
     cleanup_mosdns_all
     mkdir -p "$MOSDNS_TMP_DIR" || return 1
+    openpro_ui_step 1 70
     prepare_mosdns_download_info || { cleanup_mosdns_temp; return 1; }
     printf '\n'
     trap 'interrupt_mosdns' INT TERM
 
+    openpro_ui_step 2 0
     if ! smart_download_mosdns "$MOSDNS_BASE_URL" "$MOSDNS_ARCHIVE_FILE"; then
         _mos_error "MosDNS 下载失败，所有 GitHub 下载线路均不可用"
         [ -s "$MOSDNS_DOWNLOAD_LOG" ] && { printf '\n========== DOWNLOAD LOG ==========\n'; tail -n 30 "$MOSDNS_DOWNLOAD_LOG"; printf '==================================\n'; }
@@ -1243,19 +1252,23 @@ install_mosdns() {
     _mos_info "File Size        : ${ARCHIVE_MB} MB"
     printf '\n'
 
+    openpro_ui_step 2 85
     extract_mosdns_archive || { cleanup_mosdns_temp; trap - INT TERM; return 1; }
     locate_mosdns_packages || { cleanup_mosdns_temp; trap - INT TERM; return 1; }
+    openpro_ui_step 2 95
     preflight_mosdns_packages || { cleanup_mosdns_temp; trap - INT TERM; return 1; }
     backup_mosdns_compat_config || { cleanup_mosdns_temp; trap - INT TERM; return 1; }
     detect_existing_mosdns_service
     stop_mosdns_service
 
+    openpro_ui_step 3 0
     if ! install_mosdns_packages; then
         _mos_error "MosDNS 组件安装失败"
         [ "$MOSDNS_WAS_RUNNING" -eq 1 ] && [ -x /etc/init.d/mosdns ] && /etc/init.d/mosdns start >/dev/null 2>&1
         cleanup_mosdns_temp; trap - INT TERM; return 1
     fi
 
+    openpro_ui_step 4 10
     verify_mosdns_installation || { _mos_error "MosDNS 最终验证失败"; cleanup_mosdns_temp; trap - INT TERM; return 1; }
 
     printf '\n'
@@ -1266,12 +1279,14 @@ install_mosdns() {
         _mos_warn "MosDNS 本体已安装，但数据库在线更新将不可用"
     fi
 
+    openpro_ui_step 4 65
     if ! ensure_mosdns_rpc; then
         _mos_warn "MosDNS 已安装，但 LuCI RPC 兼容处理存在异常"
     fi
 
     reload_mosdns_luci
     start_mosdns_service || _mos_warn "MosDNS 软件包已安装，但服务自动启动存在异常"
+    openpro_ui_step 5 50
     get_mosdns_version
 
     cleanup_mosdns_temp
@@ -1281,4 +1296,94 @@ install_mosdns() {
     _mos_ok "MosDNS 安装完成"
     printf '\n'
     return 0
+}
+
+
+# 详细过程写入日志；面板、警告和错误使用独立输出。
+openpro_ui_draw() {
+    [ "$OPENPRO_UI_ACTIVE" = 1 ] || return 0
+    [ "$OPENPRO_UI_DRAWN" != 1 ] || printf '\033[6A' >&9
+    OPENPRO_UI_TOTAL=0
+    for OPENPRO_UI_I in 1 2 3 4 5; do
+        if [ "$OPENPRO_UI_I" -lt "$OPENPRO_UI_STAGE" ]; then OPENPRO_UI_P=100
+        elif [ "$OPENPRO_UI_I" -eq "$OPENPRO_UI_STAGE" ]; then OPENPRO_UI_P="$OPENPRO_UI_PERCENT"
+        else OPENPRO_UI_P=0; fi
+        OPENPRO_UI_TOTAL=$((OPENPRO_UI_TOTAL + OPENPRO_UI_P))
+        case "$OPENPRO_UI_I" in
+            1) OPENPRO_UI_LABEL="准备安装环境";;
+            2) OPENPRO_UI_LABEL="测速下载安装";;
+            3) OPENPRO_UI_LABEL="安装软件组件";;
+            4) OPENPRO_UI_LABEL="配置与检查";;
+            5) OPENPRO_UI_LABEL="完成安装";;
+        esac
+        OPENPRO_UI_BAR=""
+        OPENPRO_UI_N=0
+        while [ "$OPENPRO_UI_N" -lt 20 ]; do
+            if [ "$OPENPRO_UI_N" -lt $((OPENPRO_UI_P / 5)) ]; then
+                OPENPRO_UI_BAR="$OPENPRO_UI_BAR#"
+            else OPENPRO_UI_BAR="$OPENPRO_UI_BAR-"; fi
+            OPENPRO_UI_N=$((OPENPRO_UI_N + 1))
+        done
+        printf '\033[2K\r[%s/5] %s [%s] %3s%%\n' "$OPENPRO_UI_I" "$OPENPRO_UI_LABEL" "$OPENPRO_UI_BAR" "$OPENPRO_UI_P" >&9
+    done
+    printf '\033[2K\r总体进度：%3s%%\n' "$((OPENPRO_UI_TOTAL / 5))" >&9
+    OPENPRO_UI_DRAWN=1
+}
+openpro_ui_step() {
+    OPENPRO_UI_STAGE="$1"
+    OPENPRO_UI_PERCENT="$2"
+    openpro_ui_draw
+}
+openpro_ui_note() {
+    [ "$OPENPRO_UI_ACTIVE" = 1 ] || return 0
+    if [ "$OPENPRO_UI_DRAWN" = 1 ]; then
+        printf '\033[6A\033[J' >&9
+        OPENPRO_UI_DRAWN=0
+    fi
+    printf '[%s] %s\n' "$1" "$2" >&9
+    openpro_ui_draw
+}
+openpro_ui_begin() {
+    OPENPRO_UI_NAME="$1"
+    OPENPRO_UI_LOG="$2"
+    exec 9>&1
+    OPENPRO_UI_ACTIVE=1
+    OPENPRO_UI_DRAWN=0
+    OPENPRO_UI_STAGE=1
+    OPENPRO_UI_PERCENT=0
+    (
+        [ ! -f /etc/openwrt_release ] || . /etc/openwrt_release
+        OPENPRO_UI_PM=unknown
+        if command -v apk >/dev/null 2>&1; then OPENPRO_UI_PM=apk
+        elif command -v opkg >/dev/null 2>&1; then OPENPRO_UI_PM=opkg; fi
+        [ "$3" != opkg ] || OPENPRO_UI_PM=opkg
+        printf '\n======================================\n%s Installer\n--------------------------------------\n' "$OPENPRO_UI_NAME"
+        printf '包管理器 : %s\n' "$OPENPRO_UI_PM"
+        printf '设备型号 : %s\n' "$(cat /tmp/sysinfo/model 2>/dev/null || printf unknown)"
+        printf 'OpenWrt  : %s\nTarget   : %s\n' "$DISTRIB_RELEASE" "$DISTRIB_TARGET"
+        printf 'CPU 架构 : %s\n软件架构 : %s\n' "$(uname -m)" "$DISTRIB_ARCH"
+        printf '======================================\n'
+    ) >&9
+    openpro_ui_draw
+}
+openpro_ui_end() {
+    if [ "$1" -eq 0 ]; then
+        openpro_ui_step 5 100
+        printf '[OK] %s 安装完成\n' "$OPENPRO_UI_NAME" >&9
+        grep -E '配置备份：|当前配置为停用|Release：|Installed：|如屏幕' "$OPENPRO_UI_LOG" >&9 || :
+    else
+        printf '[ERROR] %s 安装未完成（退出码 %s）\n' "$OPENPRO_UI_NAME" "$1" >&9
+        tail -n 25 "$OPENPRO_UI_LOG" >&9
+    fi
+    printf '详细日志：%s\n' "$OPENPRO_UI_LOG" >&9
+    OPENPRO_UI_ACTIVE=0
+    exec 9>&-
+}
+
+install_mosdns() {
+    openpro_ui_begin "MosDNS" "/tmp/openpro_mosdns_ui.log" ""
+    install_mosdns_body "$@" > "$OPENPRO_UI_LOG" 2>&1
+    OPENPRO_UI_RC=$?
+    openpro_ui_end "$OPENPRO_UI_RC"
+    return "$OPENPRO_UI_RC"
 }
