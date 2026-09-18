@@ -1069,7 +1069,7 @@ clean_passwall_lists()
 
 clean_passwall_logs()
 {
-    rm -f "$PW_UPDATE_LOG" 2>/dev/null
+    # 保留最近一次更新日志用于排查；下次更新时覆盖。
     rm -f "$PW_INSTALL_LOG" 2>/dev/null
     rm -f "$PW_EXTRA_LOG" 2>/dev/null
 }
@@ -1085,6 +1085,43 @@ check_passwall()
         grep -q 'Status:.*installed'
 }
 
+
+
+# 在恢复源、清理临时索引之前收集证据，不更改 OPKG 校验设置。
+pw_diagnose_missing_package()
+{
+    PW_DIAG_LOG="/tmp/openpro_passwall_diagnostic.log"
+    {
+        printf '\n=== 软件源更新日志 ===\n'
+        if [ -s "$PW_UPDATE_LOG" ]; then cat "$PW_UPDATE_LOG"; else echo "没有更新日志"; fi
+        printf '\n=== OPKG 接受的架构 ===\n'
+        opkg print-architecture
+        printf '\n=== 当前临时软件源配置 ===\n'
+        grep '^src/gz openpro_pw_' "$PW_CUSTOMFEEDS"
+        printf '\n=== OPKG 列表目录配置 ===\n'
+        grep -hE '^[[:space:]]*lists_dir[[:space:]]' /etc/opkg.conf /etc/opkg/*.conf 2>/dev/null
+        printf '\n=== 临时索引中的 PassWall 记录 ===\n'
+        for PW_DIAG_DIR in /var/opkg-lists /tmp/opkg-lists; do
+            for PW_DIAG_NAME in openpro_pw_base openpro_pw_luci openpro_pw_packages; do
+                PW_DIAG_FILE="$PW_DIAG_DIR/$PW_DIAG_NAME"
+                printf '\n%s\n' "$PW_DIAG_FILE"
+                if [ -s "$PW_DIAG_FILE" ]; then
+                    ls -l "$PW_DIAG_FILE"
+                    awk 'BEGIN { RS="" } /(^|\n)Package: luci-app-passwall([[:space:]]|$)/ { print; found=1 }
+                         END { if (!found) print "此索引未匹配到目标记录" }' "$PW_DIAG_FILE"
+                else
+                    echo "索引不存在或为空"
+                fi
+            done
+        done
+        printf '\n=== OPKG 查询输出及退出码 ===\n'
+        opkg list luci-app-passwall
+        PW_DIAG_RC=$?
+        printf 'opkg list 退出码：%s\n' "$PW_DIAG_RC"
+    } > "$PW_DIAG_LOG" 2>&1
+    cat "$PW_DIAG_LOG"
+    _pw_info "诊断日志：$PW_DIAG_LOG"
+}
 
 pw_package_exists()
 {
@@ -1459,7 +1496,7 @@ install_passwall()
     fi
 
 
-    rm -f "$PW_UPDATE_LOG"
+    # 查询结束前保留更新日志。
 
     if [ "$PW_PROGRESS_READY" = "1" ]; then
         pw_draw_progress 80 0 0 0 0 16
@@ -1479,11 +1516,11 @@ install_passwall()
 
     if ! pw_package_exists "luci-app-passwall"; then
 
-        _pw_error "当前软件源中没有找到 luci-app-passwall"
+        _pw_error "OPKG 当前可用列表未查到 luci-app-passwall"
 
         printf "\n"
-        _pw_warn "设备识别和软件源匹配已经完成"
-        _pw_warn "但该目录的软件列表中不存在 PassWall"
+        _pw_warn "查询结果不能证明远端目录没有包，以下记录用于排查索引和签名问题"
+        pw_diagnose_missing_package
 
         cleanup_passwall
         trap - EXIT INT TERM
