@@ -1168,8 +1168,7 @@ pw_install_optional()
     _pw_info "正在安装 $PACKAGE..."
 
 
-    if opkg install "$PACKAGE" \
-        >"$PW_EXTRA_LOG" 2>&1
+    if pw_install_extra_visible "$PACKAGE"
     then
 
         _pw_ok "$PACKAGE 安装完成"
@@ -1195,6 +1194,7 @@ pw_install_optional()
 
 install_passwall_extras()
 {
+    : > /tmp/openpro_passwall_extra_failures.log
     printf "\n"
 
     _pw_info "正在检测 PassWall 中文包及扩展组件..."
@@ -1251,8 +1251,7 @@ install_passwall_extras()
         _pw_info "发现组件：$PACKAGE"
 
 
-        if opkg install "$PACKAGE" \
-            >"$PW_EXTRA_LOG" 2>&1
+        if pw_install_extra_visible "$PACKAGE"
         then
 
             _pw_ok "$PACKAGE 安装完成"
@@ -1274,6 +1273,11 @@ install_passwall_extras()
 
     printf "\n"
 
+    if [ -s /tmp/openpro_passwall_extra_failures.log ]; then
+        _pw_warn "以下可选组件安装失败，主程序安装流程继续："
+        grep '^===' /tmp/openpro_passwall_extra_failures.log
+        _pw_info "失败详情：/tmp/openpro_passwall_extra_failures.log"
+    fi
     _pw_ok "扩展组件检测完成"
     _pw_info "发现组件：$FOUND_COUNT 个"
     _pw_info "新增安装：$INSTALLED_COUNT 个"
@@ -1330,6 +1334,59 @@ interrupt_passwall()
 #
 # ============================================================
 
+# 用户选择：永久关闭 OPKG 全局签名校验；依赖和架构校验不变。
+pw_disable_signature_check()
+{
+    PW_SIG_BACKUP=""
+    for PW_SIG_FILE in /etc/opkg.conf /etc/opkg/*.conf; do
+        [ -f "$PW_SIG_FILE" ] || continue
+        grep -Eq '^[[:space:]]*option[[:space:]]+check_signature([[:space:]]|$)' "$PW_SIG_FILE" || continue
+        if [ -z "$PW_SIG_BACKUP" ]; then
+            PW_SIG_BACKUP="$(mktemp -d /root/opkg-signature-backup.XXXXXX)" || return 1
+        fi
+        # 保留目录层级，避免同名配置文件覆盖备份。
+        mkdir -p "$PW_SIG_BACKUP$(dirname "$PW_SIG_FILE")" || return 1
+        cp -p "$PW_SIG_FILE" "$PW_SIG_BACKUP$PW_SIG_FILE" || return 1
+    done
+    for PW_SIG_FILE in /etc/opkg.conf /etc/opkg/*.conf; do
+        [ -f "$PW_SIG_FILE" ] || continue
+        sed -i '/^[[:space:]]*option[[:space:]][[:space:]]*check_signature\([[:space:]].*\)\{0,1\}$/d' "$PW_SIG_FILE" || return 1
+        if grep -Eq '^[[:space:]]*option[[:space:]]+check_signature([[:space:]]|$)' "$PW_SIG_FILE"; then
+            _pw_error "签名校验配置未能移除：$PW_SIG_FILE"
+            return 1
+        fi
+    done
+    _pw_warn "OPKG 全局签名校验已永久关闭"
+    [ -z "$PW_SIG_BACKUP" ] || _pw_info "原签名配置备份：$PW_SIG_BACKUP"
+    return 0
+}
+
+# 可选组件串行安装；定期报告等待状态，不强杀正在配置的软件包。
+pw_install_extra_visible()
+{
+    _pw_info "正在安装扩展组件：$1"
+    opkg install "$1" >"$PW_EXTRA_LOG" 2>&1 &
+    PW_PROGRESS_PID=$!
+    PW_EXTRA_WAIT=0
+    while kill -0 "$PW_PROGRESS_PID" 2>/dev/null; do
+        sleep 1
+        PW_EXTRA_WAIT=$((PW_EXTRA_WAIT + 1))
+        if [ $((PW_EXTRA_WAIT % 10)) -eq 0 ]; then
+            _pw_info "$1 仍在运行，已等待 $PW_EXTRA_WAIT 秒"
+            tail -n 2 "$PW_EXTRA_LOG"
+        fi
+    done
+    wait "$PW_PROGRESS_PID"
+    PW_EXTRA_RC=$?
+    PW_PROGRESS_PID=""
+    if [ "$PW_EXTRA_RC" -ne 0 ]; then
+        { printf '\n=== %s，退出码 %s ===\n' "$1" "$PW_EXTRA_RC"; cat "$PW_EXTRA_LOG"; } >> /tmp/openpro_passwall_extra_failures.log
+        tail -n 12 "$PW_EXTRA_LOG"
+    fi
+    return "$PW_EXTRA_RC"
+}
+
+
 install_passwall()
 {
     PW_PROGRESS_READY=0
@@ -1374,6 +1431,11 @@ install_passwall()
 
 
 
+
+    pw_disable_signature_check || {
+        _pw_error "关闭签名校验失败，停止安装"
+        return 1
+    }
 
     # ========================================================
     # 已安装
