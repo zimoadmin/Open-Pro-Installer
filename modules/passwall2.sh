@@ -1282,7 +1282,7 @@ clean_passwall2_lists()
 
 clean_passwall2_logs()
 {
-    rm -f "$PW2_UPDATE_LOG" 2>/dev/null
+    # 保留最近一次更新日志；下次更新覆盖。
     rm -f "$PW2_INSTALL_LOG" 2>/dev/null
     rm -f "$PW2_EXTRA_LOG" 2>/dev/null
 
@@ -1363,8 +1363,7 @@ pw2_install_optional()
     rm -f "$PW2_EXTRA_LOG"
 
 
-    if opkg install "$PACKAGE" \
-        >"$PW2_EXTRA_LOG" 2>&1
+    if pw2_install_extra_visible "$PACKAGE"
     then
 
         if pw2_package_installed "$PACKAGE"; then
@@ -1432,6 +1431,7 @@ pw2_install_optional()
 
 install_passwall2_extras()
 {
+    : > /tmp/openpro_passwall2_extra_failures.log
     printf "\n"
 
     _pw2_info "正在检测 PassWall2 中文包及扩展组件..."
@@ -1504,8 +1504,7 @@ install_passwall2_extras()
         rm -f "$PW2_EXTRA_LOG"
 
 
-        if opkg install "$PACKAGE" \
-            >"$PW2_EXTRA_LOG" 2>&1
+        if pw2_install_extra_visible "$PACKAGE"
         then
 
             if pw2_package_installed "$PACKAGE"; then
@@ -1588,6 +1587,91 @@ interrupt_passwall2()
 # 不要删除这个函数
 # ============================================================
 
+pw2_disable_signature_check()
+{
+    PW2_SIG_BACKUP=""
+    for PW2_SIG_FILE in /etc/opkg.conf /etc/opkg/*.conf; do
+        [ -f "$PW2_SIG_FILE" ] || continue
+        grep -Eq '^[[:space:]]*option[[:space:]]+check_signature([[:space:]]|$)' "$PW2_SIG_FILE" || continue
+        if [ -z "$PW2_SIG_BACKUP" ]; then
+            PW2_SIG_BACKUP="$(mktemp -d /root/opkg-signature-backup.XXXXXX)" || return 1
+        fi
+        # 保留目录层级，避免同名配置文件覆盖备份。
+        mkdir -p "$PW2_SIG_BACKUP$(dirname "$PW2_SIG_FILE")" || return 1
+        cp -p "$PW2_SIG_FILE" "$PW2_SIG_BACKUP$PW2_SIG_FILE" || return 1
+    done
+    for PW2_SIG_FILE in /etc/opkg.conf /etc/opkg/*.conf; do
+        [ -f "$PW2_SIG_FILE" ] || continue
+        sed -i '/^[[:space:]]*option[[:space:]][[:space:]]*check_signature\([[:space:]].*\)\{0,1\}$/d' "$PW2_SIG_FILE" || return 1
+        if grep -Eq '^[[:space:]]*option[[:space:]]+check_signature([[:space:]]|$)' "$PW2_SIG_FILE"; then
+            _pw2_error "签名校验配置未能移除：$PW2_SIG_FILE"
+            return 1
+        fi
+    done
+    _pw2_warn "OPKG 全局签名校验已永久关闭"
+    [ -z "$PW2_SIG_BACKUP" ] || _pw2_info "原签名配置备份：$PW2_SIG_BACKUP"
+    return 0
+}
+
+pw2_install_extra_visible()
+{
+    _pw2_info "正在安装扩展组件：$1"
+    opkg install "$1" >"$PW2_EXTRA_LOG" 2>&1 &
+    PW2_PROGRESS_PID=$!
+    PW2_EXTRA_WAIT=0
+    while kill -0 "$PW2_PROGRESS_PID" 2>/dev/null; do
+        sleep 1
+        PW2_EXTRA_WAIT=$((PW2_EXTRA_WAIT + 1))
+        if [ $((PW2_EXTRA_WAIT % 10)) -eq 0 ]; then
+            _pw2_info "$1 仍在运行，已等待 $PW2_EXTRA_WAIT 秒"
+            tail -n 2 "$PW2_EXTRA_LOG"
+        fi
+    done
+    wait "$PW2_PROGRESS_PID"
+    PW2_EXTRA_RC=$?
+    PW2_PROGRESS_PID=""
+    if [ "$PW2_EXTRA_RC" -ne 0 ]; then
+        { printf '\n=== %s，退出码 %s ===\n' "$1" "$PW2_EXTRA_RC"; cat "$PW2_EXTRA_LOG"; } >> /tmp/openpro_passwall2_extra_failures.log
+        tail -n 12 "$PW2_EXTRA_LOG"
+    fi
+    return "$PW2_EXTRA_RC"
+}
+
+pw2_diagnose_missing_package()
+{
+    PW2_DIAG_LOG="/tmp/openpro_passwall2_diagnostic.log"
+    {
+        printf '\n=== 软件源更新日志 ===\n'
+        if [ -s "$PW2_UPDATE_LOG" ]; then cat "$PW2_UPDATE_LOG"; else echo "没有更新日志"; fi
+        printf '\n=== OPKG 接受的架构 ===\n'
+        opkg print-architecture
+        printf '\n=== 当前临时软件源配置 ===\n'
+        grep '^src/gz openpro_pw2_' "$PW2_CUSTOMFEEDS"
+        printf '\n=== OPKG 列表目录配置 ===\n'
+        grep -hE '^[[:space:]]*lists_dir[[:space:]]' /etc/opkg.conf /etc/opkg/*.conf 2>/dev/null
+        printf '\n=== 临时索引中的 PassWall 记录 ===\n'
+        for PW2_DIAG_DIR in /var/opkg-lists /tmp/opkg-lists; do
+            for PW2_DIAG_NAME in openpro_pw2_base openpro_pw2_luci openpro_pw2_packages; do
+                PW2_DIAG_FILE="$PW2_DIAG_DIR/$PW2_DIAG_NAME"
+                printf '\n%s\n' "$PW2_DIAG_FILE"
+                if [ -s "$PW2_DIAG_FILE" ]; then
+                    ls -l "$PW2_DIAG_FILE"
+                    awk 'BEGIN { RS="" } /(^|\n)Package: luci-app-passwall2([[:space:]]|$)/ { print; found=1 }
+                         END { if (!found) print "此索引未匹配到目标记录" }' "$PW2_DIAG_FILE"
+                else
+                    echo "索引不存在或为空"
+                fi
+            done
+        done
+        printf '\n=== OPKG 查询输出及退出码 ===\n'
+        opkg list luci-app-passwall2
+        PW2_DIAG_RC=$?
+        printf 'opkg list 退出码：%s\n' "$PW2_DIAG_RC"
+    } > "$PW2_DIAG_LOG" 2>&1
+    cat "$PW2_DIAG_LOG"
+    _pw2_info "诊断日志：$PW2_DIAG_LOG"
+}
+
 install_passwall2()
 {
     PW2_PROGRESS_READY=0
@@ -1637,6 +1721,8 @@ install_passwall2()
     # ========================================================
     # 检测系统
     # ========================================================
+
+    pw2_disable_signature_check || { _pw2_error "关闭签名校验失败"; return 1; }
 
     if ! detect_passwall2_system; then
 
@@ -1748,7 +1834,7 @@ install_passwall2()
     fi
 
 
-    rm -f "$PW2_UPDATE_LOG"
+    # 查询结束前保留更新日志。
 
     if [ "$PW2_PROGRESS_READY" = "1" ]; then
         pw2_draw_progress 80 0 0 0 0 16
@@ -1778,7 +1864,8 @@ install_passwall2()
 
         if ! pw2_package_exists "luci-app-passwall2"; then
 
-            _pw2_error "当前软件源中没有找到 luci-app-passwall2"
+            _pw2_error "OPKG 可用列表未查到 luci-app-passwall2"
+            pw2_diagnose_missing_package
 
             printf "\n"
 
@@ -1889,7 +1976,13 @@ install_passwall2()
     # 自动安装中文包 + 全部扩展组件
     # ========================================================
 
+    _pw2_info "主程序步骤完成，接下来安装全部匹配的可选组件"
     install_passwall2_extras
+    if [ -s /tmp/openpro_passwall2_extra_failures.log ]; then
+        _pw2_warn "以下可选组件失败，主程序流程继续："
+        grep '^===' /tmp/openpro_passwall2_extra_failures.log
+        _pw2_info "失败详情：/tmp/openpro_passwall2_extra_failures.log"
+    fi
 
 
     # ========================================================
