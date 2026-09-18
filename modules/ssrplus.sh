@@ -1135,7 +1135,7 @@ clean_openpro_lists()
 
 clean_ssr_logs()
 {
-    rm -f "$UPDATE_LOG" 2>/dev/null
+    # 保留最近一次更新日志；下次更新覆盖。
     rm -f "$INSTALL_LOG" 2>/dev/null
 }
 
@@ -1195,13 +1195,13 @@ install_optional_package()
     _ssr_info "正在安装：$OPTIONAL_PKG"
 
 
-    OPTIONAL_LOG="/tmp/openpro_optional_$$.log"
+    OPTIONAL_LOG="/tmp/openpro_ssrplus_extra.log"
+    SSR_EXTRA_LOG="$OPTIONAL_LOG"
 
     rm -f "$OPTIONAL_LOG"
 
 
-    if opkg install "$OPTIONAL_PKG" \
-        >"$OPTIONAL_LOG" 2>&1
+    if ssr_install_extra_visible "$OPTIONAL_PKG"
     then
 
         if is_package_installed "$OPTIONAL_PKG"; then
@@ -1242,6 +1242,7 @@ install_optional_package()
 
 install_optional_ssr_packages()
 {
+    : > /tmp/openpro_ssrplus_extra_failures.log
     printf "\n"
 
     _ssr_info "正在检测 SSR Plus+ 扩展组件..."
@@ -1377,9 +1378,6 @@ install_optional_ssr_packages()
 cleanup_ssrplus()
 {
     restore_feeds
-    if [ "$SSR_PROGRESS_READY" = "1" ]; then
-        draw_install_progress 50 0 0 0 0 10
-    fi
 
     clean_openpro_lists
     clean_ssr_logs
@@ -1416,6 +1414,91 @@ interrupt_ssrplus()
 # ============================================================
 # 主安装函数
 # ============================================================
+
+ssr_disable_signature_check()
+{
+    SSR_SIG_BACKUP=""
+    for SSR_SIG_FILE in /etc/opkg.conf /etc/opkg/*.conf; do
+        [ -f "$SSR_SIG_FILE" ] || continue
+        grep -Eq '^[[:space:]]*option[[:space:]]+check_signature([[:space:]]|$)' "$SSR_SIG_FILE" || continue
+        if [ -z "$SSR_SIG_BACKUP" ]; then
+            SSR_SIG_BACKUP="$(mktemp -d /root/opkg-signature-backup.XXXXXX)" || return 1
+        fi
+        # 保留目录层级，避免同名配置文件覆盖备份。
+        mkdir -p "$SSR_SIG_BACKUP$(dirname "$SSR_SIG_FILE")" || return 1
+        cp -p "$SSR_SIG_FILE" "$SSR_SIG_BACKUP$SSR_SIG_FILE" || return 1
+    done
+    for SSR_SIG_FILE in /etc/opkg.conf /etc/opkg/*.conf; do
+        [ -f "$SSR_SIG_FILE" ] || continue
+        sed -i '/^[[:space:]]*option[[:space:]][[:space:]]*check_signature\([[:space:]].*\)\{0,1\}$/d' "$SSR_SIG_FILE" || return 1
+        if grep -Eq '^[[:space:]]*option[[:space:]]+check_signature([[:space:]]|$)' "$SSR_SIG_FILE"; then
+            _ssr_error "签名校验配置未能移除：$SSR_SIG_FILE"
+            return 1
+        fi
+    done
+    _ssr_warn "OPKG 全局签名校验已永久关闭"
+    [ -z "$SSR_SIG_BACKUP" ] || _ssr_info "原签名配置备份：$SSR_SIG_BACKUP"
+    return 0
+}
+
+ssr_install_extra_visible()
+{
+    _ssr_info "正在安装扩展组件：$1"
+    opkg install "$1" >"$SSR_EXTRA_LOG" 2>&1 &
+    PROGRESS_PID=$!
+    SSR_EXTRA_WAIT=0
+    while kill -0 "$PROGRESS_PID" 2>/dev/null; do
+        sleep 1
+        SSR_EXTRA_WAIT=$((SSR_EXTRA_WAIT + 1))
+        if [ $((SSR_EXTRA_WAIT % 10)) -eq 0 ]; then
+            _ssr_info "$1 仍在运行，已等待 $SSR_EXTRA_WAIT 秒"
+            tail -n 2 "$SSR_EXTRA_LOG"
+        fi
+    done
+    wait "$PROGRESS_PID"
+    SSR_EXTRA_RC=$?
+    PROGRESS_PID=""
+    if [ "$SSR_EXTRA_RC" -ne 0 ]; then
+        { printf '\n=== %s，退出码 %s ===\n' "$1" "$SSR_EXTRA_RC"; cat "$SSR_EXTRA_LOG"; } >> /tmp/openpro_ssrplus_extra_failures.log
+        tail -n 12 "$SSR_EXTRA_LOG"
+    fi
+    return "$SSR_EXTRA_RC"
+}
+
+ssr_diagnose_missing_package()
+{
+    SSR_DIAG_LOG="/tmp/openpro_ssrplus_diagnostic.log"
+    {
+        printf '\n=== 软件源更新日志 ===\n'
+        if [ -s "$UPDATE_LOG" ]; then cat "$UPDATE_LOG"; else echo "没有更新日志"; fi
+        printf '\n=== OPKG 接受的架构 ===\n'
+        opkg print-architecture
+        printf '\n=== 当前临时软件源配置 ===\n'
+        grep '^src/gz openpro_' "$CUSTOMFEEDS"
+        printf '\n=== OPKG 列表目录配置 ===\n'
+        grep -hE '^[[:space:]]*lists_dir[[:space:]]' /etc/opkg.conf /etc/opkg/*.conf 2>/dev/null
+        printf '\n=== 临时索引中的 PassWall 记录 ===\n'
+        for SSR_DIAG_DIR in /var/opkg-lists /tmp/opkg-lists; do
+            for SSR_DIAG_NAME in openpro_base openpro_luci openpro_packages; do
+                SSR_DIAG_FILE="$SSR_DIAG_DIR/$SSR_DIAG_NAME"
+                printf '\n%s\n' "$SSR_DIAG_FILE"
+                if [ -s "$SSR_DIAG_FILE" ]; then
+                    ls -l "$SSR_DIAG_FILE"
+                    awk 'BEGIN { RS="" } /(^|\n)Package: luci-app-ssr-plus([[:space:]]|$)/ { print; found=1 }
+                         END { if (!found) print "此索引未匹配到目标记录" }' "$SSR_DIAG_FILE"
+                else
+                    echo "索引不存在或为空"
+                fi
+            done
+        done
+        printf '\n=== OPKG 查询输出及退出码 ===\n'
+        opkg list luci-app-ssr-plus
+        SSR_DIAG_RC=$?
+        printf 'opkg list 退出码：%s\n' "$SSR_DIAG_RC"
+    } > "$SSR_DIAG_LOG" 2>&1
+    cat "$SSR_DIAG_LOG"
+    _ssr_info "诊断日志：$SSR_DIAG_LOG"
+}
 
 install_ssrplus()
 {
@@ -1470,6 +1553,8 @@ install_ssrplus()
     # 也继续检测平台和软件源，
     # 这样以后再次运行时可以自动补齐扩展组件。
     # ========================================================
+
+    ssr_disable_signature_check || { _ssr_error "关闭签名校验失败"; return 1; }
 
     if ! detect_system; then
 
@@ -1576,7 +1661,7 @@ install_ssrplus()
     fi
 
 
-    rm -f "$UPDATE_LOG"
+    # 查询结束前保留更新日志。
 
     if [ "$SSR_PROGRESS_READY" = "1" ]; then
         draw_install_progress 80 0 0 0 0 16
@@ -1620,7 +1705,8 @@ install_ssrplus()
 
         if [ "$SSR_PACKAGE" != "luci-app-ssr-plus" ]; then
 
-            _ssr_error "软件源中没有找到 luci-app-ssr-plus"
+            _ssr_error "OPKG 可用列表未查到 luci-app-ssr-plus"
+            ssr_diagnose_missing_package
 
             cleanup_ssrplus
 
@@ -1735,7 +1821,13 @@ install_ssrplus()
     # 因为这里还需要使用临时软件源
     # ========================================================
 
+    _ssr_info "主程序步骤完成，接下来安装全部匹配的可选组件"
     install_optional_ssr_packages
+    if [ -s /tmp/openpro_ssrplus_extra_failures.log ]; then
+        _ssr_warn "以下可选组件失败，主程序流程继续："
+        grep '^===' /tmp/openpro_ssrplus_extra_failures.log
+        _ssr_info "失败详情：/tmp/openpro_ssrplus_extra_failures.log"
+    fi
 
 
     # ========================================================
