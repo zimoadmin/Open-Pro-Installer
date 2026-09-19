@@ -171,6 +171,23 @@ proxy_menu()
                     continue
                 fi
 
+                # ------------------------------------------
+                # 依赖检查：只有安装 OpenClash 时才做
+                #
+                # 缺 luci-compat / luci-lib-ipkg 时，
+                # OpenClash 的 LuCI 页面可能打不开；
+                # 补不上就先问一句，用户同意才继续
+                # ------------------------------------------
+
+                if command -v check_openclash_depend >/dev/null 2>&1; then
+                    if ! check_openclash_depend; then
+                        printf "\n"
+                        printf "%b\n" "${YELLOW}已取消 OpenClash 安装${RESET}"
+                        pause
+                        continue
+                    fi
+                fi
+
                 if get_latest_release; then
                     . "$SCRIPT_DIR/modules/openclash.sh"
                     if command -v install_openclash >/dev/null 2>&1; then
