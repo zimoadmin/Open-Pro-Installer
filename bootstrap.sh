@@ -642,7 +642,7 @@ dl_one()
 
         if dl_is_zip "$DL_ONE_OUT"; then
 
-            : > "$DL_DIR/$DL_ONE_NAME.ok"
+            printf 'ok\n' > "$DL_DIR/$DL_ONE_NAME.ok"
 
         fi
 
@@ -701,7 +701,23 @@ EOF
         for DL_NAME in $DL_PRIORITY
         do
 
-            if [ -s "$DL_DIR/$DL_NAME.ok" ]; then
+            # 判据1：下载器落的 .ok 标记（-f 判存在，
+            # 千万不要用 -s 判非空，标记文件是空的）
+            if [ -f "$DL_DIR/$DL_NAME.ok" ]; then
+
+                DL_WIN="$DL_NAME"
+
+                DL_FOUND=1
+
+                break
+
+            fi
+
+
+            # 判据2：兜底，直接验一遍 zip 本身
+            # （标记逻辑再出问题也不会卡在这里）
+            if [ -f "$DL_DIR/$DL_NAME.zip" ] &&
+               dl_is_zip "$DL_DIR/$DL_NAME.zip"; then
 
                 DL_WIN="$DL_NAME"
 
@@ -749,6 +765,21 @@ EOF
 
 
     if [ -z "$DL_WIN" ]; then
+
+        # 失败时把每条线路下了多少字节打出来，方便排查
+        printf "%b\n" "${YELLOW}[INFO]${RESET} 各线路进度："
+
+        for DL_F in "$DL_DIR"/*.zip
+        do
+
+            [ -f "$DL_F" ] ||
+                continue
+
+            DL_SZ="$(wc -c < "$DL_F" 2>/dev/null)"
+
+            printf "%b\n" "${YELLOW}[INFO]${RESET}   ${DL_F##*/}  ${DL_SZ:-0} 字节"
+
+        done
 
         rm -rf "$DL_DIR"
 
