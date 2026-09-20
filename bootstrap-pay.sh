@@ -546,8 +546,9 @@ json_str()
 
 json_num()
 {
+    # 数值型字段：服务端可能返回 1200（数字）也可能返回 "1200"（字符串），两种都认
     printf '%s' "$1" |
-        sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' |
+        sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*["]*\([0-9][0-9]*\)["]*.*/\1/p' |
         head -n 1
 }
 
@@ -934,6 +935,31 @@ pay_flow()
         *) LICENSE_TTL="$LICENSE_TTL_SRV" ;;
     esac
 
+    # 给用户看的文案：0=永久，<60 秒按秒显示，整分钟按分钟显示
+    case "$LICENSE_TTL" in
+        ''|*[!0-9]*)
+            LICENSE_TTL_TXT="未知"
+            ;;
+        0)
+            LICENSE_TTL_TXT="永久"
+            ;;
+        *)
+            if [ "$LICENSE_TTL" -lt 60 ]; then
+
+                LICENSE_TTL_TXT="${LICENSE_TTL} 秒"
+
+            elif [ $((LICENSE_TTL % 60)) -eq 0 ]; then
+
+                LICENSE_TTL_TXT="$((LICENSE_TTL / 60)) 分钟"
+
+            else
+
+                LICENSE_TTL_TXT="${LICENSE_TTL} 秒"
+
+            fi
+            ;;
+    esac
+
     if [ -z "$POLL_TOKEN" ]; then
 
         _pay_warn "订单创建失败"
@@ -1019,7 +1045,7 @@ pay_flow()
 
     else
 
-        printf "%b\n" "${CYAN}授权有效期 $((LICENSE_TTL / 60)) 分钟：期间可重复运行，过期后需重新购买${RESET}"
+        printf "%b\n" "${CYAN}授权有效期 ${LICENSE_TTL_TXT}：期间可重复运行，过期后需重新购买${RESET}"
 
     fi
 
@@ -1101,7 +1127,7 @@ pay_flow()
 
                 else
 
-                    printf "%b\n" "${CYAN}授权有效期 $((LICENSE_TTL / 60)) 分钟：期间可重复运行，过期后需重新购买${RESET}"
+                    printf "%b\n" "${CYAN}授权有效期 ${LICENSE_TTL_TXT}：期间可重复运行，过期后需重新购买${RESET}"
 
                 fi
 
