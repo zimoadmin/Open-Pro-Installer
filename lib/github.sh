@@ -942,7 +942,7 @@ get_latest_release()
 
         _gh_info "Package Type   : $PACKAGE_EXT"
 
-        _gh_info "Download URL   : $DOWNLOAD_URL"
+        # _gh_info "Download URL   : $DOWNLOAD_URL"
 
         return 0
 
@@ -963,7 +963,7 @@ get_latest_release()
 
         _gh_info "Package Type   : $PACKAGE_EXT"
 
-        _gh_info "Download URL   : $DOWNLOAD_URL"
+        # _gh_info "Download URL   : $DOWNLOAD_URL"
 
         return 0
 
