@@ -18,7 +18,7 @@ RESET="$(printf '\033[0m')"
 # Config
 # ======================================
 
-REPO="https://auth.12334123.xyz/installer"
+
 
 WORKDIR="/tmp/Open-Pro-Installer"
 
@@ -1130,7 +1130,7 @@ mkdir -p "$WORKDIR" || {
 
 rm -f "$BOOTSTRAP_LOG"
 
-
+REPO="https://auth.12334123.xyz/installer"
 # ======================================
 # Download Function
 #
