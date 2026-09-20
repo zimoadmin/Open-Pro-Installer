@@ -467,7 +467,7 @@ LICENSE_DIR="/etc/openpro"
 LICENSE_FILE="$LICENSE_DIR/license"
 LICENSE_FALLBACK="/tmp/openpro_license"
 
-// ======================================
+# ======================================
 # 支付服务器
 #
 # 扫码版整套都在 att.12334123.xyz 上：
