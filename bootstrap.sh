@@ -8,7 +8,7 @@
 #
 # 本版修复（针对 [AUTH] 正在验证... 之后长时间卡住无输出）：
 #   1. 验证后的每个阶段都有可见进度（心跳点 + 耗时）
-#   2. 下载 / 解压 / opkg 全部有硬超时，不再可能无限卡住
+#   2. 下载 / 解压全部有硬超时，不再可能无限卡住
 #   3. 出错或超时会打印原因，不再静默挂起
 #   4. 失败时保留日志路径，方便排查
 #   5. main.zip 改为 8 线路并行竞速
@@ -17,10 +17,12 @@
 #   6. auth_post 去掉 curl -f
 #      （服务端返回 4xx/5xx 时不再丢掉响应体，
 #        失败原因会原样打印，不再一律谎报"连接超时"）
+#   7. 本脚本不再碰 opkg
+#      LuCI 依赖检查已下移到 modules/depend.sh，
+#      只在「[3] 安装代理工具 → [1] 安装 OpenClash」时才执行
 #
-# 可用环境变量：
-#   OPI_SKIP_DEPS=1   跳过 opkg 依赖检查（最快启动）
-#   OPI_OPKG_TIMEOUT  单条 opkg 操作的超时秒数（默认 60）
+# 启动流程 = 认证 → 下载 → 解压 → 进菜单
+# 全程不依赖软件源，也不会因为 opkg 卡住
 # ======================================
 
 
@@ -51,12 +53,6 @@ AUTH_SERVER="https://auth.12334123.xyz"
 ZIP_FILE="$WORKDIR/main.zip"
 
 BOOTSTRAP_LOG="/tmp/openpro_bootstrap.log"
-
-# 单个 opkg 操作的最长等待时间（秒）
-OPKG_TIMEOUT="${OPI_OPKG_TIMEOUT:-60}"
-
-# 是否跳过 opkg 依赖检查
-SKIP_DEPS="${OPI_SKIP_DEPS:-0}"
 
 # --------------------------------------
 # 下载源（并行竞速）
@@ -100,9 +96,6 @@ DL_PRIORITY="SERVER CODELOAD GH01 GH02 GH03 GH04 GH05 GH06"
 
 # 竞速胜出的线路名（由 download_repo 写入）
 DL_WIN=""
-
-# 是否有过失败 / 超时（决定是否保留日志）
-BOOTSTRAP_WARN=0
 
 SPIN_PID=""
 
@@ -160,14 +153,6 @@ step()
 note()
 {
     printf "%b\n" "${GREEN}[OK]${RESET} $*"
-}
-
-
-warn()
-{
-    BOOTSTRAP_WARN=1
-
-    printf "%b\n" "${YELLOW}[WARN]${RESET} $*"
 }
 
 
@@ -410,7 +395,7 @@ esac
 # Check tools
 # ======================================
 
-step "1/6 检查运行环境"
+step "1/5 检查运行环境"
 
 for cmd in curl wget unzip
 do
@@ -574,7 +559,7 @@ fi
 # Prepare Workdir
 # ======================================
 
-step "2/6 准备临时目录"
+step "2/5 准备临时目录"
 
 rm -rf "$WORKDIR"
 
@@ -806,7 +791,7 @@ EOF
 # Download
 # ======================================
 
-step "3/6 正在下载项目文件（8 条线路并行竞速）"
+step "3/5 正在下载项目文件（8 条线路并行竞速）"
 
 spin_start
 
@@ -874,7 +859,7 @@ fi
 # "正在解压..." 已隐藏
 # ======================================
 
-step "4/6 正在解压项目文件"
+step "4/5 正在解压项目文件"
 
 spin_start
 
@@ -965,194 +950,13 @@ rm -f "$ZIP_FILE"
 
 
 # ======================================
-# Check LuCI Dependencies
-#
-# 关键修复：
-#   原来 opkg update / opkg install 没有任何超时，
-#   输出又全部丢进日志，软件源不通时就会
-#   在 [AUTH] 正在验证... 之后静默卡几分钟甚至永久。
-#
-#   现在：
-#     - 每一步都有提示和耗时
-#     - 每条 opkg 命令都有硬超时
-#     - 超时 / 失败只警告，不影响工具箱启动
-# ======================================
-
-opkg_installed()
-{
-    run_limited 20 opkg status "$1" 2>/dev/null |
-        grep -q 'Status:.*installed'
-}
-
-
-check_luci_dependencies()
-{
-
-    # ----------------------------------
-    # 手动跳过
-    # ----------------------------------
-
-    if [ "$SKIP_DEPS" = "1" ]
-    then
-
-        note "已通过 OPI_SKIP_DEPS=1 跳过 LuCI 依赖检查"
-
-        return 0
-
-    fi
-
-
-    # ----------------------------------
-    # 仅 OPKG 系统
-    # ----------------------------------
-
-    if ! command -v opkg >/dev/null 2>&1
-    then
-
-        note "非 opkg 系统，跳过 LuCI 依赖检查"
-
-        return 0
-
-    fi
-
-
-    step "5/6 检查 LuCI 依赖"
-
-
-    NEED_PACKAGES=""
-
-
-    for PKG in luci-compat luci-lib-ipkg
-    do
-
-        if opkg_installed "$PKG"
-        then
-
-            continue
-
-        fi
-
-        NEED_PACKAGES="$NEED_PACKAGES $PKG"
-
-    done
-
-
-    # ----------------------------------
-    # 已满足
-    # ----------------------------------
-
-    if [ -z "$NEED_PACKAGES" ]
-    then
-
-        note "LuCI 依赖已满足"
-
-        return 0
-
-    fi
-
-
-    printf "%b\n" "${CYAN}[INFO] 缺失:$NEED_PACKAGES（只影响 OpenClash，超时自动跳过，每条最多 ${OPKG_TIMEOUT}s）${RESET}"
-
-
-    # ----------------------------------
-    # 更新软件源（有超时）
-    # ----------------------------------
-
-    printf "%b" "${GREEN}[STEP]${RESET} 正在更新软件源 .. "
-
-    spin_start
-
-    run_limited "$OPKG_TIMEOUT" opkg update \
-        >>"$BOOTSTRAP_LOG" 2>&1
-
-    UPDATE_RC=$?
-
-    spin_stop
-
-
-    if [ "$UPDATE_RC" -ne 0 ]
-    then
-
-        warn "软件源更新失败或超时（最多 ${OPKG_TIMEOUT}s），跳过依赖安装"
-
-        warn "这不影响工具箱启动，可稍后手动 opkg install"
-
-        return 0
-
-    fi
-
-    note "软件源更新完成"
-
-
-    # ----------------------------------
-    # 安装缺失依赖（每条都有超时）
-    # ----------------------------------
-
-    for PKG in $NEED_PACKAGES
-    do
-
-        printf "%b" "${GREEN}[STEP]${RESET} 正在安装 $PKG .. "
-
-        spin_start
-
-        run_limited "$OPKG_TIMEOUT" opkg install "$PKG" \
-            >>"$BOOTSTRAP_LOG" 2>&1
-
-        INSTALL_RC=$?
-
-        spin_stop
-
-
-        if [ "$INSTALL_RC" -eq 0 ]
-        then
-
-            note "$PKG 安装完成"
-
-        else
-
-            warn "$PKG 安装失败或超时，已跳过"
-
-        fi
-
-    done
-
-
-    return 0
-}
-
-
-# ======================================
-# 项目准备完成
-#
-# 已隐藏
-# ======================================
-
-# printf "%b\n" "${GREEN}[SUCCESS] 项目准备完成${RESET}"
-
-
-# ======================================
-# Check LuCI Base Dependencies
-# ======================================
-
-check_luci_dependencies
-
-
-# ======================================
 # 清理 Bootstrap 日志
 #
-# 有失败/超时时保留日志，方便排查
+# 启动流程里已经没有非致命警告，
+# 有错误的分支都会自己 tail 日志再退出
 # ======================================
 
-if [ "$BOOTSTRAP_WARN" = "1" ]
-then
-
-    printf "%b\n" "${YELLOW}[INFO] 启动过程有警告，日志保留在：$BOOTSTRAP_LOG${RESET}"
-
-else
-
-    rm -f "$BOOTSTRAP_LOG" 2>/dev/null
-
-fi
+rm -f "$BOOTSTRAP_LOG" 2>/dev/null
 
 
 # ======================================
@@ -1164,7 +968,7 @@ fi
 
 # printf "%b\n" "${BLUE}[INFO] 正在启动 ZIMO--工具箱...${RESET}"
 
-step "6/6 正在启动工具箱（启动总耗时 $(elapsed_sec)s）"
+step "5/5 正在启动工具箱（启动总耗时 $(elapsed_sec)s）"
 
 printf "\n"
 
