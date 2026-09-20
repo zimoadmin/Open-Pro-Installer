@@ -20,6 +20,11 @@
 # 9. QuickStart 软件包状态作为主要验证依据
 # 10. LuCI 文件路径仅作为辅助验证
 #
+# 进度显示：
+#   五个阶段的进度表（检测环境 / 安装 Argon 主题 /
+#   设置默认主题 / 首页 + 网络向导 / 刷新并验证）
+#   + 总体进度 + 当前步骤，风格与 OpenClash 安装一致
+#
 # BusyBox / OpenWrt /bin/sh Compatible
 # ============================================================
 
@@ -154,38 +159,89 @@ DIRECT|
 
 _theme_info()
 {
+    # 进度表显示期间保持安静，避免把表格冲乱
+    [ "$THEME_PROGRESS_ACTIVE" = "1" ] &&
+        return 0
+
     printf "%b\n" "${GREEN}[INFO]${RESET} $*"
 }
 
 
 _theme_ok()
 {
+    [ "$THEME_PROGRESS_ACTIVE" = "1" ] &&
+        return 0
+
     printf "%b\n" "${GREEN}[OK]${RESET} $*"
 }
 
 
 _theme_warn()
 {
+    [ "$THEME_PROGRESS_ACTIVE" = "1" ] &&
+        return 0
+
     printf "%b\n" "${YELLOW}[WARN]${RESET} $*"
 }
 
 
 _theme_error()
 {
+    # 出错先把进度表收掉，否则错误信息会被下一次重绘覆盖
+    theme_progress_stop
+
     printf "%b\n" "${RED}[ERROR]${RESET} $*"
 }
 
 
 # ============================================================
 # Progress
+#
+# 五阶段进度表（和 OpenClash 安装同一个风格）：
+#
+#   [1/5] 检测环境
+#   [2/5] 安装 Argon 主题
+#   [3/5] 设置默认主题
+#   [4/5] 首页 + 网络向导
+#   [5/5] 刷新并验证
+#
+# 调用方式不变：theme_progress PERCENT TEXT
+# 由 theme_progress_map 把总百分比折算到五个阶段。
 # ============================================================
 
-theme_progress()
+THEME_PROGRESS_ACTIVE=0
+THEME_PROGRESS_DRAWN=0
+
+# 进度表占用的行数（重绘前要先上移这么多行）
+THEME_PROGRESS_LINES=12
+
+THEME_TOTAL=0
+
+THEME_STAGE_1=0
+THEME_STAGE_2=0
+THEME_STAGE_3=0
+THEME_STAGE_4=0
+THEME_STAGE_5=0
+
+THEME_CUR_TEXT=""
+
+
+theme_make_bar()
 {
     PERCENT="$1"
-    TEXT="$2"
+    WIDTH=24
 
-    WIDTH=30
+    case "$PERCENT" in
+        ''|*[!0-9]*)
+            PERCENT=0
+            ;;
+    esac
+
+    [ "$PERCENT" -lt 0 ] &&
+        PERCENT=0
+
+    [ "$PERCENT" -gt 100 ] &&
+        PERCENT=100
 
     FILLED=$((PERCENT * WIDTH / 100))
     EMPTY=$((WIDTH - FILLED))
@@ -194,30 +250,226 @@ theme_progress()
 
     I=0
 
-    while [ "$I" -lt "$FILLED" ]; do
-
+    while [ "$I" -lt "$FILLED" ]
+    do
         BAR="${BAR}#"
-
         I=$((I + 1))
-
     done
-
 
     I=0
 
-    while [ "$I" -lt "$EMPTY" ]; do
-
+    while [ "$I" -lt "$EMPTY" ]
+    do
         BAR="${BAR}-"
-
         I=$((I + 1))
-
     done
 
+    printf '%s' "$BAR"
+}
 
-    printf "\r\033[2K${GREEN}[INFO]${RESET} %-28s [${GREEN}%s${RESET}] %3d%%" \
-        "$TEXT" \
+
+theme_cursor_up()
+{
+    COUNT="$1"
+    I=0
+
+    while [ "$I" -lt "$COUNT" ]
+    do
+        printf '\033[1A'
+        I=$((I + 1))
+    done
+}
+
+
+theme_stage_line()
+{
+    STEP="$1"
+    NAME="$2"
+    PERCENT="$3"
+
+    BAR="$(theme_make_bar "$PERCENT")"
+
+    printf '\r\033[2K[%s/5] %-16s [\033[1;92m%s\033[0m] %3d%%\n' \
+        "$STEP" \
+        "$NAME" \
         "$BAR" \
         "$PERCENT"
+}
+
+
+theme_total_line()
+{
+    BAR="$(theme_make_bar "$THEME_TOTAL")"
+
+    printf '\r\033[2K总体进度              [\033[1;96m%s\033[0m] %3d%%\n' \
+        "$BAR" \
+        "$THEME_TOTAL"
+}
+
+
+theme_show_progress()
+{
+    [ "$THEME_PROGRESS_ACTIVE" = "1" ] ||
+        return 0
+
+    if [ "$THEME_PROGRESS_DRAWN" = "1" ]; then
+        theme_cursor_up "$THEME_PROGRESS_LINES"
+    fi
+
+    printf '\r\033[2K====================================================\n'
+    printf '\r\033[2K            iStoreOS 风格一键安装\n'
+    printf '\r\033[2K====================================================\n'
+
+    theme_stage_line 1 "检测环境"        "$THEME_STAGE_1"
+    theme_stage_line 2 "安装 Argon 主题" "$THEME_STAGE_2"
+    theme_stage_line 3 "设置默认主题"    "$THEME_STAGE_3"
+    theme_stage_line 4 "首页 + 网络向导" "$THEME_STAGE_4"
+    theme_stage_line 5 "刷新并验证"      "$THEME_STAGE_5"
+
+    printf '\r\033[2K----------------------------------------------------\n'
+
+    theme_total_line
+
+    printf '\r\033[2K当前：%s\n' "$THEME_CUR_TEXT"
+
+    printf '\r\033[2K====================================================\n'
+
+    # 擦掉表格下方可能被别的输出（测速表、漏网的 printf）留下的内容，
+    # 这样每次重绘都从同一个位置开始，不会累积错位
+    printf '\033[J'
+
+    THEME_PROGRESS_DRAWN=1
+}
+
+
+# ============================================================
+# 总进度 → 各阶段进度
+#
+#   5  - 14   阶段1
+#   15 - 63   阶段2
+#   64 - 66   阶段3
+#   67 - 92   阶段4
+#   93 - 100  阶段5
+# ============================================================
+
+theme_progress_map()
+{
+    P="$1"
+
+    case "$P" in
+        ''|*[!0-9]*)
+            P=0
+            ;;
+    esac
+
+    THEME_TOTAL="$P"
+
+    if [ "$P" -ge 93 ]; then
+
+        THEME_STAGE_1=100
+        THEME_STAGE_2=100
+        THEME_STAGE_3=100
+        THEME_STAGE_4=100
+        THEME_STAGE_5="$P"
+
+    elif [ "$P" -ge 67 ]; then
+
+        THEME_STAGE_1=100
+        THEME_STAGE_2=100
+        THEME_STAGE_3=100
+        THEME_STAGE_4=$(( (P - 67) * 100 / 26 ))
+        THEME_STAGE_5=0
+
+    elif [ "$P" -ge 64 ]; then
+
+        THEME_STAGE_1=100
+        THEME_STAGE_2=100
+        THEME_STAGE_3=$(( (P - 64) * 100 / 3 ))
+        THEME_STAGE_4=0
+        THEME_STAGE_5=0
+
+    elif [ "$P" -ge 15 ]; then
+
+        THEME_STAGE_1=100
+        THEME_STAGE_2=$(( (P - 15) * 100 / 49 ))
+        THEME_STAGE_3=0
+        THEME_STAGE_4=0
+        THEME_STAGE_5=0
+
+    else
+
+        THEME_STAGE_1=$(( P * 100 / 15 ))
+        THEME_STAGE_2=0
+        THEME_STAGE_3=0
+        THEME_STAGE_4=0
+        THEME_STAGE_5=0
+
+    fi
+}
+
+
+theme_progress_start()
+{
+    THEME_STAGE_1=0
+    THEME_STAGE_2=0
+    THEME_STAGE_3=0
+    THEME_STAGE_4=0
+    THEME_STAGE_5=0
+
+    THEME_TOTAL=0
+
+    THEME_CUR_TEXT="准备中..."
+
+    THEME_PROGRESS_ACTIVE=1
+    THEME_PROGRESS_DRAWN=0
+
+    printf "\n"
+
+    theme_show_progress
+}
+
+
+theme_progress_stop()
+{
+    if [ "$THEME_PROGRESS_ACTIVE" = "1" ]; then
+
+        THEME_PROGRESS_ACTIVE=0
+        THEME_PROGRESS_DRAWN=0
+
+        printf "\n"
+
+    fi
+}
+
+
+# ============================================================
+# 兼容原来的调用方式
+#
+#   theme_progress PERCENT TEXT
+#
+# 表格没启动时自动启动（防止单独调用某个模块时没有进度显示）
+# ============================================================
+
+theme_progress()
+{
+    PERCENT="$1"
+    TEXT="$2"
+
+    case "$PERCENT" in
+        ''|*[!0-9]*)
+            PERCENT=0
+            ;;
+    esac
+
+    if [ "$THEME_PROGRESS_ACTIVE" != "1" ]; then
+        theme_progress_start
+    fi
+
+    THEME_CUR_TEXT="$TEXT"
+
+    theme_progress_map "$PERCENT"
+
+    theme_show_progress
 }
 
 
@@ -291,6 +543,8 @@ cleanup_theme_all()
 
 theme_interrupt()
 {
+    theme_progress_stop
+
     printf "\n"
 
     _theme_warn "iStoreOS 风格安装已中断"
@@ -2330,7 +2584,6 @@ install_argon_official()
         "正在下载 Argon Theme..."
 
 
-    printf "\n"
 
 
     if ! smart_download_release \
@@ -2353,7 +2606,6 @@ install_argon_official()
             "正在下载 Argon Config..."
 
 
-        printf "\n"
 
 
         if ! smart_download_release \
@@ -2380,7 +2632,6 @@ install_argon_official()
             "正在下载 Argon 中文包..."
 
 
-        printf "\n"
 
 
         if ! smart_download_release \
@@ -2405,7 +2656,6 @@ install_argon_official()
         "正在安装 Argon..."
 
 
-    printf "\n"
 
 
     printf "\n===== Argon Install =====\n" \
@@ -4129,7 +4379,6 @@ install_quickstart()
             "正在配置首页和网络向导..."
 
 
-        printf "\n"
 
 
         apply_quickstart_config
@@ -4187,7 +4436,6 @@ install_quickstart()
         "正在更新 QuickStart 索引..."
 
 
-    printf "\n"
 
 
     UPDATE_OK=0
@@ -4243,7 +4491,6 @@ install_quickstart()
         "正在安装首页和网络向导..."
 
 
-    printf "\n"
 
 
     # ========================================================
@@ -4350,7 +4597,6 @@ install_quickstart()
         "正在配置首页和网络向导..."
 
 
-    printf "\n"
 
 
     apply_quickstart_config
@@ -4481,12 +4727,13 @@ install_theme()
     # Environment
     # ========================================================
 
+    theme_progress_start
+
     theme_progress \
         5 \
         "正在检测运行环境..."
 
 
-    printf "\n"
 
 
     if ! check_theme_runtime; then
@@ -4551,7 +4798,6 @@ install_theme()
         "正在获取兼容 Argon..."
 
 
-    printf "\n"
 
 
     if ! install_argon_official; then
@@ -4630,7 +4876,6 @@ install_theme()
         "正在准备首页和网络向导..."
 
 
-    printf "\n"
 
 
     QUICKSTART_INSTALL_OK=0
@@ -4719,7 +4964,7 @@ install_theme()
         "iStoreOS 风格安装完成"
 
 
-    printf "\n\n"
+    theme_progress_stop
 
 
     ARGON_INSTALLED_VERSION="$(
@@ -4753,51 +4998,3 @@ install_theme()
 # ============================================================
 # 安装完成详细信息
 # 已隐藏
-# ============================================================
-
-# _theme_info "OpenWrt       : $OPENWRT_VERSION"
-# _theme_info "包管理器      : $PKG_MANAGER"
-# _theme_info "软件包架构    : $PKG_ARCH"
-# _theme_info "软件包格式    : .$ARGON_PACKAGE_TYPE"
-
-# [ -n "$ARGON_RELEASE_TAG" ] &&
-#     _theme_info "Argon Release  : $ARGON_RELEASE_TAG"
-
-# [ -n "$ARGON_INSTALLED_VERSION" ] &&
-#     _theme_info "Argon Version  : $ARGON_INSTALLED_VERSION"
-
-# [ -n "$QUICKSTART_VERSION" ] &&
-#     _theme_info "QuickStart     : $QUICKSTART_VERSION"
-
-# _theme_info "Argon 来源     : jerrykuku 官方 GitHub Release"
-# _theme_info "Argon 下载     : GH01-GH06 + DIRECT 自动测速"
-
-    _theme_info \
-        "已设置 Argon 为默认 LuCI 主题"
-
-
-    [ "$ARGON_MENU_FIX_APPLIED" = "1" ] &&
-        _theme_info \
-            "Argon 菜单    : 已应用 OpenWrt 21.x 折叠修复"
-
-
-    _theme_info \
-        "如页面未更新，请 Ctrl+F5 强制刷新或重新登录 LuCI"
-
-
-    printf "\n"
-
-
-    cleanup_theme_temp
-
-
-    trap - INT TERM
-
-
-    rm -f \
-        "$THEME_LOG" \
-        2>/dev/null
-
-
-    return 0
-}
