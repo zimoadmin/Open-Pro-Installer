@@ -4,9 +4,9 @@
 # Open-Pro-Installer Bootstrap
 # BusyBox / OpenWrt Compatible
 #
-# 【扫码版】https://att.12334123.xyz/bootstrap.sh
+# 【扫码版】att.12334123.xyz
 # 扫码支付成功后自动进入工具箱
-# （auth.12334123.xyz/bootstrap.sh 是邮箱验证码版，两者互不影响）
+# （auth.12334123.xyz 那份是邮箱验证码版，两者互不影响）
 #
 # 正常启动流程静默化版本
 #
@@ -442,7 +442,7 @@ done
 #   3. 支付成功 → 写授权文件 → 继续
 #      失败 / 超时 / 按 Ctrl+C → 提示并退出（本入口不做验证码）
 #
-# 服务器接口约定（都在 PAY_SERVER 上，和授权服务器 auth.12334123.xyz 是两套）：
+# 服务器接口约定（都在 AUTH_SERVER 上）：
 #   POST /order/create          参数：device=<设备标识>&version=<版本>
 #        200 {"success":true,"order_id":"...","poll_token":"...",
 #             "expire_seconds":1200,"amount":"1.00"}
@@ -470,10 +470,10 @@ LICENSE_FALLBACK="/tmp/openpro_license"
 # ======================================
 # 支付服务器
 #
-# 扫码版整套都在 att.12334123.xyz 上：
-# 脚本下发、下单接口、二维码、支付回调。
+# 本入口自己那台（att.12334123.xyz），
+# 和授权服务器 auth.12334123.xyz 是两套系统。
 #
-# 换地址：改这行，或运行时给 OPI_PAY_SERVER=...
+# 想换地址：改这行，或运行时给 OPI_PAY_SERVER=...
 # ======================================
 
 PAY_SERVER="${OPI_PAY_SERVER:-https://att.12334123.xyz}"
@@ -695,7 +695,7 @@ pay_post()
         --max-time 15 \
         -X POST \
         --data "$2" \
-        "$PAY_SERVER$1" \
+        "$AUTH_SERVER$1" \
         2>/dev/null
 }
 
@@ -706,60 +706,8 @@ pay_get()
         -fsS \
         --connect-timeout 5 \
         --max-time 15 \
-        "$PAY_SERVER$1" \
+        "$AUTH_SERVER$1" \
         2>/dev/null
-}
-
-
-# ======================================
-# 画二维码（终端里可扫）
-#
-# 用 qrencode 的半块字符输出（ANSIUTF8）；
-# 本机没有就试着从软件源装一个（约 20KB）。
-#
-# 如果扫不出来（显示成反色），把 OPI_QR_TYPE 设成 ANSIUTF8i
-# ======================================
-
-render_qr()
-{
-    QR_TEXT="$1"
-    QR_OUT="$2"
-    QR_TYPE="${OPI_QR_TYPE:-ANSIUTF8}"
-
-    [ -n "$QR_TEXT" ] ||
-        return 1
-
-    if command -v qrencode >/dev/null 2>&1; then
-
-        qrencode -t "$QR_TYPE" -o "$QR_OUT" "$QR_TEXT" 2>/dev/null
-
-        [ -s "$QR_OUT" ] &&
-            return 0
-
-    fi
-
-    if ! command -v opkg >/dev/null 2>&1; then
-
-        return 1
-
-    fi
-
-    _pay_info "正在准备二维码组件（qrencode）..."
-
-    run_limited 60 opkg update >/dev/null 2>&1
-
-    run_limited 60 opkg install qrencode >/dev/null 2>&1
-
-    if command -v qrencode >/dev/null 2>&1; then
-
-        qrencode -t "$QR_TYPE" -o "$QR_OUT" "$QR_TEXT" 2>/dev/null
-
-        [ -s "$QR_OUT" ] &&
-            return 0
-
-    fi
-
-    return 1
 }
 
 
@@ -773,120 +721,9 @@ pay_flow()
 {
     DEVICE_ID="$(get_device_id)"
 
-
-    # ----------------------------------
-    # 支付方式（可多个时让用户选）
-    #
-    # OPI_PAY_CHANNELS 默认 "wxpay alipay"
-    # 只想留一种就设成单个，例如 OPI_PAY_CHANNELS=wxpay
-    # ----------------------------------
-
-    PAY_CHOICES="${OPI_PAY_CHANNELS:-wxpay alipay}"
-
-    PAY_COUNT=0
-
-    for PAY_C in $PAY_CHOICES
-    do
-        PAY_COUNT=$((PAY_COUNT + 1))
-    done
-
-    PAY_CHANNEL=""
-
-    if [ "$PAY_COUNT" -gt 1 ]; then
-
-        printf "\n"
-        printf "%b\n" "${CYAN}请选择支付方式：${RESET}"
-
-        PAY_IDX=1
-
-        for PAY_C in $PAY_CHOICES
-        do
-
-            case "$PAY_C" in
-                wxpay)  PAY_CN="微信支付" ;;
-                alipay) PAY_CN="支付宝" ;;
-                *)      PAY_CN="$PAY_C" ;;
-            esac
-
-            if [ "$PAY_IDX" = "1" ]; then
-
-                printf "%b\n" "  [$PAY_IDX] $PAY_CN   ${GREEN}（默认，直接回车）${RESET}"
-
-            else
-
-                printf "%b\n" "  [$PAY_IDX] $PAY_CN"
-
-            fi
-
-            PAY_IDX=$((PAY_IDX + 1))
-
-        done
-
-        printf "%b" "${YELLOW}选择 [1]（10 秒不选自动用微信支付）: ${RESET}"
-
-        # read -t 有的 busybox 没编，超时或不可用时都按"直接回车"处理 → 默认微信
-        read -t 10 PAY_PICK </dev/tty 2>/dev/null
-
-        [ -n "$PAY_PICK" ] ||
-            PAY_PICK=1
-
-        PAY_IDX=1
-
-        for PAY_C in $PAY_CHOICES
-        do
-
-            if [ "$PAY_PICK" = "$PAY_IDX" ]; then
-                PAY_CHANNEL="$PAY_C"
-            fi
-
-            PAY_IDX=$((PAY_IDX + 1))
-
-        done
-
-    else
-
-        PAY_CHANNEL="$PAY_CHOICES"
-
-    fi
-
-
     _pay_info "正在创建支付订单..."
 
-    ORDER_JSON="$(
-        pay_post \
-            "/order/create" \
-            "device=$DEVICE_ID&version=1.0.0&channel=$PAY_CHANNEL"
-    )"
-
-
-    # 选中的渠道不可用？把列表里其它渠道再试一遍
-    if [ -z "$ORDER_JSON" ] && [ "$PAY_COUNT" -gt 1 ]; then
-
-        for PAY_C in $PAY_CHOICES
-        do
-
-            [ "$PAY_C" = "$PAY_CHANNEL" ] &&
-                continue
-
-            _pay_info "换个支付方式再试（$PAY_C）..."
-
-            ORDER_JSON="$(
-                pay_post \
-                    "/order/create" \
-                    "device=$DEVICE_ID&version=1.0.0&channel=$PAY_C"
-            )"
-
-            if [ -n "$ORDER_JSON" ]; then
-
-                PAY_CHANNEL="$PAY_C"
-
-                break
-
-            fi
-
-        done
-
-    fi
+    ORDER_JSON="$(pay_post "/order/create" "device=$DEVICE_ID&version=1.0.0")"
 
     if [ -z "$ORDER_JSON" ]; then
 
@@ -899,10 +736,6 @@ pay_flow()
     POLL_TOKEN="$(json_str "$ORDER_JSON" poll_token)"
     ORDER_EXPIRE="$(json_num "$ORDER_JSON" expire_seconds)"
     ORDER_AMOUNT="$(json_str "$ORDER_JSON" amount)"
-    ORDER_CHANNEL="$(json_str "$ORDER_JSON" channel_label)"
-
-    [ -n "$ORDER_CHANNEL" ] ||
-        ORDER_CHANNEL="$PAY_CHANNEL"
 
     if [ -z "$POLL_TOKEN" ]; then
 
@@ -924,32 +757,17 @@ pay_flow()
 
     # ----------------------------------
     # 二维码
-    #
-    # 优先用本机 qrencode 画（服务器就不必带二维码库）；
-    # 本机没有就试着装；再不行让服务器渲染；最后退回纯链接。
     # ----------------------------------
-
-    PAY_URL="$(json_str "$ORDER_JSON" pay_url)"
 
     rm -f "$PAY_QR_FILE"
 
-    if [ -n "$PAY_URL" ]; then
-
-        render_qr "$PAY_URL" "$PAY_QR_FILE"
-
-    fi
-
-    if [ ! -s "$PAY_QR_FILE" ]; then
-
-        curl \
-            -fsS \
-            --connect-timeout 5 \
-            --max-time 20 \
-            "$PAY_SERVER/order/qr?token=$POLL_TOKEN" \
-            -o "$PAY_QR_FILE" \
-            2>/dev/null
-
-    fi
+    curl \
+        -fsS \
+        --connect-timeout 5 \
+        --max-time 20 \
+        "$AUTH_SERVER/order/qr?token=$POLL_TOKEN" \
+        -o "$PAY_QR_FILE" \
+        2>/dev/null
 
 
     printf "\n"
@@ -964,12 +782,6 @@ pay_flow()
 
         cat "$PAY_QR_FILE"
 
-    elif [ -n "$PAY_URL" ]; then
-
-        _pay_warn "二维码没画出来，用手机浏览器打开这个链接支付："
-
-        printf "%s\n" "$PAY_URL"
-
     else
 
         _pay_warn "二维码获取失败"
@@ -978,7 +790,7 @@ pay_flow()
 
     printf "\n"
 
-    printf "%b\n" "${YELLOW}支付方式：${ORDER_CHANNEL}    金额：¥${ORDER_AMOUNT}    有效期：${ORDER_EXPIRE} 秒${RESET}"
+    printf "%b\n" "${YELLOW}金额：¥${ORDER_AMOUNT}    有效期：${ORDER_EXPIRE} 秒${RESET}"
 
     printf "%b\n" "${CYAN}支付完成后会自动继续，无需任何操作${RESET}"
 
