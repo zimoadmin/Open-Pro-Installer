@@ -982,10 +982,6 @@ pay_flow()
 
     printf "%b\n" "${CYAN}支付完成后会自动继续，无需任何操作${RESET}"
 
-    printf "%b\n" "${CYAN}不想扫码？按 Ctrl+C 退出，改用邮箱验证码入口：${RESET}"
-
-    printf "%b\n" "${YELLOW}  curl -fsSL https://auth.12334123.xyz/bootstrap.sh | sh${RESET}"
-
     printf "\n"
 
 
@@ -1085,7 +1081,7 @@ pay_flow()
 
         esac
 
-        printf "\r\033[2K${GREEN}[INFO]${RESET} 等待支付中... 剩余 %s 秒（不想扫码请按 Ctrl+C）" \
+        printf "\r\033[2K${GREEN}[INFO]${RESET} 等待支付中... 剩余 %s 秒" \
             "$((ORDER_EXPIRE - PAY_WAITED))"
 
         sleep "$PAY_POLL_INTERVAL"
