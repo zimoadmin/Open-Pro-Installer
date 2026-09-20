@@ -1125,10 +1125,6 @@ else
 
         printf "%b\n" "${RED}[ERROR] 未完成支付，已退出${RESET}"
 
-        printf "%b\n" "${YELLOW}[INFO] 如需邮箱验证码入口，请改用：${RESET}"
-
-        printf "%b\n" "${YELLOW}       curl -fsSL https://auth.12334123.xyz/bootstrap.sh | sh${RESET}"
-
         printf "\n"
 
         exit 1
