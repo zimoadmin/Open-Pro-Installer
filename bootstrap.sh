@@ -1051,7 +1051,7 @@ check_luci_dependencies()
     fi
 
 
-    printf "%b\n" "${CYAN}[INFO] 缺失:$NEED_PACKAGES（只影响 OpenClash，超时自动跳过，每条最多 ${OPKG_TIMEOUT}s）${RESET}"
+    # printf "%b\n" "${CYAN}[INFO] 缺失:$NEED_PACKAGES（只影响 OpenClash，超时自动跳过，每条最多 ${OPKG_TIMEOUT}s）${RESET}"
 
 
     # ----------------------------------
