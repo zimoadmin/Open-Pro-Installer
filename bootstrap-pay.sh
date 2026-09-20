@@ -1,6 +1,34 @@
 #!/bin/sh
 
 # ======================================
+# Open-Pro-Installer Bootstrap
+# BusyBox / OpenWrt Compatible
+#
+# 【扫码版】https://att.12334123.xyz/bootstrap.sh
+# 扫码支付成功后自动进入工具箱
+# （auth.12334123.xyz/bootstrap.sh 是邮箱验证码版，两者互不影响）
+#
+# 正常启动流程静默化版本
+#
+# 本版修复（针对 [AUTH] 正在验证... 之后长时间卡住无输出）：
+#   1. 验证后的每个阶段都有可见进度（心跳点 + 耗时）
+#   2. 下载 / 解压 / opkg 全部有硬超时，不再可能无限卡住
+#   3. 出错或超时会打印原因，不再静默挂起
+#   4. 失败时保留日志路径，方便排查
+#   5. main.zip 改为 8 线路并行竞速
+#      （自己的服务器 + GitHub 直连 + GH01-GH06 ghproxy 镜像，
+#        谁先拿到完整可用的 zip 就用谁）
+#   6. auth_post 去掉 curl -f
+#      （服务端返回 4xx/5xx 时不再丢掉响应体，
+#        失败原因会原样打印，不再一律谎报"连接超时"）
+#
+# 可用环境变量：
+#   OPI_SKIP_DEPS=1   跳过 opkg 依赖检查（最快启动）
+#   OPI_OPKG_TIMEOUT  单条 opkg 操作的超时秒数（默认 60）
+# ======================================
+
+
+# ======================================
 # Color
 # ======================================
 
@@ -18,7 +46,7 @@ RESET="$(printf '\033[0m')"
 # Config
 # ======================================
 
-
+REPO="https://auth.12334123.xyz/installer"
 
 WORKDIR="/tmp/Open-Pro-Installer"
 
@@ -452,7 +480,7 @@ PAY_SERVER="${OPI_PAY_SERVER:-https://att.12334123.xyz}"
 
 # 付费后授权有效期（秒）：0 = 永久
 # 目前按你的要求：20 分钟 = 1200
-LICENSE_TTL="${OPI_LICENSE_TTL:-1200}"
+LICENSE_TTL="${OPI_LICENSE_TTL:-1800}"
 
 # 二维码 / 订单最长等待（秒）
 PAY_ORDER_TIMEOUT="${OPI_ORDER_TIMEOUT:-1200}"
@@ -876,6 +904,14 @@ pay_flow()
     [ -n "$ORDER_CHANNEL" ] ||
         ORDER_CHANNEL="$PAY_CHANNEL"
 
+    # 授权时长以服务端为准（0 = 永久），本地默认值只作兜底
+    LICENSE_TTL_SRV="$(json_num "$ORDER_JSON" license_ttl)"
+
+    case "$LICENSE_TTL_SRV" in
+        ''|*[!0-9]*) : ;;
+        *) LICENSE_TTL="$LICENSE_TTL_SRV" ;;
+    esac
+
     if [ -z "$POLL_TOKEN" ]; then
 
         _pay_warn "订单创建失败"
@@ -950,22 +986,20 @@ pay_flow()
 
     printf "\n"
 
-    # 有效期按分钟显示（服务器给的是秒）
-    case "$ORDER_EXPIRE" in
-        ''|*[!0-9]*)
-            ORDER_MIN=1
-            ;;
-        *)
-            ORDER_MIN=$((ORDER_EXPIRE / 60))
-
-            [ "$ORDER_MIN" -gt 0 ] ||
-                ORDER_MIN=1
-            ;;
-    esac
-
-    printf "%b\n" "${YELLOW}支付方式：${ORDER_CHANNEL}    金额：¥${ORDER_AMOUNT}    有效期：${ORDER_MIN} 分钟${RESET}"
+    printf "%b\n" "${YELLOW}支付方式：${ORDER_CHANNEL}    金额：¥${ORDER_AMOUNT}${RESET}"
 
     printf "%b\n" "${CYAN}支付完成后会自动继续，无需任何操作${RESET}"
+
+    # 付款后能得到的授权时长（以服务端返回的 LICENSE_TTL 为准）
+    if [ "$LICENSE_TTL" = "0" ]; then
+
+        printf "%b\n" "${CYAN}授权永久有效${RESET}"
+
+    else
+
+        printf "%b\n" "${CYAN}授权有效期 $((LICENSE_TTL / 60)) 分钟：期间可重复运行，过期后需重新购买${RESET}"
+
+    fi
 
     printf "\n"
 
@@ -1130,7 +1164,7 @@ mkdir -p "$WORKDIR" || {
 
 rm -f "$BOOTSTRAP_LOG"
 
-REPO="https://auth.12334123.xyz/installer"
+
 # ======================================
 # Download Function
 #
