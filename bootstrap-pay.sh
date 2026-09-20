@@ -822,10 +822,10 @@ pay_flow()
 
         done
 
-        printf "%b" "${YELLOW}选择 [1]（5 秒不选自动用微信支付）: ${RESET}"
+        printf "%b" "${YELLOW}选择 [1]（3 秒不选自动用微信支付）: ${RESET}"
 
         # read -t 有的 busybox 没编，超时或不可用时都按"直接回车"处理 → 默认微信
-        read -t 5 PAY_PICK </dev/tty 2>/dev/null
+        read -t 3 PAY_PICK </dev/tty 2>/dev/null
 
         [ -n "$PAY_PICK" ] ||
             PAY_PICK=1
