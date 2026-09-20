@@ -1,6 +1,34 @@
 #!/bin/sh
 
 # ======================================
+# Open-Pro-Installer Bootstrap
+# BusyBox / OpenWrt Compatible
+#
+# 【扫码版】https://att.12334123.xyz/bootstrap.sh
+# 扫码支付成功后自动进入工具箱
+# （auth.12334123.xyz/bootstrap.sh 是邮箱验证码版，两者互不影响）
+#
+# 正常启动流程静默化版本
+#
+# 本版修复（针对 [AUTH] 正在验证... 之后长时间卡住无输出）：
+#   1. 验证后的每个阶段都有可见进度（心跳点 + 耗时）
+#   2. 下载 / 解压 / opkg 全部有硬超时，不再可能无限卡住
+#   3. 出错或超时会打印原因，不再静默挂起
+#   4. 失败时保留日志路径，方便排查
+#   5. main.zip 改为 8 线路并行竞速
+#      （自己的服务器 + GitHub 直连 + GH01-GH06 ghproxy 镜像，
+#        谁先拿到完整可用的 zip 就用谁）
+#   6. auth_post 去掉 curl -f
+#      （服务端返回 4xx/5xx 时不再丢掉响应体，
+#        失败原因会原样打印，不再一律谎报"连接超时"）
+#
+# 可用环境变量：
+#   OPI_SKIP_DEPS=1   跳过 opkg 依赖检查（最快启动）
+#   OPI_OPKG_TIMEOUT  单条 opkg 操作的超时秒数（默认 60）
+# ======================================
+
+
+# ======================================
 # Color
 # ======================================
 
@@ -127,7 +155,7 @@ elapsed_sec()
 }
 
 
-()
+step()
 {
     printf "%b\n" "${GREEN}[STEP]${RESET} $*   ${CYAN}(已用 $(elapsed_sec)s)${RESET}"
 }
@@ -358,6 +386,7 @@ Y|y)
     printf "\n"
     printf "%b\n" "${GREEN}[INFO] 已同意免责声明，继续运行...${RESET}"
     printf "\n"
+
     ;;
 
 N|n)
@@ -385,7 +414,8 @@ esac
 # Check tools
 # ======================================
 
-# step "1/6 检查运行环境"
+step "1/6 检查运行环境"
+
 for cmd in curl wget unzip
 do
 
@@ -764,6 +794,7 @@ pay_flow()
 
     if [ "$PAY_COUNT" -gt 1 ]; then
 
+        printf "\n"
         printf "%b\n" "${CYAN}请选择支付方式：${RESET}"
 
         PAY_IDX=1
@@ -1119,7 +1150,7 @@ fi
 # Prepare Workdir
 # ======================================
 
-# step "2/6 准备临时目录"
+step "2/6 准备临时目录"
 
 rm -rf "$WORKDIR"
 
@@ -1351,7 +1382,7 @@ EOF
 # Download
 # ======================================
 
-# step "3/6 正在下载项目文件（8 条线路并行竞速）"
+step "3/6 正在下载项目文件（8 条线路并行竞速）"
 
 spin_start
 
@@ -1419,7 +1450,7 @@ fi
 # "正在解压..." 已隐藏
 # ======================================
 
-# step "4/6 正在解压项目文件"
+step "4/6 正在解压项目文件"
 
 spin_start
 
@@ -1561,7 +1592,7 @@ check_luci_dependencies()
     fi
 
 
-    # step "5/6 检查 LuCI 依赖"
+    step "5/6 检查 LuCI 依赖"
 
 
     NEED_PACKAGES=""
@@ -1709,7 +1740,7 @@ fi
 
 # printf "%b\n" "${BLUE}[INFO] 正在启动 ZIMO--工具箱...${RESET}"
 
-# step "6/6 正在启动工具箱（启动总耗时 $(elapsed_sec)s）"
+step "6/6 正在启动工具箱（启动总耗时 $(elapsed_sec)s）"
 
 printf "\n"
 
