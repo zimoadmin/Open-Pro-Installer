@@ -414,8 +414,7 @@ esac
 # Check tools
 # ======================================
 
-step "1/6 检查运行环境"
-
+# step "1/6 检查运行环境"
 for cmd in curl wget unzip
 do
 
@@ -794,7 +793,6 @@ pay_flow()
 
     if [ "$PAY_COUNT" -gt 1 ]; then
 
-        printf "\n"
         printf "%b\n" "${CYAN}请选择支付方式：${RESET}"
 
         PAY_IDX=1
@@ -1150,7 +1148,7 @@ fi
 # Prepare Workdir
 # ======================================
 
-step "2/6 准备临时目录"
+# step "2/6 准备临时目录"
 
 rm -rf "$WORKDIR"
 
@@ -1382,7 +1380,7 @@ EOF
 # Download
 # ======================================
 
-step "3/6 正在下载项目文件（8 条线路并行竞速）"
+# step "3/6 正在下载项目文件（8 条线路并行竞速）"
 
 spin_start
 
@@ -1450,7 +1448,7 @@ fi
 # "正在解压..." 已隐藏
 # ======================================
 
-step "4/6 正在解压项目文件"
+# step "4/6 正在解压项目文件"
 
 spin_start
 
@@ -1592,7 +1590,7 @@ check_luci_dependencies()
     fi
 
 
-    step "5/6 检查 LuCI 依赖"
+    # step "5/6 检查 LuCI 依赖"
 
 
     NEED_PACKAGES=""
@@ -1740,7 +1738,7 @@ fi
 
 # printf "%b\n" "${BLUE}[INFO] 正在启动 ZIMO--工具箱...${RESET}"
 
-step "6/6 正在启动工具箱（启动总耗时 $(elapsed_sec)s）"
+# step "6/6 正在启动工具箱（启动总耗时 $(elapsed_sec)s）"
 
 printf "\n"
 
