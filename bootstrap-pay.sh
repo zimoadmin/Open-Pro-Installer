@@ -3,6 +3,30 @@
 # ======================================
 # Open-Pro-Installer Bootstrap
 # BusyBox / OpenWrt Compatible
+#
+# 【扫码版】https://att.12334123.xyz/bootstrap.sh
+# 扫码支付成功后自动进入工具箱
+# （auth.12334123.xyz/bootstrap.sh 是邮箱验证码版，两者互不影响）
+#
+# 正常启动流程静默化版本
+#
+# 本版修复（针对 [AUTH] 正在验证... 之后长时间卡住无输出）：
+#   1. 验证后的每个阶段都有可见进度（心跳点 + 耗时）
+#   2. 下载 / 解压 / opkg 全部有硬超时，不再可能无限卡住
+#   3. 出错或超时会打印原因，不再静默挂起
+#   4. 失败时保留日志路径，方便排查
+#   5. main.zip 改为 8 线路并行竞速
+#      （自己的服务器 + GitHub 直连 + GH01-GH06 ghproxy 镜像，
+#        谁先拿到完整可用的 zip 就用谁）
+#   6. auth_post 去掉 curl -f
+#      （服务端返回 4xx/5xx 时不再丢掉响应体，
+#        失败原因会原样打印，不再一律谎报"连接超时"）
+#
+# 可用环境变量：
+#   OPI_SKIP_DEPS=1   跳过 opkg 依赖检查（最快启动）
+#   OPI_OPKG_TIMEOUT  单条 opkg 操作的超时秒数（默认 60）
+# ======================================
+
 
 # ======================================
 # Color
@@ -798,10 +822,10 @@ pay_flow()
 
         done
 
-        printf "%b" "${YELLOW}选择 [1]（10 秒不选自动用微信支付）: ${RESET}"
+        printf "%b" "${YELLOW}选择 [1]（5 秒不选自动用微信支付）: ${RESET}"
 
         # read -t 有的 busybox 没编，超时或不可用时都按"直接回车"处理 → 默认微信
-        read -t 10 PAY_PICK </dev/tty 2>/dev/null
+        read -t 5 PAY_PICK </dev/tty 2>/dev/null
 
         [ -n "$PAY_PICK" ] ||
             PAY_PICK=1
@@ -980,7 +1004,8 @@ pay_flow()
 
     PAY_CANCEL=""
 
-    trap 'PAY_CANCEL=1' INT
+    # 按 Ctrl+C 直接退出：清掉"等待支付中"那行，不打印任何其它提示
+    trap 'trap - INT; printf "\r\033[2K"; exit 130' INT
 
     PAY_WAITED=0
 
@@ -1083,15 +1108,7 @@ pay_flow()
 
     printf "\r\033[2K"
 
-    if [ -n "$PAY_CANCEL" ]; then
-
-        _pay_warn "已取消扫码支付"
-
-    else
-
-        _pay_warn "等待支付超时"
-
-    fi
+    _pay_warn "等待支付超时"
 
     return 1
 }
@@ -1113,10 +1130,6 @@ else
         printf "\n"
 
         printf "%b\n" "${RED}[ERROR] 未完成支付，已退出${RESET}"
-
-        printf "%b\n" "${YELLOW}[INFO] 如需邮箱验证码入口，请改用：${RESET}"
-
-        printf "%b\n" "${YELLOW}       curl -fsSL https://auth.12334123.xyz/bootstrap.sh | sh${RESET}"
 
         printf "\n"
 
