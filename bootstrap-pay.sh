@@ -357,7 +357,7 @@ Y|y)
 
     printf "\n"
     printf "%b\n" "${GREEN}[INFO] 已同意免责声明，继续运行...${RESET}"
-
+    printf "\n"
     ;;
 
 N|n)
