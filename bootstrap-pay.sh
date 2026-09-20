@@ -1,32 +1,5 @@
 #!/bin/sh
 
-# ======================================
-# Open-Pro-Installer Bootstrap
-# BusyBox / OpenWrt Compatible
-#
-# 【扫码版】https://att.12334123.xyz/bootstrap.sh
-# 扫码支付成功后自动进入工具箱
-# （auth.12334123.xyz/bootstrap.sh 是邮箱验证码版，两者互不影响）
-#
-# 正常启动流程静默化版本
-#
-# 本版修复（针对 [AUTH] 正在验证... 之后长时间卡住无输出）：
-#   1. 验证后的每个阶段都有可见进度（心跳点 + 耗时）
-#   2. 下载 / 解压 / opkg 全部有硬超时，不再可能无限卡住
-#   3. 出错或超时会打印原因，不再静默挂起
-#   4. 失败时保留日志路径，方便排查
-#   5. main.zip 改为 8 线路并行竞速
-#      （自己的服务器 + GitHub 直连 + GH01-GH06 ghproxy 镜像，
-#        谁先拿到完整可用的 zip 就用谁）
-#   6. auth_post 去掉 curl -f
-#      （服务端返回 4xx/5xx 时不再丢掉响应体，
-#        失败原因会原样打印，不再一律谎报"连接超时"）
-#
-# 可用环境变量：
-#   OPI_SKIP_DEPS=1   跳过 opkg 依赖检查（最快启动）
-#   OPI_OPKG_TIMEOUT  单条 opkg 操作的超时秒数（默认 60）
-# ======================================
-
 
 # ======================================
 # Color
@@ -157,12 +130,18 @@ elapsed_sec()
 
 step()
 {
+    [ "${OPI_VERBOSE:-0}" = "1" ] ||
+        return 0
+
     printf "%b\n" "${GREEN}[STEP]${RESET} $*   ${CYAN}(已用 $(elapsed_sec)s)${RESET}"
 }
 
 
 note()
 {
+    [ "${OPI_VERBOSE:-0}" = "1" ] ||
+        return 0
+
     printf "%b\n" "${GREEN}[OK]${RESET} $*"
 }
 
@@ -1125,7 +1104,11 @@ pay_flow()
 
 if license_valid; then
 
-    _pay_ok "本地授权有效（剩余 $(license_left)），跳过支付"
+    if [ "${OPI_VERBOSE:-0}" = "1" ]; then
+
+        _pay_ok "本地授权有效（剩余 $(license_left)），跳过支付"
+
+    fi
 
 else
 
