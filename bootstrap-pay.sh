@@ -28,18 +28,18 @@ ZIP_FILE="$WORKDIR/main.zip"
 
 BOOTSTRAP_LOG="/tmp/openpro_bootstrap.log"
 
-# 单个 opkg 操作的最长等待时间（秒）
+
 OPKG_TIMEOUT="${OPI_OPKG_TIMEOUT:-60}"
 
-# 是否跳过 opkg 依赖检查
+
 SKIP_DEPS="${OPI_SKIP_DEPS:-0}"
 
 DL_DIR="$WORKDIR/dl"
 
-# 单条线路的最长下载时间 / 整体等待上限（秒）
+
 DL_DEADLINE=110
 
-# GH01-GH06 用的归档地址（前缀式代理会把它拼在代理地址后面）
+
 DL_ARCHIVE="https://github.com/zimoadmin/Open-Pro-Installer/archive/refs/heads/main.zip"
 
 DL_SOURCES="
@@ -53,14 +53,13 @@ GH05|https://github.mxw.qzz.io/${DL_ARCHIVE}
 GH06|https://gh.07150721.xyz/${DL_ARCHIVE}
 "
 
-# 同时完成时的优先顺序（一般用不上，先到先得）
-# 注意：新增 / 删除线路时，这里要和 DL_SOURCES 一起改
+
 DL_PRIORITY="SERVER CODELOAD GH01 GH02 GH03 GH04 GH05 GH06"
 
-# 竞速胜出的线路名（由 download_repo 写入）
+
 DL_WIN=""
 
-# 是否有过失败 / 超时（决定是否保留日志）
+
 BOOTSTRAP_WARN=0
 
 SPIN_PID=""
@@ -1168,16 +1167,7 @@ mkdir -p "$WORKDIR" || {
 rm -f "$BOOTSTRAP_LOG"
 
 
-# ======================================
-# Download Function
-#
-# 多源并行竞速：
-#   多条线路同时下载，谁先拿到「完整可用」的 zip 就用谁，
-#   其余立刻杀掉。不再为一个抖动 / 挂死的线路干等。
-#
-# 校验：非空 + PK 魔数 + unzip 能读出目录
-#       （防止把 502 页面 / HTML 报错页当成 zip）
-# ======================================
+
 
 dl_is_zip()
 {
