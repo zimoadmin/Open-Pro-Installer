@@ -1008,6 +1008,10 @@ verify_mosdns_rpc_methods() {
     printf '%s\n' "$RPC_INFO" |
         grep -q '"get_update_log"' || return 1
 
+    for method in get_stats get_history get_top get_leases get_logs clear_query_logs; do
+        printf '%s\n' "$RPC_INFO" | grep -q "\"$method\"" || return 1
+    done
+
     return 0
 }
 
@@ -1199,13 +1203,95 @@ get_logfile_path() {
     printf '%s' "$LOGFILE"
 }
 
+# Statistics RPC helpers. jshn is shipped with OpenWrt libubox.
+load_request() {
+    REQUEST=$(cat)
+    [ -r /usr/share/libubox/jshn.sh ] || return 1
+    . /usr/share/libubox/jshn.sh
+    [ -n "$REQUEST" ] || REQUEST='{}'
+    json_load "$REQUEST"
+}
+number_arg() {
+    local value
+    json_get_var value "$1"
+    case "$value" in ''|*[!0-9]*) value=$2 ;; esac
+    [ "${#value}" -le 6 ] || value=$2
+    [ "$value" -le "$3" ] || value=$3
+    printf '%s' "$value"
+}
+add_client_leases() {
+    local ip name
+    json_add_object leases
+    {
+        [ ! -r /tmp/dhcp.leases ] || awk '{print $3 "\t" $4}' /tmp/dhcp.leases
+        for file in /tmp/hosts/odhcpd /tmp/hosts/dhcp /etc/hosts; do
+            [ ! -r "$file" ] || awk '!/^#/ && NF>=2 {print $1 "\t" $2}' "$file"
+        done
+        [ ! -r /tmp/odhcpd.leases ] || awk '!/^#/ && NF>=6 {for(i=6;i<=NF;i++) print $i "\t" $4}' /tmp/odhcpd.leases
+    } > "$RPC_TMP/leases"
+    while read -r ip name; do
+        case "$ip:$name" in :*|*:|*:\*|*:unknown) continue ;; esac
+        ip=${ip%/*}; ip=${ip#::ffff:}
+        json_add_string "$ip" "$name"
+    done < "$RPC_TMP/leases"
+    json_close_object
+}
+stats_api() {
+    local endpoint=$1 port
+    shift
+    port=$(uci -q get mosdns.config.listen_port_api 2>/dev/null)
+    case "$port" in ''|*[!0-9]*) port=9091 ;; esac
+    if ! curl -fsS --connect-timeout 3 --max-time 10 "$@" \
+        "http://127.0.0.1:$port/plugins/stats_collector/api/v1/$endpoint" \
+        > "$RPC_TMP/response" 2> "$RPC_TMP/error"; then
+        json_reply_error "MosDNS statistics API unreachable: $(cat "$RPC_TMP/error")"
+        return
+    fi
+    if ! json_load "$(cat "$RPC_TMP/response")" >/dev/null 2>&1; then
+        json_reply_error 'MosDNS statistics API returned invalid JSON.'
+        return
+    fi
+    if [ "$METHOD" = get_top ]; then
+        add_client_leases
+        json_dump
+    else
+        cat "$RPC_TMP/response"
+    fi
+}
+statistics_call() {
+    RPC_TMP=$(mktemp -d /tmp/mosdns-rpc.XXXXXX) || { json_reply_error 'Cannot create RPC temporary directory.'; return; }
+    trap 'rm -rf "$RPC_TMP"' EXIT
+    if ! load_request; then json_reply_error 'Cannot parse RPC parameters; libubox jshn is required.'; return; fi
+    case "$METHOD" in
+        get_stats) stats_api stats ;;
+        get_history) points=$(number_arg points 24 1000); stats_api history -G --data-urlencode "points=$points" ;;
+        get_top) limit=$(number_arg limit 10 1000); stats_api top -G --data-urlencode "limit=$limit" ;;
+        get_leases) json_init; add_client_leases; json_dump ;;
+        get_logs)
+            limit=$(number_arg limit 50 1000)
+            offset=$(number_arg offset 0 999999)
+            json_get_var search search; json_get_var filter filter
+            [ -n "$filter" ] || filter=all
+            stats_api logs -G --data-urlencode "limit=$limit" --data-urlencode "offset=$offset" \
+                --data-urlencode "search=$search" --data-urlencode "filter=$filter"
+            ;;
+        clear_query_logs) stats_api logs/clear -X POST --data '' ;;
+    esac
+}
+
 case "$1" in
     list)
-        printf '%s\n' '{"flush_cache":{},"print_log":{},"clean_log":{},"get_version":{},"start_update":{},"get_update_log":{}}'
+        printf '%s\n' '{"flush_cache":{},"print_log":{},"clean_log":{},"get_version":{},"start_update":{},"get_update_log":{},"get_stats":{},"get_history":{"points":24},"get_top":{"limit":10},"get_leases":{},"get_logs":{"limit":50,"offset":0,"search":"","filter":"all"},"clear_query_logs":{}}'
         exit 0
         ;;
     call)
         METHOD="$2"
+        case "$METHOD" in
+            get_stats|get_history|get_top|get_leases|get_logs|clear_query_logs)
+                statistics_call
+                exit 0
+                ;;
+        esac
         cat >/dev/null 2>&1
         case "$METHOD" in
             get_version)
