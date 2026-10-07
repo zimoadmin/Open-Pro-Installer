@@ -1011,6 +1011,159 @@ verify_mosdns_rpc_methods() {
     return 0
 }
 
+install_mosdns_legacy_runtime() {
+    local target=/usr/share/mosdns/mosdns.uc
+    mkdir -p /usr/share/mosdns || return 1
+    if [ -f "$target" ] && ! grep -q 'Open-Pro MosDNS legacy runtime' "$target"; then
+        cp -p "$target" /usr/share/mosdns/mosdns.native.uc || return 1
+    fi
+    cat > "$target.new" <<'MOSDNS_LEGACY_EOF'
+#!/bin/sh
+# Open-Pro MosDNS legacy runtime. Original ucode remains available for modern systems.
+cfg() { uci -q get "mosdns.config.$1" 2>/dev/null; }
+native=/usr/share/mosdns/mosdns.native.uc
+if [ -f "$native" ] && ucode -e 'import { stat } from "fs"; import { cursor } from "uci"; import { connect } from "ubus";' >/dev/null 2>&1; then
+    exec ucode "$native" "$@"
+fi
+download() {
+    printf 'Downloading %s\n' "$1"
+    curl -fL --connect-timeout 10 --max-time 120 --retry 2 -o "$2" "$1" || return 1
+    [ -s "$2" ]
+}
+dump_rules() {
+    mkdir -p /var/mosdns || return 1
+    geo2txt geoip -f /usr/share/v2ray/geoip.dat -e cn -o /var/mosdns || return 1
+    geo2txt geosite -f /usr/share/v2ray/geosite.dat -e cn -e apple -e 'geolocation-!cn' -o /var/mosdns || return 1
+    if [ "$(cfg configfile)" = /var/etc/mosdns.json ] || [ -z "$(cfg configfile)" ]; then
+        if [ "$(cfg adblock)" = 1 ] && printf '%s\n' "$(cfg ad_source)" | grep -qw 'geosite.dat'; then
+            geo2txt geosite -f /usr/share/v2ray/geosite.dat -e category-ads-all -o /var/mosdns || return 1
+        fi
+        if [ "$(cfg custom_stream_media_dns)" = 1 ]; then
+            geo2txt geosite -f /usr/share/v2ray/geosite.dat -e netflix -e disney -e hulu -o /var/mosdns || return 1
+        else
+            for tag in disney netflix hulu; do : > "/var/mosdns/geosite_$tag.txt"; done
+        fi
+    else
+        for kind in geoip geosite; do
+            set --
+            for tag in $(cfg "${kind}_tags"); do set -- "$@" -e "$tag"; done
+            [ "$#" -eq 0 ] || geo2txt "$kind" -f "/usr/share/v2ray/$kind.dat" "$@" -o /var/mosdns || return 1
+        done
+    fi
+}
+ad_paths() {
+    mkdir -p /var/mosdns /etc/mosdns/rule/adlist || return 1
+    if [ "$(cfg adblock)" != 1 ]; then
+        : > /var/mosdns/disable-ads.txt
+        printf '%s\n' /var/mosdns/disable-ads.txt
+        return 0
+    fi
+    for url in $(cfg ad_source); do
+        case "$url" in
+            geosite.dat) printf '%s\n' /var/mosdns/geosite_category-ads-all.txt ;;
+            file://*) printf '%s\n' "${url#file://}" ;;
+            http://*|https://*)
+                name=${url##*/}
+                case "$name" in ''|.|..|*[!a-zA-Z0-9._-]*) return 1 ;; esac
+                [ -f "/etc/mosdns/rule/adlist/$name" ] || : > "/etc/mosdns/rule/adlist/$name"
+                printf '%s\n' "/etc/mosdns/rule/adlist/$name"
+                ;;
+            *) return 1 ;;
+        esac
+    done
+}
+update_ads() {
+    [ "$(cfg adblock)" = 1 ] || return 0
+    mkdir -p "$tmp/ads" /etc/mosdns/rule/adlist || return 1
+    : > "$tmp/ad_source"
+    for url in $(cfg ad_source); do
+        case "$url" in
+            geosite.dat|file://*) continue ;;
+            http://*|https://*) ;;
+            *) return 1 ;;
+        esac
+        name=${url##*/}
+        case "$name" in ''|.|..|*[!a-zA-Z0-9._-]*) return 1 ;; esac
+        remote=$url
+        case "$url" in https://raw.githubusercontent.com/*) remote="$mirror$url" ;; esac
+        download "$remote" "$tmp/ads/$name" || return 1
+        printf '%s\n' "$url" >> "$tmp/ad_source"
+    done
+    for file in "$tmp/ads/"*; do
+        [ -f "$file" ] || continue
+        cp "$file" "/etc/mosdns/rule/adlist/${file##*/}.new" || return 1
+        mv "/etc/mosdns/rule/adlist/${file##*/}.new" "/etc/mosdns/rule/adlist/${file##*/}" || return 1
+    done
+    cp "$tmp/ad_source" /etc/mosdns/rule/.ad_source
+}
+update_geo() {
+    type=$(cfg geoip_type)
+    case "$type" in ''|geoip-only-cn-private) type=geoip-only-cn-private ;; geoip) ;; *) return 1 ;; esac
+    for kind in geoip geosite; do
+        if [ "$kind" = geoip ]; then
+            url="${mirror}https://github.com/Loyalsoldier/geoip/releases/latest/download/$type.dat"
+        else
+            url="${mirror}https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
+        fi
+        download "$url.sha256sum" "$tmp/$kind.sum" || return 1
+        expected=$(awk 'NR==1 {print $1}' "$tmp/$kind.sum")
+        [ "${#expected}" -eq 64 ] || return 1
+        case "$expected" in *[!0-9a-fA-F]*) return 1 ;; esac
+        download "$url" "$tmp/$kind.dat" || return 1
+        actual=$(sha256sum "$tmp/$kind.dat" | awk '{print $1}')
+        [ "$actual" = "$expected" ] || { echo "$kind checksum error"; return 1; }
+    done
+    # Both downloads and checksums must pass before replacing either database.
+    mkdir -p /usr/share/v2ray || return 1
+    for kind in geoip geosite; do
+        cp "$tmp/$kind.dat" "/usr/share/v2ray/$kind.dat.new" || return 1
+    done
+    for kind in geoip geosite; do
+        mv "/usr/share/v2ray/$kind.dat.new" "/usr/share/v2ray/$kind.dat" || return 1
+    done
+}
+case "$1" in
+    interface_dns)
+        dns=''
+        if [ "$(cfg custom_local_dns)" = 1 ]; then dns=$(cfg local_dns)
+        elif [ "$(uci -q get network.wan.peerdns)" = 0 ] || [ "$(uci -q get network.wan.proto)" = static ]; then dns=$(uci -q get network.wan.dns)
+        elif command -v jsonfilter >/dev/null 2>&1; then dns=$(ubus call network.interface.wan status 2>/dev/null | jsonfilter -e '@["dns-server"][*]'); fi
+        [ -n "$dns" ] || dns='119.29.29.29 223.5.5.5'
+        printf '%s\n' "$dns"
+        ;;
+    get_adlist) ad_paths ;;
+    v2dat_dump) dump_rules ;;
+    check) command -v curl >/dev/null && command -v sha256sum >/dev/null && command -v geo2txt >/dev/null && command -v uci >/dev/null ;;
+    update|update_adlist)
+        action=$1
+        mkdir -p /var/lock || exit 1
+        lock=/var/lock/mosdns_legacy_update.lock
+        if [ -e /var/lock/mosdns_update.lock ] || ! mkdir "$lock" 2>/dev/null; then
+            echo 'Another update is already in progress.'; exit 1
+        fi
+        cleanup() { rm -f /var/lock/mosdns_update.lock; rmdir "$lock" 2>/dev/null; [ -z "$tmp" ] || rm -rf "$tmp"; }
+        trap cleanup EXIT
+        trap 'echo UPDATE_EXITED; exit 1' INT TERM
+        : > /var/lock/mosdns_update.lock
+        tmp=$(mktemp -d /tmp/mosdns-legacy.XXXXXX) || { echo UPDATE_EXITED; exit 1; }
+        proxy=$(cfg github_proxy); mirror=${proxy%/}; [ -z "$mirror" ] || mirror="$mirror/"
+        if { [ "$action" != update ] || update_geo; } && update_ads && { [ "$action" != update ] || dump_rules; }; then
+            echo UPDATE_FINISHED
+        else
+            echo 'Update failed; check download, checksum and conversion output above.'
+            echo UPDATE_EXITED
+            exit 1
+        fi
+        ;;
+    *) echo 'Unknown MosDNS legacy action' >&2; exit 1 ;;
+esac
+MOSDNS_LEGACY_EOF
+    sh -n "$target.new" || return 1
+    chmod 755 "$target.new" && mv "$target.new" "$target" || return 1
+    "$target" check || return 1
+    _mos_ok "已启用 Shell 兼容运行时（数据库更新 / 规则转换 / 服务辅助）"
+}
+
 write_mosdns_rpc_compat() {
     mkdir -p /usr/libexec/rpcd || return 1
     cat > "$MOSDNS_RPC_COMPAT" <<'MOSDNS_RPC_EOF'
@@ -1089,24 +1242,13 @@ case "$1" in
                     exit 0
                 fi
 
-                if ! command -v ucode >/dev/null 2>&1; then
-                    json_reply_error "ucode not found."
+                if [ ! -x /usr/share/mosdns/mosdns.uc ]; then
+                    json_reply_error "MosDNS update runtime is not executable."
                     exit 0
                 fi
-
-                if ! ucode -e '
-                    import { stat } from "fs";
-                    import { cursor } from "uci";
-                    import { connect } from "ubus";
-                ' >/dev/null 2>&1
-                then
-                    json_reply_error "ucode modules fs/uci/ubus are missing. Please install the matching ucode modules first."
-                    exit 0
-                fi
-
-                : > /var/log/mosdns_update.log 2>/dev/null
-
-                ucode /usr/share/mosdns/mosdns.uc update \
+                mkdir -p /var/log || { json_reply_error "Cannot create log directory."; exit 0; }
+                : > /var/log/mosdns_update.log || { json_reply_error "Cannot write update log."; exit 0; }
+                /usr/share/mosdns/mosdns.uc update \
                     > /var/log/mosdns_update.log 2>&1 </dev/null &
 
                 printf '%s\n' '{"success":true}'
@@ -1180,7 +1322,7 @@ ensure_mosdns_rpc() {
         _mos_ok "start_update / get_update_log 方法正常"
 
         if [ "$UCODE_MODULES_OK" -ne 1 ]; then
-            _mos_warn "数据库在线更新仍需安装匹配版本的 ucode fs/uci/ubus 模块"
+            _mos_info "数据库更新使用 Shell 兼容运行时"
         fi
 
         return 0
@@ -1274,18 +1416,26 @@ install_mosdns_body() {
     printf '\n'
     _mos_info "正在检查 MosDNS 所需 ucode 模块..."
 
+    MOSDNS_DEGRADED=0
     if ! install_missing_mosdns_ucode_modules; then
-        _mos_error "ucode 依赖修复失败"
-        _mos_warn "MosDNS 本体已安装，但数据库在线更新将不可用"
+        _mos_warn "ucode 模块不可用，切换 Shell 兼容运行时"
+        if ! install_mosdns_legacy_runtime; then
+            _mos_error "Shell 兼容运行时配置失败，数据库更新或服务辅助功能不可用"
+            MOSDNS_DEGRADED=1
+        fi
     fi
 
     openpro_ui_step 4 65
     if ! ensure_mosdns_rpc; then
         _mos_warn "MosDNS 已安装，但 LuCI RPC 兼容处理存在异常"
+        MOSDNS_DEGRADED=1
     fi
 
     reload_mosdns_luci
-    start_mosdns_service || _mos_warn "MosDNS 软件包已安装，但服务自动启动存在异常"
+    if ! start_mosdns_service; then
+        _mos_warn "MosDNS 软件包已安装，但服务自动启动存在异常"
+        MOSDNS_DEGRADED=1
+    fi
     openpro_ui_step 5 50
     get_mosdns_version
 
@@ -1293,7 +1443,11 @@ install_mosdns_body() {
     cleanup_mosdns_logs
     trap - INT TERM
 
-    _mos_ok "MosDNS 安装完成"
+    if [ "$MOSDNS_DEGRADED" = 1 ]; then
+        _mos_warn "MosDNS 软件包已安装，但功能配置不完整，请检查上方错误"
+    else
+        _mos_ok "MosDNS 安装完成（数据库在线下载尚未实测）"
+    fi
     printf '\n'
     return 0
 }
@@ -1378,7 +1532,11 @@ openpro_ui_begin() {
 openpro_ui_end() {
     if [ "$1" -eq 0 ]; then
         openpro_ui_step 5 100
-        printf '[OK] %s 安装完成\n' "$OPENPRO_UI_NAME" >&9
+        if [ "$MOSDNS_DEGRADED" = 1 ]; then
+            printf '[WARN] %s 软件包已安装，但功能配置不完整\n' "$OPENPRO_UI_NAME" >&9
+        else
+            printf '[OK] %s 安装完成（数据库在线下载尚未实测）\n' "$OPENPRO_UI_NAME" >&9
+        fi
         grep -E '配置备份：|当前配置为停用|Release：|Installed：|如屏幕' "$OPENPRO_UI_LOG" >&9 || :
     else
         printf '[ERROR] %s 安装未完成（退出码 %s）\n' "$OPENPRO_UI_NAME" "$1" >&9
