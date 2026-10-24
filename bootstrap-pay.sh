@@ -720,8 +720,6 @@ pay_progress_run()
             done
         ) &
         pid=$!
-    else
-        printf '[处理中] %s\n' "$label" >&2
     fi
     if "$@"; then rc=0; else rc=$?; fi
     if [ -n "$pid" ]; then
@@ -729,12 +727,20 @@ pay_progress_run()
         wait "$pid" 2>/dev/null || :
     fi
     if [ "$animated" = 1 ]; then printf '\r\033[2K' >&2; fi
-    if [ "$rc" = 0 ]; then
-        printf '\033[1;92m[####################]\033[0m %s  完成\n' "$label" >&2
-    else
-        printf '\033[1;93m[--------------------]\033[0m %s  未完成\n' "$label" >&2
-    fi
+    # 所有阶段复用同一行；不逐步追加“完成”行。
     return "$rc"
+}
+
+pay_progress_finish()
+{
+    if [ -t 2 ] || [ "${OPI_PROGRESS_FORCE:-0}" = 1 ]; then
+        printf '\r\033[2K' >&2
+    fi
+    if [ "$1" = 0 ]; then
+        printf '\033[1;92m[####################]\033[0m 支付二维码准备完成\n' >&2
+    else
+        printf '\033[1;93m[--------------------]\033[0m 支付二维码准备未完成\n' >&2
+    fi
 }
 
 pay_qr_install_package()
@@ -965,6 +971,7 @@ pay_flow()
 
     if [ -z "$ORDER_JSON" ]; then
 
+        pay_progress_finish 1
         _pay_warn "支付服务暂时不可用"
 
         return 1
@@ -1014,6 +1021,7 @@ pay_flow()
 
     if [ -z "$POLL_TOKEN" ]; then
 
+        pay_progress_finish 1
         _pay_warn "订单创建失败"
 
         return 1
@@ -1039,9 +1047,11 @@ pay_flow()
 
     PAY_URL="$(json_str "$ORDER_JSON" pay_url)"
     if ! prepare_payment_qr; then
+        pay_progress_finish 1
         _pay_warn "无法生成可扫码二维码，本次付款流程已停止。请安装 qrencode 后重试。"
         return 1
     fi
+    pay_progress_finish 0
 
 
     printf "\n"
