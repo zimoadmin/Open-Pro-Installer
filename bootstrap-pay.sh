@@ -694,6 +694,70 @@ pay_get()
 # 如果扫不出来（显示成反色），把 OPI_QR_TYPE 设成 ANSIUTF8i
 # ======================================
 
+# BusyBox-compatible activity bar. Progress is written to stderr so order JSON
+# captured from stdout remains unmodified. No invented percentage while waiting.
+pay_progress_draw()
+{
+    local label=$1 tick=$2 bar
+    bar=$(awk -v tick="$tick" 'BEGIN {p=tick%18;for(i=0;i<20;i++)printf "%s",(i>=p&&i<p+3)?"#":"-"}')
+    printf '\r\033[2K\033[1;92m[%s]\033[0m %s  处理中（%s 秒）' "$bar" "$label" "$tick" >&2
+}
+
+pay_progress_run()
+{
+    local label=$1 pid='' rc animated=0
+    shift
+    if [ -t 2 ] || [ "${OPI_PROGRESS_FORCE:-0}" = 1 ]; then
+        animated=1
+        pay_progress_draw "$label" 0
+        (
+            trap 'exit 0' INT TERM
+            tick=0
+            while :; do
+                sleep 1
+                tick=$((tick+1))
+                pay_progress_draw "$label" "$tick"
+            done
+        ) &
+        pid=$!
+    else
+        printf '[处理中] %s\n' "$label" >&2
+    fi
+    if "$@"; then rc=0; else rc=$?; fi
+    if [ -n "$pid" ]; then
+        kill "$pid" 2>/dev/null || :
+        wait "$pid" 2>/dev/null || :
+    fi
+    if [ "$animated" = 1 ]; then printf '\r\033[2K' >&2; fi
+    if [ "$rc" = 0 ]; then
+        printf '\033[1;92m[####################]\033[0m %s  完成\n' "$label" >&2
+    else
+        printf '\033[1;93m[--------------------]\033[0m %s  未完成\n' "$label" >&2
+    fi
+    return "$rc"
+}
+
+pay_qr_install_package()
+{
+    if [ "${1:-}" = retry ]; then
+        opkg install qrencode >> /tmp/openpro_qrencode_install.log 2>&1
+    else
+        opkg install qrencode > /tmp/openpro_qrencode_install.log 2>&1
+    fi
+}
+
+pay_qr_refresh_indexes()
+{
+    run_limited 45 opkg update > /tmp/openpro_qrencode_update.log 2>&1
+}
+
+pay_qr_fetch_server()
+{
+    curl -fsS --connect-timeout 3 --max-time 8 \
+        "$PAY_SERVER/order/qr?token=$POLL_TOKEN" \
+        -o "$PAY_QR_FILE.part" 2>/dev/null
+}
+
 terminal_qr_valid()
 {
     [ -s "$1" ] || return 1
@@ -712,8 +776,7 @@ ensure_qrencode()
     # 软件安装阶段不使用强杀超时，避免打断软件包配置。
     [ "${PAY_QR_INSTALL_TRIED:-0}" = 0 ] || return 1
     PAY_QR_INSTALL_TRIED=1
-    _pay_info "首次安装二维码组件（qrencode）..."
-    if opkg install qrencode > /tmp/openpro_qrencode_install.log 2>&1; then
+    if pay_progress_run "安装二维码组件" pay_qr_install_package; then
         command -v qrencode >/dev/null 2>&1 && return 0
         _pay_warn "软件包返回安装成功，但未找到 qrencode 命令"
         return 1
@@ -722,12 +785,11 @@ ensure_qrencode()
         _pay_warn "二维码组件安装失败，详情：/tmp/openpro_qrencode_install.log"
         return 1
     fi
-    _pay_info "当前索引找不到 qrencode，更新一次软件源后重试..."
-    if ! run_limited 45 opkg update > /tmp/openpro_qrencode_update.log 2>&1; then
+    if ! pay_progress_run "更新二维码组件索引" pay_qr_refresh_indexes; then
         _pay_warn "软件源更新异常或超时，仍尝试使用已获取的索引补装"
     fi
     printf '\n=== Retry after package index refresh ===\n' >> /tmp/openpro_qrencode_install.log
-    if ! opkg install qrencode >> /tmp/openpro_qrencode_install.log 2>&1; then
+    if ! pay_progress_run "重试安装二维码组件" pay_qr_install_package retry; then
         _pay_warn "重试安装 qrencode 失败，请检查 /tmp/openpro_qrencode_update.log 和 /tmp/openpro_qrencode_install.log"
         return 1
     fi
@@ -753,13 +815,11 @@ render_qr()
 prepare_payment_qr()
 {
     rm -f "$PAY_QR_FILE" "$PAY_QR_FILE.part"
-    if [ -n "$PAY_URL" ] && render_qr "$PAY_URL" "$PAY_QR_FILE"; then
+    if [ -n "$PAY_URL" ] && command -v qrencode >/dev/null 2>&1 &&
+       pay_progress_run "生成支付二维码" render_qr "$PAY_URL" "$PAY_QR_FILE"; then
         return 0
     fi
-    _pay_info "正在获取支付二维码..."
-    if curl -fsS --connect-timeout 3 --max-time 8 \
-        "$PAY_SERVER/order/qr?token=$POLL_TOKEN" \
-        -o "$PAY_QR_FILE.part" 2>/dev/null &&
+    if pay_progress_run "获取支付二维码" pay_qr_fetch_server &&
        [ -s "$PAY_QR_FILE.part" ]; then
         if terminal_qr_valid "$PAY_QR_FILE.part"; then
             mv "$PAY_QR_FILE.part" "$PAY_QR_FILE" && return 0
@@ -774,7 +834,7 @@ prepare_payment_qr()
         fi
     fi
     rm -f "$PAY_QR_FILE.part"
-    if [ -n "$PAY_URL" ] && ensure_qrencode && render_qr "$PAY_URL" "$PAY_QR_FILE"; then
+    if [ -n "$PAY_URL" ] && ensure_qrencode && pay_progress_run "生成支付二维码" render_qr "$PAY_URL" "$PAY_QR_FILE"; then
         return 0
     fi
     return 1
@@ -867,10 +927,10 @@ pay_flow()
     fi
 
 
-    _pay_info "正在创建支付订单..."
+    printf '\n'
 
     ORDER_JSON="$(
-        pay_post \
+        pay_progress_run "创建支付订单" pay_post \
             "/order/create" \
             "device=$DEVICE_ID&version=1.0.0&channel=$PAY_CHANNEL"
     )"
@@ -885,10 +945,8 @@ pay_flow()
             [ "$PAY_C" = "$PAY_CHANNEL" ] &&
                 continue
 
-            _pay_info "换个支付方式再试（$PAY_C）..."
-
             ORDER_JSON="$(
-                pay_post \
+                pay_progress_run "重试创建支付订单（$PAY_C）" pay_post \
                     "/order/create" \
                     "device=$DEVICE_ID&version=1.0.0&channel=$PAY_C"
             )"
