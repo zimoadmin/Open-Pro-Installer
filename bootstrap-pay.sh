@@ -688,10 +688,36 @@ pay_get()
 # 画二维码（终端里可扫）
 #
 # 用 qrencode 的半块字符输出（ANSIUTF8）；
-# 本机缺失时立即使用服务器二维码，不在付款过程中更新软件源或安装组件。
+# 本机优先生成；服务器返回纯链接时必须先编码，不能直接当二维码展示。
+# 缺少 qrencode 时仅按现有软件索引补装，不全量更新软件源。
 #
 # 如果扫不出来（显示成反色），把 OPI_QR_TYPE 设成 ANSIUTF8i
 # ======================================
+
+terminal_qr_valid()
+{
+    [ -s "$1" ] || return 1
+    [ "$(wc -l < "$1")" -ge 10 ] || return 1
+    # ANSIUTF8/ANSIUTF8i 终端矩阵必须包含块字符。链接/HTML/JSON 不算二维码。
+    grep -q '[▀▄█]' "$1" || return 1
+    grep -Eqi '<!doctype|<html|<body' "$1" && return 1
+    return 0
+}
+
+ensure_qrencode()
+{
+    command -v qrencode >/dev/null 2>&1 && return 0
+    command -v opkg >/dev/null 2>&1 || return 1
+    # 安装只尝试一次；不执行 opkg update，也不强杀正在配置软件包的 opkg。
+    [ "${PAY_QR_INSTALL_TRIED:-0}" = 0 ] || return 1
+    PAY_QR_INSTALL_TRIED=1
+    _pay_info "首次安装二维码组件（仅安装 qrencode，不更新全部软件源）..."
+    if ! opkg install qrencode > /tmp/openpro_qrencode_install.log 2>&1; then
+        _pay_warn "二维码组件安装失败，详情：/tmp/openpro_qrencode_install.log"
+        return 1
+    fi
+    command -v qrencode >/dev/null 2>&1
+}
 
 render_qr()
 {
@@ -702,7 +728,7 @@ render_qr()
     command -v qrencode >/dev/null 2>&1 || return 1
     rm -f "$QR_OUT"
     if qrencode -t "$QR_TYPE" -o "$QR_OUT" "$QR_TEXT" 2>/dev/null &&
-       [ -s "$QR_OUT" ]; then
+       terminal_qr_valid "$QR_OUT"; then
         return 0
     fi
     rm -f "$QR_OUT"
@@ -720,9 +746,22 @@ prepare_payment_qr()
         "$PAY_SERVER/order/qr?token=$POLL_TOKEN" \
         -o "$PAY_QR_FILE.part" 2>/dev/null &&
        [ -s "$PAY_QR_FILE.part" ]; then
-        mv "$PAY_QR_FILE.part" "$PAY_QR_FILE" && return 0
+        if terminal_qr_valid "$PAY_QR_FILE.part"; then
+            mv "$PAY_QR_FILE.part" "$PAY_QR_FILE" && return 0
+        fi
+        # 一些后端的 /order/qr 实际返回支付 URI，而非终端二维码。
+        # 仅在订单未提供链接时采用这一整行 URI，绝不直接输出它冒充二维码。
+        if [ -z "$PAY_URL" ]; then
+            PAY_QR_URI="$(tr -d '\r\n' < "$PAY_QR_FILE.part")"
+            case "$PAY_QR_URI" in
+                weixin://*|alipays://*|https://*|http://*) PAY_URL="$PAY_QR_URI" ;;
+            esac
+        fi
     fi
     rm -f "$PAY_QR_FILE.part"
+    if [ -n "$PAY_URL" ] && ensure_qrencode && render_qr "$PAY_URL" "$PAY_QR_FILE"; then
+        return 0
+    fi
     return 1
 }
 
@@ -922,11 +961,14 @@ pay_flow()
     # 二维码
     #
     # 本机可用则立即生成；否则请求服务器（连接最多 3 秒，总计最多 8 秒）。
-    # 两种方式都失败时保留下面已有的支付链接与状态轮询。
+    # 没有可扫码二维码则明确报错退出，不以纯链接替代。
     # ----------------------------------
 
     PAY_URL="$(json_str "$ORDER_JSON" pay_url)"
-    prepare_payment_qr || :
+    if ! prepare_payment_qr; then
+        _pay_warn "无法生成可扫码二维码，本次付款流程已停止。请安装 qrencode 后重试。"
+        return 1
+    fi
 
 
     printf "\n"
@@ -941,16 +983,9 @@ pay_flow()
 
         cat "$PAY_QR_FILE"
 
-    elif [ -n "$PAY_URL" ]; then
-
-        _pay_warn "二维码没画出来，用手机浏览器打开这个链接支付："
-
-        printf "%s\n" "$PAY_URL"
-
     else
-
         _pay_warn "二维码获取失败"
-
+        return 1
     fi
 
     printf "\n"
