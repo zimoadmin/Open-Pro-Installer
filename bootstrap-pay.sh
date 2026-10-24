@@ -688,7 +688,7 @@ pay_get()
 # 画二维码（终端里可扫）
 #
 # 用 qrencode 的半块字符输出（ANSIUTF8）；
-# 本机没有就试着从软件源装一个（约 20KB）。
+# 本机缺失时立即使用服务器二维码，不在付款过程中更新软件源或安装组件。
 #
 # 如果扫不出来（显示成反色），把 OPI_QR_TYPE 设成 ANSIUTF8i
 # ======================================
@@ -698,43 +698,33 @@ render_qr()
     QR_TEXT="$1"
     QR_OUT="$2"
     QR_TYPE="${OPI_QR_TYPE:-ANSIUTF8}"
-
-    [ -n "$QR_TEXT" ] ||
-        return 1
-
-    if command -v qrencode >/dev/null 2>&1; then
-
-        qrencode -t "$QR_TYPE" -o "$QR_OUT" "$QR_TEXT" 2>/dev/null
-
-        [ -s "$QR_OUT" ] &&
-            return 0
-
+    [ -n "$QR_TEXT" ] || return 1
+    command -v qrencode >/dev/null 2>&1 || return 1
+    rm -f "$QR_OUT"
+    if qrencode -t "$QR_TYPE" -o "$QR_OUT" "$QR_TEXT" 2>/dev/null &&
+       [ -s "$QR_OUT" ]; then
+        return 0
     fi
-
-    if ! command -v opkg >/dev/null 2>&1; then
-
-        return 1
-
-    fi
-
-    _pay_info "正在准备二维码组件（qrencode）..."
-
-    run_limited 60 opkg update >/dev/null 2>&1
-
-    run_limited 60 opkg install qrencode >/dev/null 2>&1
-
-    if command -v qrencode >/dev/null 2>&1; then
-
-        qrencode -t "$QR_TYPE" -o "$QR_OUT" "$QR_TEXT" 2>/dev/null
-
-        [ -s "$QR_OUT" ] &&
-            return 0
-
-    fi
-
+    rm -f "$QR_OUT"
     return 1
 }
 
+prepare_payment_qr()
+{
+    rm -f "$PAY_QR_FILE" "$PAY_QR_FILE.part"
+    if [ -n "$PAY_URL" ] && render_qr "$PAY_URL" "$PAY_QR_FILE"; then
+        return 0
+    fi
+    _pay_info "正在获取支付二维码..."
+    if curl -fsS --connect-timeout 3 --max-time 8 \
+        "$PAY_SERVER/order/qr?token=$POLL_TOKEN" \
+        -o "$PAY_QR_FILE.part" 2>/dev/null &&
+       [ -s "$PAY_QR_FILE.part" ]; then
+        mv "$PAY_QR_FILE.part" "$PAY_QR_FILE" && return 0
+    fi
+    rm -f "$PAY_QR_FILE.part"
+    return 1
+}
 
 # ======================================
 # 扫码付费主流程
@@ -931,31 +921,12 @@ pay_flow()
     # ----------------------------------
     # 二维码
     #
-    # 优先用本机 qrencode 画（服务器就不必带二维码库）；
-    # 本机没有就试着装；再不行让服务器渲染；最后退回纯链接。
+    # 本机可用则立即生成；否则请求服务器（连接最多 3 秒，总计最多 8 秒）。
+    # 两种方式都失败时保留下面已有的支付链接与状态轮询。
     # ----------------------------------
 
     PAY_URL="$(json_str "$ORDER_JSON" pay_url)"
-
-    rm -f "$PAY_QR_FILE"
-
-    if [ -n "$PAY_URL" ]; then
-
-        render_qr "$PAY_URL" "$PAY_QR_FILE"
-
-    fi
-
-    if [ ! -s "$PAY_QR_FILE" ]; then
-
-        curl \
-            -fsS \
-            --connect-timeout 5 \
-            --max-time 20 \
-            "$PAY_SERVER/order/qr?token=$POLL_TOKEN" \
-            -o "$PAY_QR_FILE" \
-            2>/dev/null
-
-    fi
+    prepare_payment_qr || :
 
 
     printf "\n"
