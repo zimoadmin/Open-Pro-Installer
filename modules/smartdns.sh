@@ -10,7 +10,7 @@
 # 3. GitHub API 获取最新版；403/429/失败自动回退 Release 页面
 # 4. 自动匹配 SmartDNS OpenWrt IPK/APK
 # 5. OPKG 优先 luci-compat，回退普通 LuCI
-# 6. GH01-GH06 + DIRECT 并行测速
+# 6. GH01-GH05 + DIRECT 并行测速
 # 7. 自动选择最快下载线路
 # 8. 简洁状态输出：原始命令输出统一写入日志
 # 9. 失败自动显示日志
@@ -50,12 +50,11 @@ SMARTDNS_TEST_DIR="$SMARTDNS_TMP/test"
 SMARTDNS_WAS_RUNNING=0
 
 SMARTDNS_NODES="
-GH01|https://ghproxy.net/
-GH02|https://gh-proxy.org/
-GH03|https://gh-proxy.com/
-GH04|https://cdn.akaere.online/
-GH05|https://github.mxw.qzz.io/
-GH06|https://gh.07150721.xyz/
+GH01|https://down.mxw.xx.kg/
+GH02|https://ghproxy.icu/
+GH03|https://github.mxw.qzz.io/
+GH04|https://xsadwsd.kdns.fr/
+GH05|https://v4.gh-proxy.org/
 DIRECT|
 "
 
@@ -662,7 +661,7 @@ smartdns_prepare_routes()
     _sd_info "正在并行测试 SmartDNS 下载线路..."
     printf '\n'
 
-    for NAME in GH01 GH02 GH03 GH04 GH05 GH06 DIRECT
+    for NAME in GH01 GH02 GH03 GH04 GH05 DIRECT
     do
         PREFIX="$(
             printf '%s\n' "$SMARTDNS_NODES" |
@@ -684,7 +683,7 @@ smartdns_prepare_routes()
     printf '%-8s %-12s %-14s %s\n' \
         "--------" "------------" "--------------" "------"
 
-    for NAME in GH01 GH02 GH03 GH04 GH05 GH06 DIRECT
+    for NAME in GH01 GH02 GH03 GH04 GH05 DIRECT
     do
         FILE="$SMARTDNS_TEST_DIR/$NAME"
 

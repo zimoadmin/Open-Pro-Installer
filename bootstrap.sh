@@ -12,7 +12,7 @@
 #   3. 出错或超时会打印原因，不再静默挂起
 #   4. 失败时保留日志路径，方便排查
 #   5. main.zip 改为 8 线路并行竞速
-#      （自己的服务器 + GitHub 直连 + GH01-GH06 ghproxy 镜像，
+#      （自己的服务器 + GitHub 直连 + GH01-GH05 ghproxy 镜像，
 #        谁先拿到完整可用的 zip 就用谁）
 #   6. auth_post 去掉 curl -f
 #      （服务端返回 4xx/5xx 时不再丢掉响应体，
@@ -80,23 +80,22 @@ DL_DIR="$WORKDIR/dl"
 # 单条线路的最长下载时间 / 整体等待上限（秒）
 DL_DEADLINE=110
 
-# GH01-GH06 用的归档地址（前缀式代理会把它拼在代理地址后面）
+# GH01-GH05 用的归档地址（前缀式代理会把它拼在代理地址后面）
 DL_ARCHIVE="https://github.com/zimoadmin/Open-Pro-Installer/archive/refs/heads/main.zip"
 
 DL_SOURCES="
 SERVER|https://auth.12334123.xyz/installer
 CODELOAD|https://codeload.github.com/zimoadmin/Open-Pro-Installer/zip/refs/heads/main
-GH01|https://ghproxy.net/${DL_ARCHIVE}
-GH02|https://gh-proxy.org/${DL_ARCHIVE}
-GH03|https://gh-proxy.com/${DL_ARCHIVE}
-GH04|https://cdn.akaere.online/${DL_ARCHIVE}
-GH05|https://github.mxw.qzz.io/${DL_ARCHIVE}
-GH06|https://gh.07150721.xyz/${DL_ARCHIVE}
+GH01|https://down.mxw.xx.kg/${DL_ARCHIVE}
+GH02|https://ghproxy.icu/${DL_ARCHIVE}
+GH03|https://github.mxw.qzz.io/${DL_ARCHIVE}
+GH04|https://xsadwsd.kdns.fr/${DL_ARCHIVE}
+GH05|https://v4.gh-proxy.org/${DL_ARCHIVE}
 "
 
 # 同时完成时的优先顺序（一般用不上，先到先得）
 # 注意：新增 / 删除线路时，这里要和 DL_SOURCES 一起改
-DL_PRIORITY="SERVER CODELOAD GH01 GH02 GH03 GH04 GH05 GH06"
+DL_PRIORITY="SERVER CODELOAD GH01 GH02 GH03 GH04 GH05"
 
 # 竞速胜出的线路名（由 download_repo 写入）
 DL_WIN=""
@@ -819,7 +818,7 @@ then
 
     printf "%b\n" "${RED}[ERROR] 项目文件下载失败（已用 $(elapsed_sec)s）${RESET}"
 
-    printf "%b\n" "${YELLOW}[INFO] 所有线路（服务器 / GitHub 直连 / GH01-GH06）都没拿到完整 zip${RESET}"
+    printf "%b\n" "${YELLOW}[INFO] 所有线路（服务器 / GitHub 直连 / GH01-GH05）都没拿到完整 zip${RESET}"
 
     printf "%b\n" "${YELLOW}[INFO] 请检查网络、DNS 或服务器连接${RESET}"
 

@@ -6,8 +6,8 @@
 #
 # 功能：
 # 1. 支持继承 Open-Pro-Installer 已有测速结果
-# 2. 共享 GH01-GH06 + DIRECT 排名，不重复测速
-# 3. 独立运行时自动执行 GH01-GH06 + DIRECT 并行测速
+# 2. 共享 GH01-GH05 + DIRECT 排名，不重复测速
+# 3. 独立运行时自动执行 GH01-GH05 + DIRECT 并行测速
 # 4. 检测 TTFB 首包时间
 # 5. 检测实际下载速度
 # 6. 自动计算综合成绩
@@ -58,10 +58,10 @@ DIRECT_TRIED=0
 # score|name|prefix|ttfb|speed
 #
 # 例如：
-# 632|GH04|https://cdn.akaere.online/|183|10000000
+# 632|GH04|https://xsadwsd.kdns.fr/|183|10000000
 #
 # 如果存在，则本脚本直接继承这份测速结果，
-# 不再执行 GH01-GH06 + DIRECT 测速。
+# 不再执行 GH01-GH05 + DIRECT 测速。
 # ============================================================
 
 OPENPRO_SCRIPT_ROUTE_FILE="${OPENPRO_SCRIPT_ROUTE_FILE:-}"
@@ -83,12 +83,11 @@ SCORE_FILE_KB=10240
 # ============================================================
 
 DOWNLOAD_NODES="
-GH01|https://ghproxy.net/
-GH02|https://gh-proxy.org/
-GH03|https://gh-proxy.com/
-GH04|https://cdn.akaere.online/
-GH05|https://github.mxw.qzz.io/
-GH06|https://gh.07150721.xyz/
+GH01|https://down.mxw.xx.kg/
+GH02|https://ghproxy.icu/
+GH03|https://github.mxw.qzz.io/
+GH04|https://xsadwsd.kdns.fr/
+GH05|https://v4.gh-proxy.org/
 DIRECT|
 "
 
@@ -589,7 +588,7 @@ test_route_background()
 
 # ============================================================
 # 独立运行模式：
-# GH01-GH06 + DIRECT 并行测速
+# GH01-GH05 + DIRECT 并行测速
 # ============================================================
 
 prepare_routes()
@@ -613,7 +612,6 @@ prepare_routes()
         GH03 \
         GH04 \
         GH05 \
-        GH06 \
         DIRECT
     do
 
@@ -652,7 +650,6 @@ prepare_routes()
         GH03 \
         GH04 \
         GH05 \
-        GH06 \
         DIRECT
     do
 
@@ -828,7 +825,7 @@ load_shared_routes()
 # 主 OpenClash Installer 的共享测速结果
 #
 # 没有共享结果：
-# 自己执行 GH01-GH06 + DIRECT
+# 自己执行 GH01-GH05 + DIRECT
 # ============================================================
 
 prepare_download_routes()

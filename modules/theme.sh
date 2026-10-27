@@ -143,12 +143,11 @@ THEME_SCORE_FILE_KB=4096
 # ============================================================
 
 THEME_DOWNLOAD_NODES="
-GH01|https://ghproxy.net/
-GH02|https://gh-proxy.org/
-GH03|https://gh-proxy.com/
-GH04|https://cdn.akaere.online/
-GH05|https://github.mxw.qzz.io/
-GH06|https://gh.07150721.xyz/
+GH01|https://down.mxw.xx.kg/
+GH02|https://ghproxy.icu/
+GH03|https://github.mxw.qzz.io/
+GH04|https://xsadwsd.kdns.fr/
+GH05|https://v4.gh-proxy.org/
 DIRECT|
 "
 
@@ -2080,12 +2079,11 @@ get_theme_node_prefix()
         return 0
 
     done <<EOF
-GH01|https://ghproxy.net/
-GH02|https://gh-proxy.org/
-GH03|https://gh-proxy.com/
-GH04|https://cdn.akaere.online/
-GH05|https://github.mxw.qzz.io/
-GH06|https://gh.07150721.xyz/
+GH01|https://down.mxw.xx.kg/
+GH02|https://ghproxy.icu/
+GH03|https://github.mxw.qzz.io/
+GH04|https://xsadwsd.kdns.fr/
+GH05|https://v4.gh-proxy.org/
 DIRECT|
 EOF
 
@@ -2133,7 +2131,6 @@ prepare_theme_routes()
         GH03 \
         GH04 \
         GH05 \
-        GH06 \
         DIRECT
     do
 
@@ -2174,7 +2171,6 @@ prepare_theme_routes()
         GH03 \
         GH04 \
         GH05 \
-        GH06 \
         DIRECT
     do
 
@@ -3333,7 +3329,7 @@ verify_quickstart_install()
 # ============================================================
 # 下载 LinkEase 官方 is-opkg
 #
-# 复用 Argon 首次 GH01-GH06 + DIRECT 测速结果
+# 复用 Argon 首次 GH01-GH05 + DIRECT 测速结果
 # 不重新测速
 # 下载失败自动切换下一线路
 # DIRECT 最终兜底
@@ -5043,7 +5039,7 @@ install_theme()
 #     _theme_info "QuickStart     : $QUICKSTART_VERSION"
 
 # _theme_info "Argon 来源     : jerrykuku 官方 GitHub Release"
-# _theme_info "Argon 下载     : GH01-GH06 + DIRECT 自动测速"
+# _theme_info "Argon 下载     : GH01-GH05 + DIRECT 自动测速"
 
     _theme_info \
         "已设置 Argon 为默认 LuCI 主题"

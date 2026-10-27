@@ -45,16 +45,15 @@ DL_ARCHIVE="https://github.com/zimoadmin/Open-Pro-Installer/archive/refs/heads/m
 DL_SOURCES="
 SERVER|https://auth.12334123.xyz/installer
 CODELOAD|https://codeload.github.com/zimoadmin/Open-Pro-Installer/zip/refs/heads/main
-GH01|https://ghproxy.net/${DL_ARCHIVE}
-GH02|https://gh-proxy.org/${DL_ARCHIVE}
-GH03|https://gh-proxy.com/${DL_ARCHIVE}
-GH04|https://cdn.akaere.online/${DL_ARCHIVE}
-GH05|https://github.mxw.qzz.io/${DL_ARCHIVE}
-GH06|https://gh.07150721.xyz/${DL_ARCHIVE}
+GH01|https://down.mxw.xx.kg/${DL_ARCHIVE}
+GH02|https://ghproxy.icu/${DL_ARCHIVE}
+GH03|https://github.mxw.qzz.io/${DL_ARCHIVE}
+GH04|https://xsadwsd.kdns.fr/${DL_ARCHIVE}
+GH05|https://v4.gh-proxy.org/${DL_ARCHIVE}
 "
 
 
-DL_PRIORITY="SERVER CODELOAD GH01 GH02 GH03 GH04 GH05 GH06"
+DL_PRIORITY="SERVER CODELOAD GH01 GH02 GH03 GH04 GH05"
 
 
 DL_WIN=""
@@ -1477,7 +1476,7 @@ then
 
     printf "%b\n" "${RED}[ERROR] 项目文件下载失败（已用 $(elapsed_sec)s）${RESET}"
 
-    printf "%b\n" "${YELLOW}[INFO] 所有线路（服务器 / GitHub 直连 / GH01-GH06）都没拿到完整 zip${RESET}"
+    printf "%b\n" "${YELLOW}[INFO] 所有线路（服务器 / GitHub 直连 / GH01-GH05）都没拿到完整 zip${RESET}"
 
     printf "%b\n" "${YELLOW}[INFO] 请检查网络、DNS 或服务器连接${RESET}"
 

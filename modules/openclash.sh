@@ -6,7 +6,7 @@
 #
 # 功能：
 # 1. 自动检测 CPU / Core 架构
-# 2. GH01-GH06 + DIRECT 并行真实测速
+# 2. GH01-GH05 + DIRECT 并行真实测速
 # 3. 检测 TTFB 首包时间
 # 4. 检测实际下载速度
 # 5. 自动计算综合成绩并排序
@@ -32,7 +32,7 @@
 # 25. Core 未真实验证前不显示 100%
 #
 # 26. 自动下载并运行 openclash-swap
-#     与 27 共用同一份 GH01-GH06 + DIRECT 测速结果
+#     与 27 共用同一份 GH01-GH05 + DIRECT 测速结果
 #     并将完整线路排名传递给 openclash-swap
 #
 # 27. 自动下载并安装 openclash-smart-select
@@ -151,12 +151,11 @@ OC_SCORE_FILE_KB=10240
 # ============================================================
 
 OPENCLASH_DOWNLOAD_NODES="
-GH01|https://ghproxy.net/
-GH02|https://gh-proxy.org/
-GH03|https://gh-proxy.com/
-GH04|https://cdn.akaere.online/
-GH05|https://github.mxw.qzz.io/
-GH06|https://gh.07150721.xyz/
+GH01|https://down.mxw.xx.kg/
+GH02|https://ghproxy.icu/
+GH03|https://github.mxw.qzz.io/
+GH04|https://xsadwsd.kdns.fr/
+GH05|https://v4.gh-proxy.org/
 DIRECT|
 "
 
@@ -914,7 +913,7 @@ get_openclash_release_from_worker()
 
 
 # ============================================================
-# DIRECT + GH01-GH06 并行获取 Release
+# DIRECT + GH01-GH05 并行获取 Release
 # ============================================================
 
 get_openclash_release_parallel()
@@ -932,8 +931,7 @@ get_openclash_release_parallel()
         GH02 \
         GH03 \
         GH04 \
-        GH05 \
-        GH06
+        GH05
     do
 
         NODE_PREFIX="$(
@@ -1014,8 +1012,7 @@ get_openclash_release_parallel()
             GH02 \
             GH03 \
             GH04 \
-            GH05 \
-            GH06
+            GH05
         do
 
             if [ -s "$RELEASE_DIR/${NODE_NAME}.ok" ]; then
@@ -1431,7 +1428,6 @@ prepare_openclash_routes()
         GH03 \
         GH04 \
         GH05 \
-        GH06 \
         DIRECT
     do
 
@@ -1466,7 +1462,6 @@ prepare_openclash_routes()
         GH03 \
         GH04 \
         GH05 \
-        GH06 \
         DIRECT
     do
 

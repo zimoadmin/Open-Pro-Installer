@@ -22,12 +22,11 @@ E5800_VERSION=""
 E5800_ASSET_URL=""
 
 E5800_NODES="
-GH01|https://ghproxy.net/
-GH02|https://gh-proxy.org/
-GH03|https://gh-proxy.com/
-GH04|https://cdn.akaere.online/
-GH05|https://github.mxw.qzz.io/
-GH06|https://gh.07150721.xyz/
+GH01|https://down.mxw.xx.kg/
+GH02|https://ghproxy.icu/
+GH03|https://github.mxw.qzz.io/
+GH04|https://xsadwsd.kdns.fr/
+GH05|https://v4.gh-proxy.org/
 DIRECT|
 "
 
@@ -386,7 +385,7 @@ _e58_prepare_routes()
     _e58_info "正在并行测试下载线路..."
     printf '\n'
 
-    for NAME in GH01 GH02 GH03 GH04 GH05 GH06 DIRECT
+    for NAME in GH01 GH02 GH03 GH04 GH05 DIRECT
     do
         PREFIX="$(
             printf '%s\n' "$E5800_NODES" |
@@ -408,7 +407,7 @@ _e58_prepare_routes()
     printf '%-8s %-12s %-14s %s\n' \
         "--------" "------------" "--------------" "------"
 
-    for NAME in GH01 GH02 GH03 GH04 GH05 GH06 DIRECT
+    for NAME in GH01 GH02 GH03 GH04 GH05 DIRECT
     do
         FILE="$E5800_TEST_DIR/$NAME"
 

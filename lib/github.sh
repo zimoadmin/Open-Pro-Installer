@@ -10,7 +10,7 @@
 # 1. 优先读取 1 小时缓存
 # 2. 尝试 Open-Pro Worker
 # 3. Worker 失败后：
-#    DIRECT + GH01-GH06 并行获取 GitHub Release
+#    DIRECT + GH01-GH05 并行获取 GitHub Release
 # 4. 自动解析最新版
 # 5. 自动识别 OPKG / APK
 # 6. 输出：
@@ -41,12 +41,11 @@ RELEASE_TIMEOUT=8
 
 RELEASE_NODES="
 DIRECT|
-GH01|https://ghproxy.net/
-GH02|https://gh-proxy.org/
-GH03|https://gh-proxy.com/
-GH04|https://cdn.akaere.online/
-GH05|https://github.mxw.qzz.io/
-GH06|https://gh.07150721.xyz/
+GH01|https://down.mxw.xx.kg/
+GH02|https://ghproxy.icu/
+GH03|https://github.mxw.qzz.io/
+GH04|https://xsadwsd.kdns.fr/
+GH05|https://v4.gh-proxy.org/
 "
 
 
@@ -797,14 +796,14 @@ release_parallel_job()
 
 
 # ============================================================
-# DIRECT + GH01-GH06 Parallel
+# DIRECT + GH01-GH05 Parallel
 # ============================================================
 
 get_release_parallel()
 {
     _gh_info "Worker 不可用，启动多线路并行获取..."
 
-    _gh_info "线路：DIRECT + GH01-GH06"
+    _gh_info "线路：DIRECT + GH01-GH05"
 
 
     rm -f \
@@ -828,12 +827,11 @@ get_release_parallel()
 
     done <<EOF
 DIRECT|
-GH01|https://ghproxy.net/
-GH02|https://gh-proxy.org/
-GH03|https://gh-proxy.com/
-GH04|https://cdn.akaere.online/
-GH05|https://github.mxw.qzz.io/
-GH06|https://gh.07150721.xyz/
+GH01|https://down.mxw.xx.kg/
+GH02|https://ghproxy.icu/
+GH03|https://github.mxw.qzz.io/
+GH04|https://xsadwsd.kdns.fr/
+GH05|https://v4.gh-proxy.org/
 EOF
 
 
@@ -843,7 +841,7 @@ EOF
     # ========================================================
     # 优先顺序
     #
-    # DIRECT 成功优先，其次 GH01-GH06
+    # DIRECT 成功优先，其次 GH01-GH05
     # ========================================================
 
     for NODE_NAME in \
@@ -852,8 +850,7 @@ EOF
         GH02 \
         GH03 \
         GH04 \
-        GH05 \
-        GH06
+        GH05
     do
 
         OK_FILE="${RELEASE_TMP_DIR}/${NODE_NAME}.ok"
@@ -877,7 +874,7 @@ EOF
     done
 
 
-    _gh_error "DIRECT + GH01-GH06 全部失败"
+    _gh_error "DIRECT + GH01-GH05 全部失败"
 
     return 1
 }
@@ -950,7 +947,7 @@ get_latest_release()
 
 
     # ========================================================
-    # 3. DIRECT + GH01-GH06
+    # 3. DIRECT + GH01-GH05
     # ========================================================
 
     if get_release_parallel; then

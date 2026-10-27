@@ -7,7 +7,7 @@
 # 功能：
 # 1. 自动检测 OpenWrt / OPKG / APK / 精确架构
 # 2. 按真实固件版本和包管理器架构精确匹配 Release 包
-# 3. GH01-GH06 + DIRECT 并行真实测速并自动切线
+# 3. GH01-GH05 + DIRECT 并行真实测速并自动切线
 # 4. 下载后验证 tar.gz，自动解压并定位 6 个组件
 # 5. 按依赖顺序逐个安装并逐包验证
 # 6. 兼容 GL.iNet / 旧 OPKG 长文件名 Illegal file name
@@ -66,12 +66,11 @@ MOSDNS_TEST_MAX_TIME=6
 MOSDNS_SCORE_FILE_KB=10240
 
 MOSDNS_DOWNLOAD_NODES="
-GH01|https://ghproxy.net/
-GH02|https://gh-proxy.org/
-GH03|https://gh-proxy.com/
-GH04|https://cdn.akaere.online/
-GH05|https://github.mxw.qzz.io/
-GH06|https://gh.07150721.xyz/
+GH01|https://down.mxw.xx.kg/
+GH02|https://ghproxy.icu/
+GH03|https://github.mxw.qzz.io/
+GH04|https://xsadwsd.kdns.fr/
+GH05|https://v4.gh-proxy.org/
 DIRECT|
 "
 
@@ -439,14 +438,14 @@ prepare_mosdns_routes() {
     rm -f "$MOSDNS_ROUTE_FILE" "$MOSDNS_SORTED_FILE"
     rm -rf "$MOSDNS_TEST_DIR"; mkdir -p "$MOSDNS_TEST_DIR" || return 1
     printf '\n'; _mos_info "正在并行测试 MosDNS 下载线路..."; printf '\n'
-    for NODE_NAME in GH01 GH02 GH03 GH04 GH05 GH06 DIRECT; do
+    for NODE_NAME in GH01 GH02 GH03 GH04 GH05 DIRECT; do
         NODE_PREFIX="$(printf '%s\n' "$MOSDNS_DOWNLOAD_NODES" | awk -F '|' -v n="$NODE_NAME" '$1==n{print $2;exit}')"
         test_mosdns_route_background "$NODE_NAME" "$NODE_PREFIX" "$ORIGINAL_URL" "$MOSDNS_TEST_DIR/result_${NODE_NAME}" "$MOSDNS_TEST_DIR/download_${NODE_NAME}" &
     done
     wait
     printf '%-8s %-12s %-14s %s\n' "线路" "首包" "下载速度" "状态"
     printf '%-8s %-12s %-14s %s\n' "--------" "------------" "--------------" "------"
-    for NODE_NAME in GH01 GH02 GH03 GH04 GH05 GH06 DIRECT; do
+    for NODE_NAME in GH01 GH02 GH03 GH04 GH05 DIRECT; do
         RESULT_FILE="$MOSDNS_TEST_DIR/result_${NODE_NAME}"
         if [ ! -s "$RESULT_FILE" ] || [ "$(cut -d '|' -f2 "$RESULT_FILE")" != "OK" ]; then
             printf '%-8s %-12s %-14s \033[1;91m%s\033[0m\n' "$NODE_NAME" "----" "----" "不可用"
