@@ -1173,6 +1173,73 @@ get_release_tag_url()
 # Argon Release Page
 # ============================================================
 
+
+# Release metadata has a separate short network budget. HTML is expected here;
+# accept only pages containing this repository's actual release asset links.
+download_argon_metadata()
+(
+    meta_url="$1"
+    meta_output="$2"
+    meta_kind="$3"
+    meta_limit=12
+    meta_pid=""
+    trap '[ -z "$meta_pid" ] || { kill "$meta_pid" 2>/dev/null; wait "$meta_pid" 2>/dev/null; }; rm -f "$meta_output.part"' 0
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    for meta_route in DIRECT GH01 GH02 GH03 GH04 GH05; do
+        meta_prefix="$(printf '%s\n' "$THEME_DOWNLOAD_NODES" |
+            sed -n "s/^${meta_route}|//p")"
+        # GitHub acceleration services generally proxy github.com, not API URLs.
+        case "$meta_url" in
+            https://api.github.com/*) [ "$meta_route" = DIRECT ] || continue ;;
+        esac
+        meta_fetch="${meta_prefix}${meta_url}"
+        printf 'Argon metadata [%s]: %s\n' "$meta_route" "$meta_fetch" >>"$THEME_LOG"
+        rm -f "$meta_output.part"
+        if command -v curl >/dev/null 2>&1; then
+            curl -4 -f -L -sS --connect-timeout 4 --max-time "$meta_limit" \
+                --retry 0 -H "User-Agent: Open-Pro-Installer" \
+                -o "$meta_output.part" "$meta_fetch" >>"$THEME_LOG" 2>&1 &
+        else
+            wget -T 4 --header="User-Agent: Open-Pro-Installer" \
+                -O "$meta_output.part" "$meta_fetch" >>"$THEME_LOG" 2>&1 &
+        fi
+        meta_pid=$!
+        meta_elapsed=0
+        while kill -0 "$meta_pid" 2>/dev/null; do
+            THEME_CUR_TEXT="获取 Argon 信息 [$meta_route] ${meta_elapsed}/${meta_limit} 秒"
+            theme_show_progress >&2
+            if [ "$meta_elapsed" -ge "$meta_limit" ]; then
+                kill "$meta_pid" 2>/dev/null
+                break
+            fi
+            sleep 1
+            meta_elapsed=$((meta_elapsed + 1))
+        done
+        meta_result=0
+        wait "$meta_pid" || meta_result=$?
+        meta_pid=""
+        if [ "$meta_result" -eq 0 ] && [ -s "$meta_output.part" ]; then
+            case "$meta_kind" in
+                assets)
+                    grep -q "/${ARGON_REPO}/releases/download/" "$meta_output.part" ||
+                        meta_result=1 ;;
+                json)
+                    grep -q '"tag_name"' "$meta_output.part" ||
+                        meta_result=1 ;;
+            esac
+            if [ "$meta_result" -eq 0 ]; then
+                mv "$meta_output.part" "$meta_output"
+                exit 0
+            fi
+        fi
+        printf 'Argon metadata [%s] failed (exit %s), switching route\n' \
+            "$meta_route" "$meta_result" >>"$THEME_LOG"
+    done
+    rm -f "$meta_output"
+    exit 1
+)
+
 fetch_argon_release_page()
 {
     TAG="$1"
@@ -1190,9 +1257,9 @@ fetch_argon_release_page()
     rm -f "$ARGON_EXPANDED_ASSETS"
 
 
-    if ! download_direct \
+    if ! download_argon_metadata \
         "$EXPANDED_URL" \
-        "$ARGON_EXPANDED_ASSETS"
+        "$ARGON_EXPANDED_ASSETS" assets
     then
 
         return 1
@@ -1266,9 +1333,9 @@ fetch_argon_release()
             "正在直连 GitHub API 获取 Argon 最新版本..."
 
 
-        if download_direct \
+        if download_argon_metadata \
             "$ARGON_RELEASE_API" \
-            "$ARGON_RELEASE_JSON"
+            "$ARGON_RELEASE_JSON" json
         then
 
             if command -v jsonfilter >/dev/null 2>&1; then
@@ -1318,34 +1385,13 @@ fetch_argon_release()
             LATEST_PAGE="https://github.com/${ARGON_REPO}/releases/latest"
 
 
-            if command -v curl >/dev/null 2>&1; then
-
-                EFFECTIVE_URL="$(
-                    curl \
-                        -4 \
-                        -L \
-                        -sS \
-                        --connect-timeout 10 \
-                        --max-time 30 \
-                        -o /dev/null \
-                        -w '%{url_effective}' \
-                        "$LATEST_PAGE" \
-                        2>>"$THEME_LOG"
+            if download_argon_metadata "$LATEST_PAGE" "$ARGON_EXPANDED_ASSETS" assets; then
+                ARGON_RELEASE_TAG="$(
+                    grep -o "/${ARGON_REPO}/releases/download/[^/\" ]*" \
+                        "$ARGON_EXPANDED_ASSETS" |
+                        head -n 1 | sed 's#^.*/releases/download/##'
                 )"
-
-            else
-
-                EFFECTIVE_URL=""
-
             fi
-
-
-            ARGON_RELEASE_TAG="$(
-                printf '%s\n' "$EFFECTIVE_URL" |
-                sed -n \
-                's#^.*/releases/tag/\([^/?#]*\).*$#\1#p'
-            )"
-
 
             if [ -z "$ARGON_RELEASE_TAG" ]; then
 
