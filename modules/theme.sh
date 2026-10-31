@@ -1176,69 +1176,126 @@ get_release_tag_url()
 
 # Release metadata has a separate short network budget. HTML is expected here;
 # accept only pages containing this repository's actual release asset links.
-download_argon_metadata()
-(
-    meta_url="$1"
-    meta_output="$2"
-    meta_kind="$3"
-    meta_limit=12
-    meta_pid=""
-    trap '[ -z "$meta_pid" ] || { kill "$meta_pid" 2>/dev/null; wait "$meta_pid" 2>/dev/null; }; rm -f "$meta_output.part"' 0
+
+# Race complete responses, never install a partial file or an HTML error page.
+theme_race_valid()
+{
+    [ -s "$1" ] || return 1
+    case "$2" in
+        assets) grep -q "/${ARGON_REPO}/releases/download/" "$1" ;;
+        json) grep -q '"tag_name"' "$1" ;;
+        package)
+            race_magic="$(od -An -tx1 -N8 "$1" 2>/dev/null | tr -d ' \n')"
+            case "$1" in
+                *) case "$race_magic" in
+                    1f8b*) gzip -t "$1" 2>>"$THEME_LOG" ;;
+                    213c617263683e0a) # ar-format IPK
+                        command -v ar >/dev/null 2>&1 &&
+                            ar t "$1" >>"$THEME_LOG" 2>&1 ;;
+                    414442*) [ "$PKG_MANAGER" = apk ] ;;
+                    *) return 1 ;;
+                esac ;;
+            esac ;;
+        *) return 1 ;;
+    esac
+}
+
+theme_race_worker()
+{
+    worker_dir="$1"
+    worker_route="$2"
+    worker_url="$3"
+    worker_kind="$4"
+    worker_limit="$5"
+    worker_file="$worker_dir/$worker_route.part"
+    worker_pid=""
+    trap '[ -z "$worker_pid" ] || { kill "$worker_pid" 2>/dev/null; wait "$worker_pid" 2>/dev/null; }' 0
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    for meta_route in DIRECT GH01 GH02 GH03 GH04 GH05; do
-        meta_prefix="$(printf '%s\n' "$THEME_DOWNLOAD_NODES" |
-            sed -n "s/^${meta_route}|//p")"
-        # GitHub acceleration services generally proxy github.com, not API URLs.
-        case "$meta_url" in
-            https://api.github.com/*) [ "$meta_route" = DIRECT ] || continue ;;
+    printf 'Parallel [%s]: %s\n' "$worker_route" "$worker_url" >>"$THEME_LOG"
+    if command -v curl >/dev/null 2>&1; then
+        curl -4 -f -L -sS --connect-timeout 4 --max-time "$worker_limit" \
+            --retry 0 -H "User-Agent: Open-Pro-Installer" \
+            -o "$worker_file" "$worker_url" >>"$worker_dir/$worker_route.log" 2>&1 &
+    else
+        wget -T 4 --header="User-Agent: Open-Pro-Installer" \
+            -O "$worker_file" "$worker_url" >>"$worker_dir/$worker_route.log" 2>&1 &
+    fi
+    worker_pid=$!
+    worker_rc=0
+    wait "$worker_pid" || worker_rc=$?
+    worker_pid=""
+    if [ "$worker_rc" -eq 0 ] && theme_race_valid "$worker_file" "$worker_kind"; then
+        # mkdir elects exactly one winner even when two requests finish together.
+        if mkdir "$worker_dir/winner" 2>/dev/null; then
+            if mv "$worker_file" "$worker_dir/result"; then
+                printf '%s\n' "$worker_route" > "$worker_dir/ready"
+            fi
+        fi
+    fi
+    cat "$worker_dir/$worker_route.log" >>"$THEME_LOG" 2>/dev/null || :
+    : > "$worker_dir/$worker_route.done"
+}
+
+theme_parallel_download()
+(
+    race_url="$1"
+    race_output="$2"
+    race_kind="$3"
+    race_limit="$4"
+    race_dir="$(mktemp -d "$THEME_TMP/race.XXXXXX")" || exit 1
+    race_pids=""
+    race_count=0
+    race_cleanup()
+    {
+        for race_pid in $race_pids; do kill "$race_pid" 2>/dev/null || :; done
+        for race_pid in $race_pids; do wait "$race_pid" 2>/dev/null || :; done
+        rm -rf "$race_dir"
+    }
+    trap race_cleanup 0
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    rm -f "$race_output"
+    for race_route in GH01 GH02 GH03 GH04 GH05 DIRECT; do
+        case "$race_url" in
+            https://api.github.com/*) [ "$race_route" = DIRECT ] || continue ;;
         esac
-        meta_fetch="${meta_prefix}${meta_url}"
-        printf 'Argon metadata [%s]: %s\n' "$meta_route" "$meta_fetch" >>"$THEME_LOG"
-        rm -f "$meta_output.part"
-        if command -v curl >/dev/null 2>&1; then
-            curl -4 -f -L -sS --connect-timeout 4 --max-time "$meta_limit" \
-                --retry 0 -H "User-Agent: Open-Pro-Installer" \
-                -o "$meta_output.part" "$meta_fetch" >>"$THEME_LOG" 2>&1 &
-        else
-            wget -T 4 --header="User-Agent: Open-Pro-Installer" \
-                -O "$meta_output.part" "$meta_fetch" >>"$THEME_LOG" 2>&1 &
-        fi
-        meta_pid=$!
-        meta_elapsed=0
-        while kill -0 "$meta_pid" 2>/dev/null; do
-            THEME_CUR_TEXT="获取 Argon 信息 [$meta_route] ${meta_elapsed}/${meta_limit} 秒"
-            theme_show_progress >&2
-            if [ "$meta_elapsed" -ge "$meta_limit" ]; then
-                kill "$meta_pid" 2>/dev/null
-                break
-            fi
-            sleep 1
-            meta_elapsed=$((meta_elapsed + 1))
-        done
-        meta_result=0
-        wait "$meta_pid" || meta_result=$?
-        meta_pid=""
-        if [ "$meta_result" -eq 0 ] && [ -s "$meta_output.part" ]; then
-            case "$meta_kind" in
-                assets)
-                    grep -q "/${ARGON_REPO}/releases/download/" "$meta_output.part" ||
-                        meta_result=1 ;;
-                json)
-                    grep -q '"tag_name"' "$meta_output.part" ||
-                        meta_result=1 ;;
-            esac
-            if [ "$meta_result" -eq 0 ]; then
-                mv "$meta_output.part" "$meta_output"
-                exit 0
-            fi
-        fi
-        printf 'Argon metadata [%s] failed (exit %s), switching route\n' \
-            "$meta_route" "$meta_result" >>"$THEME_LOG"
+        race_prefix="$(printf '%s\n' "$THEME_DOWNLOAD_NODES" |
+            sed -n "s/^${race_route}|//p")"
+        theme_race_worker "$race_dir" "$race_route" \
+            "${race_prefix}${race_url}" "$race_kind" "$race_limit" &
+        race_pids="$race_pids $!"
+        race_count=$((race_count + 1))
     done
-    rm -f "$meta_output"
+    race_elapsed=0
+    while :; do
+        if [ -s "$race_dir/ready" ]; then
+            race_winner="$(cat "$race_dir/ready")"
+            mv "$race_dir/result" "$race_output" || exit 1
+            printf 'Parallel winner [%s]: %s\n' "$race_winner" "$race_url" >>"$THEME_LOG"
+            THEME_CUR_TEXT="下载完成 [$race_winner]，正在继续"
+            theme_show_progress >&2
+            exit 0
+        fi
+        race_done=0
+        for race_done_file in "$race_dir"/*.done; do
+            [ ! -f "$race_done_file" ] || race_done=$((race_done + 1))
+        done
+        [ "$race_done" -lt "$race_count" ] || break
+        [ "$race_elapsed" -lt "$race_limit" ] || break
+        THEME_CUR_TEXT="并行下载 $race_count 条线路：${race_elapsed}/${race_limit} 秒"
+        theme_show_progress >&2
+        sleep 1
+        race_elapsed=$((race_elapsed + 1))
+    done
+    printf 'Parallel download failed: %s\n' "$race_url" >>"$THEME_LOG"
     exit 1
 )
+
+download_argon_metadata()
+{
+    theme_parallel_download "$1" "$2" "$3" 12
+}
 
 fetch_argon_release_page()
 {
@@ -2396,134 +2453,7 @@ prepare_theme_routes()
 
 smart_download_release()
 {
-    ORIGINAL_URL="$1"
-    OUTPUT="$2"
-
-
-    DOWNLOAD_SUCCESS=0
-
-    DIRECT_TRIED=0
-
-
-    if [ "$THEME_ROUTE_CACHE_READY" -ne 1 ] ||
-       [ ! -s "$THEME_ROUTE_FILE" ]
-    then
-
-        prepare_theme_routes \
-            "$ORIGINAL_URL" ||
-            true
-
-
-        if [ -s "$THEME_ROUTE_FILE" ]; then
-
-            THEME_ROUTE_CACHE_READY=1
-
-            THEME_ROUTE_CACHE_URL="$ORIGINAL_URL"
-
-        else
-
-            THEME_ROUTE_CACHE_READY=0
-
-            THEME_ROUTE_CACHE_URL=""
-
-        fi
-
-    else
-
-        _theme_info \
-            "复用首次 Argon 下载线路测速结果"
-
-    fi
-
-
-    if [ -s "$THEME_ROUTE_FILE" ]; then
-
-        while IFS='|' read -r \
-            ROUTE_SCORE \
-            ROUTE_NAME \
-            ROUTE_PREFIX \
-            ROUTE_TEST_URL \
-            ROUTE_TTFB \
-            ROUTE_SPEED
-        do
-
-            [ -n "$ROUTE_NAME" ] ||
-                continue
-
-
-            if [ "$ROUTE_NAME" = "DIRECT" ]; then
-
-                DIRECT_TRIED=1
-
-            fi
-
-
-            ROUTE_URL="$(
-                build_theme_url \
-                    "$ROUTE_PREFIX" \
-                    "$ORIGINAL_URL"
-            )"
-
-
-            [ -n "$ROUTE_URL" ] ||
-                continue
-
-
-            _theme_info \
-                "正在使用线路：$ROUTE_NAME"
-
-
-            if download_direct \
-                "$ROUTE_URL" \
-                "$OUTPUT"
-            then
-
-                _theme_ok \
-                    "下载线路：$ROUTE_NAME"
-
-
-                DOWNLOAD_SUCCESS=1
-
-
-                break
-
-            fi
-
-
-            _theme_warn \
-                "$ROUTE_NAME 下载失败，切换下一线路..."
-
-
-        done < "$THEME_ROUTE_FILE"
-
-    fi
-
-
-    if [ "$DOWNLOAD_SUCCESS" -ne 1 ] &&
-       [ "$DIRECT_TRIED" -ne 1 ]
-    then
-
-        _theme_info \
-            "正在尝试 GitHub 官方直连..."
-
-
-        if download_direct \
-            "$ORIGINAL_URL" \
-            "$OUTPUT"
-        then
-
-            _theme_ok \
-                "GitHub 官方直连下载成功"
-
-
-            DOWNLOAD_SUCCESS=1
-
-        fi
-
-    fi
-
-
-    [ "$DOWNLOAD_SUCCESS" -eq 1 ]
+    theme_parallel_download "$1" "$2" package 120
 }
 
 
@@ -2640,163 +2570,54 @@ verify_argon_install()
 install_argon_official()
 {
     if ! fetch_argon_release; then
-
-        _theme_error \
-            "Argon Release 获取失败"
-
+        _theme_error "Argon Release 获取失败"
         return 1
-
     fi
-
-
-    theme_progress \
-        28 \
-        "正在下载 Argon Theme..."
-
-
-
-
-    if ! smart_download_release \
-        "$ARGON_THEME_URL" \
-        "$ARGON_THEME_FILE"
-    then
-
-        _theme_error \
-            "Argon Theme 下载失败"
-
+    theme_progress 28 "正在并行下载 Argon Theme..."
+    if ! smart_download_release "$ARGON_THEME_URL" "$ARGON_THEME_FILE"; then
+        _theme_error "Argon Theme 下载失败"
         return 1
-
     fi
-
+    theme_progress 36 "正在安装 Argon Theme..."
+    if ! install_local_package "$ARGON_THEME_FILE"; then
+        _theme_error "Argon Theme 包安装失败"
+        restore_bootstrap_theme
+        return 1
+    fi
+    rm -f "$ARGON_THEME_FILE"
 
     if [ -n "$ARGON_CONFIG_URL" ]; then
-
-        theme_progress \
-            42 \
-            "正在下载 Argon Config..."
-
-
-
-
-        if ! smart_download_release \
-            "$ARGON_CONFIG_URL" \
-            "$ARGON_CONFIG_FILE"
-        then
-
-            _theme_warn \
-                "Argon Config 下载失败，将仅安装 Theme"
-
-
-            rm -f \
-                "$ARGON_CONFIG_FILE"
-
+        theme_progress 42 "正在并行下载 Argon Config..."
+        if smart_download_release "$ARGON_CONFIG_URL" "$ARGON_CONFIG_FILE"; then
+            theme_progress 46 "正在安装 Argon Config..."
+            if install_local_package "$ARGON_CONFIG_FILE"; then
+                rm -f "$ARGON_CONFIG_FILE"
+            else
+                _theme_warn "Argon Config 安装失败，主题仍可使用"
+            fi
+        else
+            _theme_warn "Argon Config 下载失败，将仅安装 Theme"
         fi
-
     fi
-
-
     if [ -n "$ARGON_LANG_URL" ]; then
-
-        theme_progress \
-            50 \
-            "正在下载 Argon 中文包..."
-
-
-
-
-        if ! smart_download_release \
-            "$ARGON_LANG_URL" \
-            "$ARGON_LANG_FILE"
-        then
-
-            _theme_warn \
-                "中文包下载失败，自动跳过"
-
-
-            rm -f \
-                "$ARGON_LANG_FILE"
-
+        theme_progress 50 "正在并行下载 Argon 中文包..."
+        if smart_download_release "$ARGON_LANG_URL" "$ARGON_LANG_FILE"; then
+            theme_progress 58 "正在安装 Argon 中文包..."
+            if install_local_package "$ARGON_LANG_FILE"; then
+                rm -f "$ARGON_LANG_FILE"
+            else
+                _theme_warn "Argon 中文包安装失败，自动跳过"
+            fi
+        else
+            _theme_warn "中文包下载失败，自动跳过"
         fi
-
     fi
-
-
-    theme_progress \
-        58 \
-        "正在安装 Argon..."
-
-
-
-
-    printf "\n===== Argon Install =====\n" \
-        >>"$THEME_LOG"
-
-
-    if ! install_local_package \
-        "$ARGON_THEME_FILE"
-    then
-
-        theme_nl
-
-
-        _theme_error \
-            "Argon Theme 包安装失败"
-
-
-        restore_bootstrap_theme
-
-
-        return 1
-
-    fi
-
-
-    if [ -s "$ARGON_CONFIG_FILE" ]; then
-
-        if ! install_local_package \
-            "$ARGON_CONFIG_FILE"
-        then
-
-            _theme_warn \
-                "Argon Config 安装失败，主题仍可使用"
-
-        fi
-
-    fi
-
-
-    if [ -s "$ARGON_LANG_FILE" ]; then
-
-        if ! install_local_package \
-            "$ARGON_LANG_FILE"
-        then
-
-            _theme_warn \
-                "Argon 中文包安装失败，自动跳过"
-
-        fi
-
-    fi
-
-
     if ! verify_argon_install; then
-
-        _theme_error \
-            "Argon 安装验证失败"
-
-
+        _theme_error "Argon 安装验证失败"
         restore_bootstrap_theme
-
-
         return 1
-
     fi
-
-
-    _theme_ok \
-        "Argon Theme 安装成功"
-
-
+    _theme_ok "Argon Theme 安装成功"
     return 0
 }
 
