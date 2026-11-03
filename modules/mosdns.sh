@@ -231,7 +231,20 @@ mosdns_release_arch() {
 # 同系列优先，否则选择同核心、同包格式的最新系列。解压后再核对实际包格式。
 mosdns_select_asset() {
     MOSDNS_RELEASE_ARCH="$(mosdns_release_arch)"
-    [ "$MOSDNS_PKG_MANAGER" != apk ] || MOSDNS_RELEASE_ARCH="$MOSDNS_ARCH"
+    if [ "$MOSDNS_PKG_MANAGER" = apk ] &&
+       [ "$MOSDNS_CPU_ARCH" = aarch64 ] && [ "$MOSDNS_ARCH" = aarch64 ]; then
+        # APK uses a broad native architecture; release archives retain CPU labels.
+        # Only select the firmware-declared core; apk simulation remains mandatory.
+        case "${DISTRIB_ARCH:-}" in
+            aarch64_cortex-a53|aarch64_cortex-a53_neon-vfpv4)
+                MOSDNS_RELEASE_ARCH=aarch64_cortex-a53 ;;
+            aarch64_cortex-a72|aarch64_cortex-a72_neon-vfpv4)
+                MOSDNS_RELEASE_ARCH=aarch64_cortex-a72 ;;
+            aarch64_cortex-a76|aarch64_cortex-a76_neon-vfpv4)
+                MOSDNS_RELEASE_ARCH=aarch64_cortex-a76 ;;
+            aarch64_generic) MOSDNS_RELEASE_ARCH=aarch64_generic ;;
+        esac
+    fi
     awk -v native="$MOSDNS_ARCH" -v cpu="$MOSDNS_RELEASE_ARCH" \
         -v current="$MOSDNS_SERIES" -v pm="$MOSDNS_PKG_MANAGER" '
         function candidate(arch,n,version,score,number,parts) {
@@ -334,7 +347,7 @@ prepare_mosdns_download_info() {
     }
     MOSDNS_SELECTION="$(mosdns_select_asset)"
     [ -n "$MOSDNS_SELECTION" ] || {
-        _mos_error "最新 Release 没有对应 CPU/核心与包格式：$MOSDNS_ARCH / $MOSDNS_PKG_MANAGER"
+        _mos_error "最新 Release 无匹配资产：包架构=$MOSDNS_ARCH，固件架构=${DISTRIB_ARCH:-unknown}，格式=$MOSDNS_PKG_MANAGER，系列=$MOSDNS_SERIES"
         return 1
     }
     MOSDNS_BASE_URL="$(printf '%s' "$MOSDNS_SELECTION" | cut -d '|' -f1)"
