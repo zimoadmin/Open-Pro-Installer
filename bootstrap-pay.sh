@@ -744,16 +744,23 @@ pay_progress_finish()
 
 pay_qr_install_package()
 {
-    if [ "${1:-}" = retry ]; then
-        opkg install qrencode >> /tmp/openpro_qrencode_install.log 2>&1
-    else
-        opkg install qrencode > /tmp/openpro_qrencode_install.log 2>&1
+    if [ "${1:-}" != retry ]; then
+        : > /tmp/openpro_qrencode_install.log
     fi
+    case "$PAY_QR_PKG_MANAGER" in
+        opkg) opkg install qrencode >> /tmp/openpro_qrencode_install.log 2>&1 ;;
+        apk) apk add qrencode >> /tmp/openpro_qrencode_install.log 2>&1 ;;
+        *) return 1 ;;
+    esac
 }
 
 pay_qr_refresh_indexes()
 {
-    run_limited 45 opkg update > /tmp/openpro_qrencode_update.log 2>&1
+    case "$PAY_QR_PKG_MANAGER" in
+        opkg) run_limited 45 opkg update > /tmp/openpro_qrencode_update.log 2>&1 ;;
+        apk) run_limited 45 apk update > /tmp/openpro_qrencode_update.log 2>&1 ;;
+        *) return 1 ;;
+    esac
 }
 
 pay_qr_fetch_server()
@@ -776,26 +783,36 @@ terminal_qr_valid()
 ensure_qrencode()
 {
     command -v qrencode >/dev/null 2>&1 && return 0
-    command -v opkg >/dev/null 2>&1 || return 1
+    if command -v opkg >/dev/null 2>&1 && command -v apk >/dev/null 2>&1; then
+        _pay_warn "同时检测到 OPKG 和 APK，无法确定二维码组件安装方式" >&2
+        return 1
+    elif command -v apk >/dev/null 2>&1; then
+        PAY_QR_PKG_MANAGER=apk
+    elif command -v opkg >/dev/null 2>&1; then
+        PAY_QR_PKG_MANAGER=opkg
+    else
+        _pay_warn "未检测到 OPKG 或 APK，无法自动安装 qrencode" >&2
+        return 1
+    fi
     # 每次启动只进行一轮补装；只对“找不到 qrencode”更新索引。
     # 软件安装阶段不使用强杀超时，避免打断软件包配置。
     [ "${PAY_QR_INSTALL_TRIED:-0}" = 0 ] || return 1
     PAY_QR_INSTALL_TRIED=1
     if pay_progress_run "安装二维码组件" pay_qr_install_package; then
         command -v qrencode >/dev/null 2>&1 && return 0
-        _pay_warn "软件包返回安装成功，但未找到 qrencode 命令"
+        _pay_warn "软件包返回安装成功，但未找到 qrencode 命令" >&2
         return 1
     fi
-    if ! grep -Eq 'Unknown package.*qrencode|Cannot find package.*qrencode' /tmp/openpro_qrencode_install.log; then
-        _pay_warn "二维码组件安装失败，详情：/tmp/openpro_qrencode_install.log"
+    if ! grep -Eq 'Unknown package.*qrencode|Cannot find package.*qrencode|qrencode.*\(no such package\)' /tmp/openpro_qrencode_install.log; then
+        _pay_warn "二维码组件安装失败，详情：/tmp/openpro_qrencode_install.log" >&2
         return 1
     fi
     if ! pay_progress_run "更新二维码组件索引" pay_qr_refresh_indexes; then
-        _pay_warn "软件源更新异常或超时，仍尝试使用已获取的索引补装"
+        _pay_warn "软件源更新异常或超时，仍尝试使用已获取的索引补装" >&2
     fi
     printf '\n=== Retry after package index refresh ===\n' >> /tmp/openpro_qrencode_install.log
     if ! pay_progress_run "重试安装二维码组件" pay_qr_install_package retry; then
-        _pay_warn "重试安装 qrencode 失败，请检查 /tmp/openpro_qrencode_update.log 和 /tmp/openpro_qrencode_install.log"
+        _pay_warn "重试安装 qrencode 失败，请检查 /tmp/openpro_qrencode_update.log 和 /tmp/openpro_qrencode_install.log" >&2
         return 1
     fi
     command -v qrencode >/dev/null 2>&1
