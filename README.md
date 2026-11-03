@@ -13,7 +13,7 @@ sh /root/opi-launch.sh email
 sh /root/opi-launch.sh payment
 ```
 
-再次启动可直接复用此启动器；每次仍重新竞速下载对应的固定版本 bootstrap。当前固定提交为 `256c4d3d5fd770567d71fd0576de53e5519ca99a`。升级 bootstrap 时需同步启动器中的提交与两个 SHA256。主程序归档仍沿用 bootstrap 原有下载和验证流程。
+再次启动可直接复用此启动器；每次仍重新竞速下载对应的固定版本 bootstrap。当前固定提交为 `5e61128702ef0a2811f12a8088d4ec3661933c14`。升级 bootstrap 时需同步启动器中的提交与两个 SHA256。主程序归档仍沿用 bootstrap 原有下载和验证流程。
 
 每条请求连接超时 10 秒、总超时 30 秒，竞速等待上限 35 秒；包含取消和清理的实际退出耗时可能略长。进度写入 stderr，失败不执行下载内容。需要 curl、sha256sum 及常见 Shell 工具；保留 TLS 校验。
 
