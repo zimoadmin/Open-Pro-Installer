@@ -3218,6 +3218,17 @@ ensure_is_opkg()
     DOWNLOAD_SUCCESS=0
     DIRECT_TRIED=0
 
+    # Parallel Argon downloads do not populate the legacy speed ranking.
+    # Keep all configured routes available when no ranking was produced.
+    if [ ! -s "$THEME_ROUTE_FILE" ]; then
+        while IFS='|' read -r IS_ROUTE_NAME IS_ROUTE_PREFIX; do
+            [ -n "$IS_ROUTE_NAME" ] || continue
+            printf '0|%s|%s||0|0\n' "$IS_ROUTE_NAME" "$IS_ROUTE_PREFIX"
+        done <<EOF > "$THEME_ROUTE_FILE"
+$THEME_DOWNLOAD_NODES
+EOF
+    fi
+
 
     # ========================================================
     # 优先复用 Argon 首次测速排序
@@ -4935,10 +4946,11 @@ install_theme()
     trap - INT TERM
 
 
-    rm -f \
-        "$THEME_LOG" \
-        2>/dev/null
-
+    if [ "$QUICKSTART_INSTALL_OK" = "1" ]; then
+        rm -f "$THEME_LOG" 2>/dev/null
+    else
+        _theme_warn "QuickStart 未完成，日志保留：$THEME_LOG"
+    fi
 
     return 0
 }
