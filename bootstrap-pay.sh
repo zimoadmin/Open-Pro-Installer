@@ -742,16 +742,45 @@ pay_progress_finish()
     fi
 }
 
-pay_qr_install_package()
+pay_qr_package_installed()
 {
-    if [ "${1:-}" != retry ]; then
-        : > /tmp/openpro_qrencode_install.log
-    fi
     case "$PAY_QR_PKG_MANAGER" in
-        opkg) opkg install qrencode >> /tmp/openpro_qrencode_install.log 2>&1 ;;
-        apk) apk add qrencode >> /tmp/openpro_qrencode_install.log 2>&1 ;;
+        opkg) opkg status "$1" 2>/dev/null | grep -q '^Status:.* installed$' ;;
+        apk) apk info -e "$1" >/dev/null 2>&1 ;;
         *) return 1 ;;
     esac
+}
+
+pay_qr_install_named()
+{
+    PAY_QR_TARGET="$1"
+    PAY_QR_ATTEMPT=1
+    PAY_QR_ATTEMPT_LOG=/tmp/openpro_qrencode_attempt.log
+    while :; do
+        case "$PAY_QR_PKG_MANAGER" in
+            opkg) opkg install "$PAY_QR_TARGET" > "$PAY_QR_ATTEMPT_LOG" 2>&1 ;;
+            apk) apk add "$PAY_QR_TARGET" > "$PAY_QR_ATTEMPT_LOG" 2>&1 ;;
+            *) return 1 ;;
+        esac
+        PAY_QR_RESULT=$?
+        cat "$PAY_QR_ATTEMPT_LOG" >> /tmp/openpro_qrencode_install.log
+        [ "$PAY_QR_RESULT" -ne 0 ] || return 0
+        # Retry only transport failures; never force architecture, dependency or trust errors.
+        if grep -Eqi 'architecture|incompatible|signature|BAD signature|UNTRUSTED|untrusted|unresolved|cannot satisfy|conflicts|no such package|Unknown package|Cannot find package' "$PAY_QR_ATTEMPT_LOG"; then
+            return "$PAY_QR_RESULT"
+        fi
+        [ "$PAY_QR_ATTEMPT" -lt 3 ] || return "$PAY_QR_RESULT"
+        grep -Eqi 'Failed to download|wget returned|curl: \([0-9]+\)|timed out|timeout|temporary (failure|error)|network (error|unreachable)|connection (reset|refused)|TLS|SSL|fetch.*(failed|error)' "$PAY_QR_ATTEMPT_LOG" || return "$PAY_QR_RESULT"
+        printf 'Network download failed for %s; retry %s/3 in 3 seconds\n' "$PAY_QR_TARGET" "$((PAY_QR_ATTEMPT + 1))" >> /tmp/openpro_qrencode_install.log
+        sleep 3
+        PAY_QR_ATTEMPT=$((PAY_QR_ATTEMPT + 1))
+    done
+}
+
+pay_qr_install_package()
+{
+    [ "${1:-}" = retry ] || : > /tmp/openpro_qrencode_install.log
+    pay_qr_install_named qrencode
 }
 
 pay_qr_refresh_indexes()
@@ -780,9 +809,33 @@ terminal_qr_valid()
     return 0
 }
 
+pay_qr_packages_ready()
+{
+    command -v qrencode >/dev/null 2>&1 || return 1
+    for PAY_QR_CHECK_PACKAGE in qrencode libqrencode; do
+        pay_qr_package_installed "$PAY_QR_CHECK_PACKAGE" || return 1
+    done
+    return 0
+}
+
+pay_qr_verify_install()
+{
+    if ! pay_qr_package_installed libqrencode; then
+        if ! pay_progress_run "补装二维码依赖 libqrencode" pay_qr_install_named libqrencode; then
+            _pay_warn "libqrencode 补装失败，详情：/tmp/openpro_qrencode_install.log" >&2
+            return 1
+        fi
+    fi
+    if pay_qr_packages_ready; then
+        printf '%s\n' 'Verified installed packages: qrencode, libqrencode; qrencode command available' >> /tmp/openpro_qrencode_install.log
+        return 0
+    fi
+    _pay_warn "二维码组件复查失败：需确认 qrencode、libqrencode 均已安装且 qrencode 命令可用；详情：/tmp/openpro_qrencode_install.log" >&2
+    return 1
+}
+
 ensure_qrencode()
 {
-    command -v qrencode >/dev/null 2>&1 && return 0
     if command -v opkg >/dev/null 2>&1 && command -v apk >/dev/null 2>&1; then
         _pay_warn "同时检测到 OPKG 和 APK，无法确定二维码组件安装方式" >&2
         return 1
@@ -794,14 +847,14 @@ ensure_qrencode()
         _pay_warn "未检测到 OPKG 或 APK，无法自动安装 qrencode" >&2
         return 1
     fi
+    pay_qr_packages_ready && return 0
     # 每次启动只进行一轮补装；只对“找不到 qrencode”更新索引。
     # 软件安装阶段不使用强杀超时，避免打断软件包配置。
     [ "${PAY_QR_INSTALL_TRIED:-0}" = 0 ] || return 1
     PAY_QR_INSTALL_TRIED=1
     if pay_progress_run "安装二维码组件" pay_qr_install_package; then
-        command -v qrencode >/dev/null 2>&1 && return 0
-        _pay_warn "软件包返回安装成功，但未找到 qrencode 命令" >&2
-        return 1
+        pay_qr_verify_install
+        return $?
     fi
     if ! grep -Eq 'Unknown package.*qrencode|Cannot find package.*qrencode|qrencode.*\(no such package\)' /tmp/openpro_qrencode_install.log; then
         _pay_warn "二维码组件安装失败，详情：/tmp/openpro_qrencode_install.log" >&2
@@ -815,7 +868,7 @@ ensure_qrencode()
         _pay_warn "重试安装 qrencode 失败，请检查 /tmp/openpro_qrencode_update.log 和 /tmp/openpro_qrencode_install.log" >&2
         return 1
     fi
-    command -v qrencode >/dev/null 2>&1
+    pay_qr_verify_install
 }
 
 render_qr()
@@ -837,7 +890,7 @@ render_qr()
 prepare_payment_qr()
 {
     rm -f "$PAY_QR_FILE" "$PAY_QR_FILE.part"
-    if [ -n "$PAY_URL" ] && command -v qrencode >/dev/null 2>&1 &&
+    if [ -n "$PAY_URL" ] && ensure_qrencode &&
        pay_progress_run "生成支付二维码" render_qr "$PAY_URL" "$PAY_QR_FILE"; then
         return 0
     fi
