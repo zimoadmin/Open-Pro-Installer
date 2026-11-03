@@ -1190,7 +1190,17 @@ theme_race_valid()
                 gzip -t "$1" 2>/dev/null; then
                 return 0
             fi
-            race_magic="$(od -An -tx1 -N8 "$1" 2>/dev/null | tr -d ' \n')"
+            race_magic=""
+            if command -v od >/dev/null 2>&1; then
+                race_magic="$(od -An -tx1 -N8 "$1" 2>/dev/null | tr -d ' \n')"
+            fi
+            if [ -z "$race_magic" ] && command -v hexdump >/dev/null 2>&1; then
+                race_magic="$(hexdump -n 8 -v -e '1/1 "%02x"' "$1" 2>/dev/null)"
+            fi
+            if [ -z "$race_magic" ]; then
+                printf 'Package validation failed: cannot read header (od/hexdump unavailable or failed): %s\n' "$1" >>"$THEME_LOG"
+                return 1
+            fi
             case "$1" in
                 *) case "$race_magic" in
                     1f8b*) gzip -t "$1" 2>>"$THEME_LOG" ;;
@@ -1212,6 +1222,8 @@ theme_race_worker()
     worker_url="$3"
     worker_kind="$4"
     worker_limit="$5"
+    worker_connect_timeout=4
+    [ "$worker_kind" != package ] || worker_connect_timeout=15
     worker_file="$worker_dir/$worker_route.part"
     worker_pid=""
     trap '[ -z "$worker_pid" ] || { kill "$worker_pid" 2>/dev/null; wait "$worker_pid" 2>/dev/null; }' 0
@@ -1219,11 +1231,11 @@ theme_race_worker()
     trap 'exit 143' TERM
     printf 'Parallel [%s]: %s\n' "$worker_route" "$worker_url" >>"$THEME_LOG"
     if command -v curl >/dev/null 2>&1; then
-        curl -4 -f -L -sS --connect-timeout 4 --max-time "$worker_limit" \
+        curl -4 -f -L -sS --connect-timeout "$worker_connect_timeout" --max-time "$worker_limit" \
             --retry 0 -H "User-Agent: Open-Pro-Installer" \
             -o "$worker_file" "$worker_url" >>"$worker_dir/$worker_route.log" 2>&1 &
     else
-        wget -T 4 --header="User-Agent: Open-Pro-Installer" \
+        wget -T "$worker_connect_timeout" --header="User-Agent: Open-Pro-Installer" \
             -O "$worker_file" "$worker_url" >>"$worker_dir/$worker_route.log" 2>&1 &
     fi
     worker_pid=$!
@@ -1237,6 +1249,11 @@ theme_race_worker()
                 printf '%s\n' "$worker_route" > "$worker_dir/ready"
             fi
         fi
+    fi
+    if [ "$worker_rc" -ne 0 ]; then
+        printf 'Parallel [%s] network failure: exit=%s\n' "$worker_route" "$worker_rc" >>"$THEME_LOG"
+    elif [ ! -d "$worker_dir/winner" ]; then
+        printf 'Parallel [%s] response rejected by %s validation\n' "$worker_route" "$worker_kind" >>"$THEME_LOG"
     fi
     cat "$worker_dir/$worker_route.log" >>"$THEME_LOG" 2>/dev/null || :
     : > "$worker_dir/$worker_route.done"
