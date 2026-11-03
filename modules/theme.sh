@@ -1185,6 +1185,11 @@ theme_race_valid()
         assets) grep -q "/${ARGON_REPO}/releases/download/" "$1" ;;
         json) grep -q '"tag_name"' "$1" ;;
         package)
+            # Vendor firmware may omit od. Validate gzip archives directly.
+            if command -v gzip >/dev/null 2>&1 &&
+                gzip -t "$1" 2>/dev/null; then
+                return 0
+            fi
             race_magic="$(od -An -tx1 -N8 "$1" 2>/dev/null | tr -d ' \n')"
             case "$1" in
                 *) case "$race_magic" in
