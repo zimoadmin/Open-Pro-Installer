@@ -1004,6 +1004,25 @@ pay_flow()
 
     printf '\n'
 
+    # Prepare local QR dependencies before any order can be created.
+    if ! ensure_qrencode; then
+        pay_progress_finish 1
+        _pay_warn "二维码组件准备失败，尚未创建订单；请检查 /tmp/openpro_qrencode_install.log" >&2
+        return 1
+    fi
+    PAY_QR_CHECK_FILE="$(mktemp /tmp/openpro-qr-check.XXXXXX)" || {
+        pay_progress_finish 1
+        _pay_warn "无法创建二维码测试文件，尚未创建订单" >&2
+        return 1
+    }
+    if ! pay_progress_run "检查二维码渲染" render_qr 'Open-Pro-Installer QR readiness check' "$PAY_QR_CHECK_FILE"; then
+        rm -f "$PAY_QR_CHECK_FILE"
+        pay_progress_finish 1
+        _pay_warn "二维码渲染检查失败，尚未创建订单" >&2
+        return 1
+    fi
+    rm -f "$PAY_QR_CHECK_FILE"
+
     ORDER_JSON="$(
         pay_progress_run "创建支付订单" pay_post \
             "/order/create" \
