@@ -2,7 +2,7 @@
 # Download a pinned, verified bootstrap before executing any authentication flow.
 case "${1:-email}" in
     email) file=bootstrap.sh; expected=780558975d69d6ce5b942be3096622ba2bbc7d7c352e91404d24348164456c76 ;;
-    payment) file=bootstrap-pay.sh; expected=357173f93b373aedd105c89cc430ad22915b6d2c5350e66fe9beabbf80abbdfc ;;
+    payment) file=bootstrap-pay.sh; expected=91710ff935622e5ff5d4b40dd5c12070fb29e6c173153851deea939971e4eb11 ;;
     *) echo 'Usage: sh launch.sh [email|payment]' >&2; exit 2 ;;
 esac
 for tool in curl sha256sum sh mktemp date sleep; do
@@ -43,7 +43,7 @@ worker() {
     fi
     : > "$work/$route.done"
 }
-raw="https://raw.githubusercontent.com/zimoadmin/Open-Pro-Installer/b639a7667949543ec9bed05d5220414ff6302c4e/$file"
+raw="https://raw.githubusercontent.com/zimoadmin/Open-Pro-Installer/256c4d3d5fd770567d71fd0576de53e5519ca99a/$file"
 count=0
 while IFS='|' read -r route prefix; do
     worker "$route" "$prefix$raw" &
