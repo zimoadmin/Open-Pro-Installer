@@ -1179,10 +1179,10 @@ printf "\n"
 
 if [ -r /dev/tty ]; then
 
-    exec ./install.sh </dev/tty
+    OPI_AUTH_MODE=email exec ./install.sh </dev/tty
 
 else
 
-    exec ./install.sh
+    OPI_AUTH_MODE=email exec ./install.sh
 
 fi

@@ -41,7 +41,14 @@ main_menu()
         printf "\n"
 
         printf "%b\n" "${BLUE}╔══════════════════════════════════════╗${RESET}"
-        printf "%b\n" "${BLUE}║${GREEN}             ZIMO--工具箱             ${BLUE}║${RESET}"
+        case "${OPI_AUTH_MODE:-}" in
+            email)
+                printf "%b\n" "${BLUE}║${GREEN}              奇偶工具箱              ${BLUE}║${RESET}"
+                ;;
+            *)
+                printf "%b\n" "${BLUE}║${GREEN}             ZIMO--工具箱             ${BLUE}║${RESET}"
+                ;;
+        esac
         printf "%b\n" "${BLUE}║${GREEN}               v1.0.0                 ${BLUE}║${RESET}"
         printf "%b\n" "${BLUE}╠══════════════════════════════════════╣${RESET}"
         printf "%b\n" "${BLUE}║${CYAN}  [1] 一键仿 iStoreOS 主题            ${BLUE}║${RESET}"

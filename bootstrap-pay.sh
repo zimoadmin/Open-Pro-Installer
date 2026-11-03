@@ -1837,10 +1837,10 @@ printf "\n"
 
 if [ -r /dev/tty ]; then
 
-    exec ./install.sh </dev/tty
+    OPI_AUTH_MODE=payment exec ./install.sh </dev/tty
 
 else
 
-    exec ./install.sh
+    OPI_AUTH_MODE=payment exec ./install.sh
 
 fi
