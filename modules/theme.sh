@@ -1223,7 +1223,7 @@ theme_race_worker()
     worker_kind="$4"
     worker_limit="$5"
     worker_connect_timeout=4
-    [ "$worker_kind" != package ] || worker_connect_timeout=15
+    [ "$worker_kind" != package ] || worker_connect_timeout=30
     worker_file="$worker_dir/$worker_route.part"
     worker_pid=""
     trap '[ -z "$worker_pid" ] || { kill "$worker_pid" 2>/dev/null; wait "$worker_pid" 2>/dev/null; }' 0
